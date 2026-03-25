@@ -6647,6 +6647,10 @@ pub struct MatrixConfig {
     /// When set, ZeroClaw recovers room keys and cross-signing secrets on startup.
     #[serde(default)]
     pub recovery_key: Option<String>,
+    /// When true, only respond to messages that @-mention the bot in group rooms.
+    /// DMs bypass this gate.
+    #[serde(default)]
+    pub mention_only: bool,
 }
 
 impl ChannelConfig for MatrixConfig {

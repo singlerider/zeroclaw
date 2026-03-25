@@ -45,6 +45,7 @@ pub struct MatrixChannel {
     voice_mode: Arc<AtomicBool>,
     otk_conflict_detected: Arc<AtomicBool>,
     recovery_key: Option<String>,
+    mention_only: bool,
     transcription: Option<crate::config::TranscriptionConfig>,
     transcription_manager: Option<Arc<super::transcription::TranscriptionManager>>,
     stream_mode: crate::config::StreamMode,
@@ -245,6 +246,7 @@ impl MatrixChannel {
             voice_mode: Arc::new(AtomicBool::new(false)),
             otk_conflict_detected: Arc::new(AtomicBool::new(false)),
             recovery_key,
+            mention_only: false,
             transcription: None,
             transcription_manager: None,
             stream_mode: crate::config::StreamMode::Off,
@@ -267,6 +269,12 @@ impl MatrixChannel {
         self.stream_mode = stream_mode;
         self.draft_update_interval_ms = draft_update_interval_ms;
         self.multi_message_delay_ms = multi_message_delay_ms;
+        self
+    }
+
+    /// When true, only respond to messages that @-mention the bot in group rooms.
+    pub fn with_mention_only(mut self, mention_only: bool) -> Self {
+        self.mention_only = mention_only;
         self
     }
 
@@ -978,6 +986,7 @@ impl Channel for MatrixChannel {
         let access_token_for_handler = self.access_token.clone();
         let voice_mode_for_handler = Arc::clone(&self.voice_mode);
         let transcription_mgr_for_handler = self.transcription_manager.clone();
+        let mention_only_for_handler = self.mention_only;
 
         client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, room: Room| {
             let tx = tx_handler.clone();
@@ -990,6 +999,7 @@ impl Channel for MatrixChannel {
             let access_token = access_token_for_handler.clone();
             let voice_mode = Arc::clone(&voice_mode_for_handler);
             let transcription_mgr = transcription_mgr_for_handler.clone();
+            let mention_only = mention_only_for_handler;
 
             async move {
                 // Room filtering: use allowed_rooms if set, otherwise fall back to single room_id
@@ -1029,6 +1039,29 @@ impl Channel for MatrixChannel {
                     return;
                 }
 
+                // Mention gate: in group rooms, require @-mention when mention_only is enabled.
+                // DMs (rooms with ≤2 joined members) bypass this gate.
+                if mention_only {
+                    let is_dm = room
+                        .joined_members_count()
+                        <= 2;
+                    if !is_dm {
+                        let bot_id_str = my_user_id.as_str();
+                        let body_text = match &event.content.msgtype {
+                            MessageType::Text(c) => c.body.as_str(),
+                            MessageType::Notice(c) => c.body.as_str(),
+                            _ => "",
+                        };
+                        if !body_text.contains(bot_id_str) {
+                            tracing::debug!(
+                                "Matrix: ignoring message (mention_only enabled, no mention of {})",
+                                bot_id_str
+                            );
+                            return;
+                        }
+                    }
+                }
+
                 // Helper: extract mxc:// download URL and filename for media types
                 let media_info = |source: &MediaSource, name: &str| -> Option<(String, String)> {
                     match source {
@@ -1063,6 +1096,18 @@ impl Channel for MatrixChannel {
                     }
                     _ => return,
                 };
+
+                // Strip bot mention from body when mention_only is active
+                let body = if mention_only {
+                    body.replace(my_user_id.as_str(), "").trim().to_string()
+                } else {
+                    body
+                };
+
+                if body.is_empty() {
+                    tracing::debug!("Matrix: ignoring empty message after mention stripping");
+                    return;
+                }
 
                 // Download media to workspace if present
                 let body = if let Some((url, filename)) = media_download {
