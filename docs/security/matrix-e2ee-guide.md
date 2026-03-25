@@ -217,7 +217,7 @@ Delete this directory.
 
 A recovery key lets ZeroClaw automatically restore room keys and cross-signing secrets from server-side backup. This means device resets, crypto store deletions, and fresh installs recover automatically — no emoji verification, no manual key sharing.
 
-**Step 1: Get your recovery key from Element**
+#### Step 1: Get your recovery key from Element
 
 1. Log into the bot account in Element (web or desktop)
 2. Go to Settings → Security & Privacy → Encryption → Secure Backup
@@ -225,7 +225,7 @@ A recovery key lets ZeroClaw automatically restore room keys and cross-signing s
 4. If backup is not set up, click "Set up Secure Backup" and choose "Generate a Security Key". Save the key — it looks like `EsTj 3yST y93F SLpB ...`
 5. Log out of Element when done
 
-**Step 2: Add the recovery key to ZeroClaw**
+#### Step 2: Add the recovery key to ZeroClaw
 
 Option A — during onboarding:
 
@@ -252,7 +252,7 @@ recovery_key = "EsTj 3yST y93F SLpB jJsz ..."
 
 If `secrets.encrypt = true` (the default), the value will be encrypted on next config save.
 
-**Step 3: Restart ZeroClaw**
+#### Step 3: Restart ZeroClaw
 
 On startup you should see:
 
