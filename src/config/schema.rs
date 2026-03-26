@@ -64,7 +64,7 @@ static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Clie
 /// Top-level ZeroClaw configuration, loaded from `config.toml`.
 ///
 /// Resolution order: `ZEROCLAW_WORKSPACE` env → `active_workspace.toml` marker → `~/.zeroclaw/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
 pub struct Config {
     /// Workspace directory - computed from home, not serialized
     #[serde(skip)]
@@ -73,6 +73,7 @@ pub struct Config {
     #[serde(skip)]
     pub config_path: PathBuf,
     /// API key for the selected provider. Overridden by `ZEROCLAW_API_KEY` or `API_KEY` env vars.
+    #[secret]
     pub api_key: Option<String>,
     /// Base URL override for provider API (e.g. "http://10.0.0.1:11434" for remote Ollama)
     pub api_url: Option<String>,
@@ -819,7 +820,8 @@ fn default_google_stt_language_code() -> String {
 ///
 /// The top-level `api_url`, `model`, and `api_key` fields remain for backward
 /// compatibility with existing Groq-based configurations.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "transcription"]
 pub struct TranscriptionConfig {
     /// Enable voice transcription for channels that support it.
     #[serde(default)]
@@ -831,6 +833,7 @@ pub struct TranscriptionConfig {
     ///
     /// If unset, runtime falls back to `GROQ_API_KEY` for backward compatibility.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Whisper API endpoint URL (Groq provider).
     #[serde(default = "default_transcription_api_url")]
@@ -1128,10 +1131,12 @@ impl Default for TtsConfig {
 }
 
 /// OpenAI TTS provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "tts.openai"]
 pub struct OpenAiTtsConfig {
     /// API key for OpenAI TTS.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Model name (default `"tts-1"`).
     #[serde(default = "default_openai_tts_model")]
@@ -1142,10 +1147,12 @@ pub struct OpenAiTtsConfig {
 }
 
 /// ElevenLabs TTS provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "tts.elevenlabs"]
 pub struct ElevenLabsTtsConfig {
     /// API key for ElevenLabs.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Model ID (default `"eleven_monolingual_v1"`).
     #[serde(default = "default_elevenlabs_model_id")]
@@ -1159,10 +1166,12 @@ pub struct ElevenLabsTtsConfig {
 }
 
 /// Google Cloud TTS provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "tts.google"]
 pub struct GoogleTtsConfig {
     /// API key for Google Cloud TTS.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Language code (default `"en-US"`).
     #[serde(default = "default_google_tts_language_code")]
@@ -1234,10 +1243,12 @@ pub struct ToolFilterGroup {
 }
 
 /// OpenAI Whisper STT provider configuration (`[transcription.openai]`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "transcription.openai"]
 pub struct OpenAiSttConfig {
     /// OpenAI API key for Whisper transcription.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Whisper model name (default: "whisper-1").
     #[serde(default = "default_openai_stt_model")]
@@ -1245,10 +1256,12 @@ pub struct OpenAiSttConfig {
 }
 
 /// Deepgram STT provider configuration (`[transcription.deepgram]`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "transcription.deepgram"]
 pub struct DeepgramSttConfig {
     /// Deepgram API key.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Deepgram model name (default: "nova-2").
     #[serde(default = "default_deepgram_stt_model")]
@@ -1256,18 +1269,22 @@ pub struct DeepgramSttConfig {
 }
 
 /// AssemblyAI STT provider configuration (`[transcription.assemblyai]`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "transcription.assemblyai"]
 pub struct AssemblyAiSttConfig {
     /// AssemblyAI API key.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
 }
 
 /// Google Cloud Speech-to-Text provider configuration (`[transcription.google]`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "transcription.google"]
 pub struct GoogleSttConfig {
     /// Google Cloud API key.
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// BCP-47 language code (default: "en-US").
     #[serde(default = "default_google_stt_language_code")]
@@ -2280,13 +2297,15 @@ impl Default for NodeTransportConfig {
 /// Composio managed OAuth tools integration (`[composio]` section).
 ///
 /// Provides access to 1000+ OAuth-connected tools via the Composio platform.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "composio"]
 pub struct ComposioConfig {
     /// Enable Composio integration for 1000+ OAuth tools
     #[serde(default, alias = "enable")]
     pub enabled: bool,
     /// Composio API key (stored encrypted when secrets.encrypt = true)
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Default entity ID for multi-user setups
     #[serde(default = "default_entity_id")]
@@ -2313,7 +2332,8 @@ impl Default for ComposioConfig {
 ///
 /// Provides access to Outlook mail, Teams messages, Calendar events,
 /// OneDrive files, and SharePoint search.
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "ms365"]
 pub struct Microsoft365Config {
     /// Enable Microsoft 365 integration
     #[serde(default, alias = "enable")]
@@ -2326,6 +2346,7 @@ pub struct Microsoft365Config {
     pub client_id: Option<String>,
     /// Azure AD client secret (stored encrypted when secrets.encrypt = true)
     #[serde(default)]
+    #[secret]
     pub client_secret: Option<String>,
     /// Authentication flow: "client_credentials" or "device_code"
     #[serde(default = "default_ms365_auth_flow")]
@@ -2400,13 +2421,15 @@ impl Default for SecretsConfig {
 /// Computer-use sidecar configuration (`[browser.computer_use]` section).
 ///
 /// Delegates OS-level mouse, keyboard, and screenshot actions to a local sidecar.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "browser"]
 pub struct BrowserComputerUseConfig {
     /// Sidecar endpoint for computer-use actions (OS-level mouse/keyboard/screenshot)
     #[serde(default = "default_browser_computer_use_endpoint")]
     pub endpoint: String,
     /// Optional bearer token for computer-use sidecar
     #[serde(default)]
+    #[secret]
     pub api_key: Option<String>,
     /// Per-action request timeout in milliseconds
     #[serde(default = "default_browser_computer_use_timeout_ms")]
@@ -2760,7 +2783,8 @@ impl Default for ShellToolConfig {
 // ── Web search ───────────────────────────────────────────────────
 
 /// Web search tool configuration (`[web_search]` section).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "web-search"]
 pub struct WebSearchConfig {
     /// Enable `web_search_tool` for web searches
     #[serde(default)]
@@ -2770,6 +2794,7 @@ pub struct WebSearchConfig {
     pub provider: String,
     /// Brave Search API key (required if provider is "brave")
     #[serde(default)]
+    #[secret]
     pub brave_api_key: Option<String>,
     /// SearXNG instance URL (required if provider is "searxng"), e.g. "https://searx.example.com"
     #[serde(default)]
@@ -4745,7 +4770,8 @@ pub struct StorageProviderSection {
 }
 
 /// Storage provider backend configuration for remote storage backends.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "storage"]
 pub struct StorageProviderConfig {
     /// Storage engine key (e.g. "sqlite", "qdrant").
     #[serde(default)]
@@ -4759,6 +4785,7 @@ pub struct StorageProviderConfig {
         alias = "database_url",
         alias = "databaseUrl"
     )]
+    #[secret]
     pub db_url: Option<String>,
 
     /// Database schema for SQL backends.
@@ -6033,10 +6060,12 @@ fn default_openvpn_timeout() -> u64 {
     30
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "tunnel.pinggy"]
 pub struct PinggyTunnelConfig {
     /// Pinggy access token (optional — free tier works without one).
     #[serde(default)]
+    #[secret]
     pub token: Option<String>,
     /// Server region: `"us"` (USA), `"eu"` (Europe), `"ap"` (Asia), `"br"` (South America), `"au"` (Australia), or omit for auto.
     #[serde(default)]
@@ -6380,9 +6409,11 @@ fn default_matrix_draft_update_interval_ms() -> u64 {
 }
 
 /// Telegram bot channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.telegram"]
 pub struct TelegramConfig {
     /// Telegram Bot API token (from @BotFather).
+    #[secret]
     pub bot_token: String,
     /// Allowed Telegram user IDs or usernames. Empty = deny all.
     pub allowed_users: Vec<String>,
@@ -6421,9 +6452,11 @@ impl ChannelConfig for TelegramConfig {
 }
 
 /// Discord bot channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.discord"]
 pub struct DiscordConfig {
     /// Discord bot token (from Discord Developer Portal).
+    #[secret]
     pub bot_token: String,
     /// Optional guild (server) ID to restrict the bot to a single guild.
     pub guild_id: Option<String>,
@@ -6508,12 +6541,15 @@ impl ChannelConfig for DiscordHistoryConfig {
 }
 
 /// Slack bot channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.slack"]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SlackConfig {
     /// Slack bot OAuth token (xoxb-...).
+    #[secret]
     pub bot_token: String,
     /// Slack app-level token for Socket Mode (xapp-...).
+    #[secret]
     pub app_token: Option<String>,
     /// Optional channel ID to restrict the bot to a single channel.
     /// Omit (or set `"*"`) to listen across all accessible channels.
@@ -6573,12 +6609,17 @@ impl ChannelConfig for SlackConfig {
 }
 
 /// Mattermost bot channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.mattermost"]
 pub struct MattermostConfig {
     /// Mattermost server URL (e.g. `"https://mattermost.example.com"`).
     pub url: String,
     /// Mattermost bot access token.
-    pub bot_token: String,
+/// Optional when `bot_id` + `bot_password` are provided; the channel will
+    /// obtain a session token via `POST /api/v4/users/login` at runtime.
+    #[secret]
+    #[serde(default)]
+    pub bot_token: Option<String>,
     /// Optional channel ID to restrict the bot to a single channel.
     pub channel_id: Option<String>,
     /// Allowed Mattermost user IDs. Empty = deny all.
@@ -6615,7 +6656,8 @@ impl ChannelConfig for MattermostConfig {
 ///
 /// Receives messages via HTTP POST and sends replies to a configurable outbound URL.
 /// This is the "universal adapter" for any system that supports webhooks.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.webhook"]
 pub struct WebhookConfig {
     /// Port to listen on for incoming webhooks.
     pub port: u16,
@@ -6632,6 +6674,7 @@ pub struct WebhookConfig {
     #[serde(default)]
     pub auth_header: Option<String>,
     /// Optional shared secret for webhook signature verification (HMAC-SHA256).
+    #[secret]
     pub secret: Option<String>,
 }
 
@@ -6699,8 +6742,20 @@ pub struct MatrixConfig {
     pub multi_message_delay_ms: u64,
     /// Optional Matrix recovery key for automatic E2EE key backup restore.
     /// When set, ZeroClaw recovers room keys and cross-signing secrets on startup.
+    #[secret]
     #[serde(default)]
     pub recovery_key: Option<String>,
+/// Matrix account password. Required alongside `recovery_key` for automatic
+    /// E2EE recovery when the crypto store is lost. When both are set, the bot
+    /// performs a fresh login (new device) and restores room keys from backup.
+    /// See docs/security/matrix-e2ee-guide.md.
+    #[secret]
+    #[serde(default)]
+    pub password: Option<String>,
+    /// When true, only respond to messages that @-mention the bot in group rooms.
+    /// DMs bypass this gate.
+    #[serde(default)]
+    pub mention_only: bool,
 }
 
 impl ChannelConfig for MatrixConfig {
@@ -6781,10 +6836,12 @@ pub enum WhatsAppChatPolicy {
 /// WhatsApp channel configuration (Cloud API or Web mode).
 ///
 /// Set `phone_number_id` for Cloud API mode, or `session_path` for Web mode.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.whatsapp"]
 pub struct WhatsAppConfig {
     /// Access token from Meta Business Suite (Cloud API mode)
     #[serde(default)]
+    #[secret]
     pub access_token: Option<String>,
     /// Phone number ID from Meta Business API (Cloud API mode)
     #[serde(default)]
@@ -6792,11 +6849,13 @@ pub struct WhatsAppConfig {
     /// Webhook verify token (you define this, Meta sends it back for verification)
     /// Only used in Cloud API mode
     #[serde(default)]
+    #[secret]
     pub verify_token: Option<String>,
     /// App secret from Meta Business Suite (for webhook signature verification)
     /// Can also be set via `ZEROCLAW_WHATSAPP_APP_SECRET` environment variable
     /// Only used in Cloud API mode
     #[serde(default)]
+    #[secret]
     pub app_secret: Option<String>,
     /// Session database path for WhatsApp Web client (Web mode)
     /// When set, enables native WhatsApp Web mode with wa-rs
@@ -6863,14 +6922,72 @@ impl ChannelConfig for WhatsAppConfig {
     }
 }
 
+/// Outbound message delivery mode for the LINE channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LineReplyMode {
+    /// Use Reply API when a `replyToken` is available (free, no quota cost),
+    /// fall back to Push API when no token is present (e.g. proactive messages).
+    /// **This is the recommended default** — it conserves Push quota on free plans.
+    #[default]
+    ReplyFirst,
+    /// Always use Push API regardless of whether a `replyToken` is available.
+    /// Compatible with all message types but consumes Push quota every time.
+    PushOnly,
+    /// Always use Reply API. Fails for proactive/scheduled messages that have
+    /// no `replyToken`. Suitable when Push API is not available on the plan.
+    ReplyOnly,
+}
+
+/// LINE Messaging API channel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LineConfig {
+    /// LINE Channel Secret — used to verify `X-Line-Signature` webhook headers.
+    /// Can also be set via `ZEROCLAW_LINE_CHANNEL_SECRET` env var.
+    pub channel_secret: String,
+    /// LINE Channel Access Token — used for outbound push messages and content download.
+    pub channel_access_token: String,
+    /// Allowed LINE user IDs that the bot will respond to.
+    /// Use `["*"]` to allow all users (not recommended for public bots).
+    pub allowed_users: Vec<String>,
+    /// Outbound delivery mode: `reply_first` (default), `push_only`, or `reply_only`.
+    ///
+    /// - `reply_first` — Reply API when `replyToken` available, Push API as fallback.
+    /// - `push_only`   — Always Push API (current legacy behavior).
+    /// - `reply_only`  — Always Reply API; fails without a `replyToken`.
+    #[serde(default)]
+    pub reply_mode: LineReplyMode,
+    /// When `true`, the bot only responds in group chats when @mentioned by
+    /// `bot_display_name`.  1:1 messages are always processed regardless.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub mention_only: bool,
+    /// Display name the bot uses inside LINE groups (e.g. `"ZeroClaw"`).
+    /// Required when `mention_only = true`; ignored otherwise.
+    #[serde(default)]
+    pub bot_display_name: Option<String>,
+}
+
+impl ChannelConfig for LineConfig {
+    fn name() -> &'static str {
+        "LINE"
+    }
+    fn desc() -> &'static str {
+        "LINE Messaging API bot"
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.linq"]
 pub struct LinqConfig {
     /// Linq Partner API token (Bearer auth)
+    #[secret]
     pub api_token: String,
     /// Phone number to send from (E.164 format)
     pub from_phone: String,
     /// Webhook signing secret for signature verification
     #[serde(default)]
+    #[secret]
     pub signing_secret: Option<String>,
     /// Allowed sender handles (phone numbers) or "*" for all
     #[serde(default)]
@@ -6887,9 +7004,11 @@ impl ChannelConfig for LinqConfig {
 }
 
 /// WATI WhatsApp Business API channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.wati"]
 pub struct WatiConfig {
     /// WATI API token (Bearer auth).
+    #[secret]
     pub api_token: String,
     /// WATI API base URL (default: https://live-mt-server.wati.io).
     #[serde(default = "default_wati_api_url")]
@@ -6920,16 +7039,19 @@ impl ChannelConfig for WatiConfig {
 }
 
 /// Nextcloud Talk bot configuration (webhook receive + OCS send API).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.nextcloud"]
 pub struct NextcloudTalkConfig {
     /// Nextcloud base URL (e.g. "https://cloud.example.com").
     pub base_url: String,
     /// Bot app token used for OCS API bearer auth.
+    #[secret]
     pub app_token: String,
     /// Shared secret for webhook signature verification.
     ///
     /// Can also be set via `ZEROCLAW_NEXTCLOUD_TALK_WEBHOOK_SECRET`.
     #[serde(default)]
+    #[secret]
     pub webhook_secret: Option<String>,
     /// Allowed Nextcloud actor IDs (`[]` = deny all, `"*"` = allow all).
     #[serde(default)]
@@ -7087,7 +7209,8 @@ fn default_mqtt_keep_alive_secs() -> u64 {
 }
 
 /// IRC channel configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.irc"]
 pub struct IrcConfig {
     /// IRC server hostname
     pub server: String,
@@ -7105,10 +7228,13 @@ pub struct IrcConfig {
     #[serde(default)]
     pub allowed_users: Vec<String>,
     /// Server password (for bouncers like ZNC)
+    #[secret]
     pub server_password: Option<String>,
     /// NickServ IDENTIFY password
+    #[secret]
     pub nickserv_password: Option<String>,
     /// SASL PLAIN password (IRCv3)
+    #[secret]
     pub sasl_password: Option<String>,
     /// Verify TLS certificate (default: true)
     pub verify_tls: Option<bool>,
@@ -7141,17 +7267,21 @@ pub enum LarkReceiveMode {
 
 /// Lark/Feishu configuration for messaging integration.
 /// Lark is the international version; Feishu is the Chinese version.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.lark"]
 pub struct LarkConfig {
     /// App ID from Lark/Feishu developer console
     pub app_id: String,
     /// App Secret from Lark/Feishu developer console
+    #[secret]
     pub app_secret: String,
     /// Encrypt key for webhook message decryption (optional)
     #[serde(default)]
+    #[secret]
     pub encrypt_key: Option<String>,
     /// Verification token for webhook validation (optional)
     #[serde(default)]
+    #[secret]
     pub verification_token: Option<String>,
     /// Allowed user IDs or union IDs (empty = deny all, "*" = allow all)
     #[serde(default)]
@@ -7186,17 +7316,21 @@ impl ChannelConfig for LarkConfig {
 }
 
 /// Feishu configuration for messaging integration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.feishu"]
 pub struct FeishuConfig {
     /// App ID from Feishu developer console
     pub app_id: String,
     /// App Secret from Feishu developer console
+    #[secret]
     pub app_secret: String,
     /// Encrypt key for webhook message decryption (optional)
     #[serde(default)]
+    #[secret]
     pub encrypt_key: Option<String>,
     /// Verification token for webhook validation (optional)
     #[serde(default)]
+    #[secret]
     pub verification_token: Option<String>,
     /// Allowed user IDs or union IDs (empty = deny all, "*" = allow all)
     #[serde(default)]
@@ -7422,7 +7556,8 @@ impl Default for EstopConfig {
 ///
 /// When `enabled` is true, ZeroClaw validates incoming requests against a Nevis
 /// Security Suite instance and maps Nevis roles to tool/workspace permissions.
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "security.nevis"]
 #[serde(deny_unknown_fields)]
 pub struct NevisConfig {
     /// Enable Nevis IAM integration. Defaults to false for backward compatibility.
@@ -7443,6 +7578,7 @@ pub struct NevisConfig {
 
     /// OAuth2 client secret. Encrypted via SecretStore when stored on disk.
     #[serde(default)]
+    #[secret]
     pub client_secret: Option<String>,
 
     /// Token validation strategy: `"local"` (JWKS) or `"remote"` (introspection).
@@ -7714,11 +7850,13 @@ impl Default for AuditConfig {
 }
 
 /// DingTalk configuration for Stream Mode messaging
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.dingtalk"]
 pub struct DingTalkConfig {
     /// Client ID (AppKey) from DingTalk developer console
     pub client_id: String,
     /// Client Secret (AppSecret) from DingTalk developer console
+    #[secret]
     pub client_secret: String,
     /// Allowed user IDs (staff IDs). Empty = deny all, "*" = allow all
     #[serde(default)]
@@ -7739,9 +7877,11 @@ impl ChannelConfig for DingTalkConfig {
 }
 
 /// WeCom (WeChat Enterprise) Bot Webhook configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.wecom"]
 pub struct WeComConfig {
     /// Webhook key from WeCom Bot configuration
+    #[secret]
     pub webhook_key: String,
     /// Allowed user IDs. Empty = deny all, "*" = allow all
     #[serde(default)]
@@ -7758,11 +7898,13 @@ impl ChannelConfig for WeComConfig {
 }
 
 /// QQ Official Bot configuration (Tencent QQ Bot SDK)
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.qq"]
 pub struct QQConfig {
     /// App ID from QQ Bot developer console
     pub app_id: String,
     /// App Secret from QQ Bot developer console
+    #[secret]
     pub app_secret: String,
     /// Allowed user IDs. Empty = deny all, "*" = allow all
     #[serde(default)]
@@ -7943,9 +8085,11 @@ impl ChannelConfig for VoiceWakeConfig {
 
 /// Nostr channel configuration (NIP-04 + NIP-17 private messages)
 #[cfg(feature = "channel-nostr")]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "channels.nostr"]
 pub struct NostrConfig {
     /// Private key in hex or nsec bech32 format
+    #[secret]
     pub private_key: String,
     /// Relay URLs (wss://). Defaults to popular public relays if omitted.
     #[serde(default = "default_nostr_relays")]
@@ -7982,11 +8126,13 @@ pub fn default_nostr_relays() -> Vec<String> {
 /// When `enabled = true`, the agent polls a Notion database for pending tasks
 /// and exposes a `notion` tool for querying, reading, creating, and updating pages.
 /// Requires `api_key` (or the `NOTION_API_KEY` env var) and `database_id`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "notion"]
 pub struct NotionConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
+    #[secret]
     pub api_key: String,
     #[serde(default)]
     pub database_id: String,
@@ -8054,7 +8200,8 @@ impl Default for NotionConfig {
 /// ## Auth
 /// Jira Cloud uses HTTP Basic auth: `email` + `api_token`.
 /// `api_token` is stored encrypted at rest; set it here or via `JIRA_API_TOKEN`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
+#[secret_prefix = "jira"]
 pub struct JiraConfig {
     /// Enable the `jira` tool. Default: `false`.
     #[serde(default)]
@@ -8067,6 +8214,7 @@ pub struct JiraConfig {
     pub email: String,
     /// Jira API token. Encrypted at rest. Falls back to `JIRA_API_TOKEN` env var.
     #[serde(default)]
+    #[secret]
     pub api_token: String,
     /// Actions the agent is permitted to call.
     /// Valid values: `"get_ticket"`, `"search_tickets"`, `"comment_ticket"`.
