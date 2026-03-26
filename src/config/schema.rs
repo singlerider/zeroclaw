@@ -137,6 +137,7 @@ pub struct Config {
 
     /// Security subsystem configuration (`[security]`).
     #[serde(default)]
+    #[has_secrets]
     pub security: SecurityConfig,
 
     /// Backup tool configuration (`[backup]`).
@@ -214,6 +215,7 @@ pub struct Config {
 
     /// Channel configurations: Telegram, Discord, Slack, etc. (`[channels_config]`).
     #[serde(default)]
+    #[has_secrets]
     pub channels_config: ChannelsConfig,
 
     /// Memory backend configuration: sqlite, markdown, embeddings (`[memory]`).
@@ -222,10 +224,12 @@ pub struct Config {
 
     /// Persistent storage provider configuration (`[storage]`).
     #[serde(default)]
+    #[has_secrets]
     pub storage: StorageConfig,
 
     /// Tunnel configuration for exposing the gateway publicly (`[tunnel]`).
     #[serde(default)]
+    #[has_secrets]
     pub tunnel: TunnelConfig,
 
     /// Gateway server configuration: host, port, pairing, rate limits (`[gateway]`).
@@ -234,10 +238,12 @@ pub struct Config {
 
     /// Composio managed OAuth tools integration (`[composio]`).
     #[serde(default)]
+    #[has_secrets]
     pub composio: ComposioConfig,
 
     /// Microsoft 365 Graph API integration (`[microsoft365]`).
     #[serde(default)]
+    #[has_secrets]
     pub microsoft365: Microsoft365Config,
 
     /// Secrets encryption configuration (`[secrets]`).
@@ -246,6 +252,7 @@ pub struct Config {
 
     /// Browser automation configuration (`[browser]`).
     #[serde(default)]
+    #[has_secrets]
     pub browser: BrowserConfig,
 
     /// Browser delegation configuration (`[browser_delegate]`).
@@ -298,6 +305,7 @@ pub struct Config {
 
     /// Web search tool configuration (`[web_search]`).
     #[serde(default)]
+    #[has_secrets]
     pub web_search: WebSearchConfig,
 
     /// Project delivery intelligence configuration (`[project_intel]`).
@@ -346,10 +354,12 @@ pub struct Config {
 
     /// Voice transcription configuration (Whisper API via Groq).
     #[serde(default)]
+    #[has_secrets]
     pub transcription: TranscriptionConfig,
 
     /// Text-to-Speech configuration (`[tts]`).
     #[serde(default)]
+    #[has_secrets]
     pub tts: TtsConfig,
 
     /// External MCP server connections (`[mcp]`).
@@ -366,10 +376,12 @@ pub struct Config {
 
     /// Notion integration configuration (`[notion]`).
     #[serde(default)]
+    #[has_secrets]
     pub notion: NotionConfig,
 
     /// Jira integration configuration (`[jira]`).
     #[serde(default)]
+    #[has_secrets]
     pub jira: JiraConfig,
 
     /// Secure inter-node transport configuration (`[node_transport]`).
@@ -849,15 +861,19 @@ pub struct TranscriptionConfig {
     pub max_duration_secs: u64,
     /// OpenAI Whisper STT provider configuration.
     #[serde(default)]
+    #[has_secrets]
     pub openai: Option<OpenAiSttConfig>,
     /// Deepgram STT provider configuration.
     #[serde(default)]
+    #[has_secrets]
     pub deepgram: Option<DeepgramSttConfig>,
     /// AssemblyAI STT provider configuration.
     #[serde(default)]
+    #[has_secrets]
     pub assemblyai: Option<AssemblyAiSttConfig>,
     /// Google Cloud Speech-to-Text provider configuration.
     #[serde(default)]
+    #[has_secrets]
     pub google: Option<GoogleSttConfig>,
     /// Local/self-hosted Whisper-compatible STT provider.
     #[serde(default)]
@@ -1074,7 +1090,7 @@ fn default_piper_tts_api_url() -> String {
 }
 
 /// Text-to-Speech configuration (`[tts]`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
 pub struct TtsConfig {
     /// Enable TTS synthesis.
     #[serde(default)]
@@ -1093,12 +1109,15 @@ pub struct TtsConfig {
     pub max_text_length: usize,
     /// OpenAI TTS provider configuration (`[tts.openai]`).
     #[serde(default)]
+    #[has_secrets]
     pub openai: Option<OpenAiTtsConfig>,
     /// ElevenLabs TTS provider configuration (`[tts.elevenlabs]`).
     #[serde(default)]
+    #[has_secrets]
     pub elevenlabs: Option<ElevenLabsTtsConfig>,
     /// Google Cloud TTS provider configuration (`[tts.google]`).
     #[serde(default)]
+    #[has_secrets]
     pub google: Option<GoogleTtsConfig>,
     /// Edge TTS provider configuration (`[tts.edge]`).
     #[serde(default)]
@@ -2445,7 +2464,7 @@ impl Default for BrowserComputerUseConfig {
 /// Browser automation configuration (`[browser]` section).
 ///
 /// Controls the `browser_open` tool and browser automation backends.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
 pub struct BrowserConfig {
     /// Enable `browser_open` tool (opens URLs in the system browser without scraping)
     #[serde(default)]
@@ -2470,6 +2489,7 @@ pub struct BrowserConfig {
     pub native_chrome_path: Option<String>,
     /// Computer-use sidecar configuration
     #[serde(default)]
+    #[has_secrets]
     pub computer_use: BrowserComputerUseConfig,
 }
 
@@ -4717,18 +4737,20 @@ fn parse_proxy_enabled(raw: &str) -> Option<bool> {
 // ── Memory ───────────────────────────────────────────────────
 
 /// Persistent storage configuration (`[storage]` section).
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, HasSecrets)]
 pub struct StorageConfig {
     /// Storage provider settings (e.g. sqlite, postgres).
     #[serde(default)]
+    #[has_secrets]
     pub provider: StorageProviderSection,
 }
 
 /// Wrapper for the storage provider configuration section.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, HasSecrets)]
 pub struct StorageProviderSection {
     /// Storage provider backend settings.
     #[serde(default)]
+    #[has_secrets]
     pub config: StorageProviderConfig,
 }
 
@@ -5917,7 +5939,7 @@ impl Default for CronConfig {
 /// Tunnel configuration for exposing the gateway publicly (`[tunnel]` section).
 ///
 /// Supported providers: `"none"` (default), `"cloudflare"`, `"tailscale"`, `"ngrok"`, `"openvpn"`, `"pinggy"`, `"custom"`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
 pub struct TunnelConfig {
     /// Tunnel provider: `"none"`, `"cloudflare"`, `"tailscale"`, `"ngrok"`, `"openvpn"`, `"pinggy"`, or `"custom"`. Default: `"none"`.
     pub provider: String,
@@ -5944,6 +5966,7 @@ pub struct TunnelConfig {
 
     /// Pinggy tunnel configuration (used when `provider = "pinggy"`).
     #[serde(default)]
+    #[has_secrets]
     pub pinggy: Option<PinggyTunnelConfig>,
 }
 
@@ -6061,60 +6084,80 @@ impl<T: ChannelConfig> crate::config::traits::ConfigHandle for ConfigWrapper<T> 
 /// Each channel sub-section (e.g. `telegram`, `discord`) is optional;
 /// setting it to `Some(...)` enables that channel.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, HasSecrets)]
 pub struct ChannelsConfig {
     /// Enable the CLI interactive channel. Default: `true`.
     #[serde(default = "default_true")]
     pub cli: bool,
     /// Telegram bot channel configuration.
+    #[has_secrets]
     pub telegram: Option<TelegramConfig>,
     /// Discord bot channel configuration.
+    #[has_secrets]
     pub discord: Option<DiscordConfig>,
     /// Discord history channel — logs ALL messages and forwards @mentions to agent.
     pub discord_history: Option<DiscordHistoryConfig>,
     /// Slack bot channel configuration.
+    #[has_secrets]
     pub slack: Option<SlackConfig>,
     /// Mattermost bot channel configuration.
+    #[has_secrets]
     pub mattermost: Option<MattermostConfig>,
     /// Webhook channel configuration.
+    #[has_secrets]
     pub webhook: Option<WebhookConfig>,
     /// iMessage channel configuration (macOS only).
     pub imessage: Option<IMessageConfig>,
     /// Matrix channel configuration.
+    #[has_secrets]
     pub matrix: Option<MatrixConfig>,
     /// Signal channel configuration.
     pub signal: Option<SignalConfig>,
     /// WhatsApp channel configuration (Cloud API or Web mode).
+    #[has_secrets]
     pub whatsapp: Option<WhatsAppConfig>,
     /// Linq Partner API channel configuration.
+    #[has_secrets]
     pub linq: Option<LinqConfig>,
     /// WATI WhatsApp Business API channel configuration.
+    #[has_secrets]
     pub wati: Option<WatiConfig>,
     /// Nextcloud Talk bot channel configuration.
+    #[has_secrets]
     pub nextcloud_talk: Option<NextcloudTalkConfig>,
     /// Email channel configuration.
+    #[has_secrets]
     pub email: Option<crate::channels::email_channel::EmailConfig>,
     /// Gmail Pub/Sub push notification channel configuration.
+    #[has_secrets]
     pub gmail_push: Option<crate::channels::gmail_push::GmailPushConfig>,
     /// IRC channel configuration.
+    #[has_secrets]
     pub irc: Option<IrcConfig>,
     /// Lark channel configuration.
+    #[has_secrets]
     pub lark: Option<LarkConfig>,
     /// Feishu channel configuration.
+    #[has_secrets]
     pub feishu: Option<FeishuConfig>,
     /// DingTalk channel configuration.
+    #[has_secrets]
     pub dingtalk: Option<DingTalkConfig>,
     /// WeCom (WeChat Enterprise) Bot Webhook channel configuration.
+    #[has_secrets]
     pub wecom: Option<WeComConfig>,
     /// QQ Official Bot channel configuration.
+    #[has_secrets]
     pub qq: Option<QQConfig>,
     /// X/Twitter channel configuration.
     pub twitter: Option<TwitterConfig>,
     /// Mochat customer service channel configuration.
     pub mochat: Option<MochatConfig>,
     #[cfg(feature = "channel-nostr")]
+    #[has_secrets]
     pub nostr: Option<NostrConfig>,
     /// ClawdTalk voice channel configuration.
+    #[has_secrets]
     pub clawdtalk: Option<crate::channels::ClawdTalkConfig>,
     /// Reddit channel configuration (OAuth2 bot).
     pub reddit: Option<RedditConfig>,
@@ -7124,7 +7167,7 @@ impl ChannelConfig for FeishuConfig {
 // ── Security Config ─────────────────────────────────────────────────
 
 /// Security configuration for sandboxing, resource limits, and audit logging
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, HasSecrets)]
 pub struct SecurityConfig {
     /// Sandbox configuration
     #[serde(default)]
@@ -7148,6 +7191,7 @@ pub struct SecurityConfig {
 
     /// Nevis IAM integration for SSO/MFA authentication and role-based access.
     #[serde(default)]
+    #[has_secrets]
     pub nevis: NevisConfig,
 
     /// WebAuthn / FIDO2 hardware key authentication configuration.
