@@ -15908,12 +15908,15 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
         let fields = mx.secret_fields();
-        assert_eq!(fields.len(), 1);
+        assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].name, "channels.matrix.access-token");
         assert_eq!(fields[0].category, "Channels");
         assert!(fields[0].is_set);
+        assert_eq!(fields[1].name, "channels.matrix.recovery-key");
+        assert!(!fields[1].is_set);
     }
 
     #[test]
@@ -15930,6 +15933,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
         let fields = mx.secret_fields();
         assert!(!fields[0].is_set);
@@ -15949,6 +15953,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
         mx.set_secret("channels.matrix.access-token", "new-token".into())
             .unwrap();
@@ -15969,6 +15974,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
         assert!(mx
             .set_secret("channels.matrix.nonexistent", "val".into())
@@ -15991,12 +15997,14 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         });
 
         let fields = config.secret_fields();
         let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
         assert!(names.contains(&"api-key"));
         assert!(names.contains(&"channels.matrix.access-token"));
+        assert!(names.contains(&"channels.matrix.recovery-key"));
     }
 
     #[test]
@@ -16014,6 +16022,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         });
 
         config
@@ -16057,6 +16066,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
 
         // Encrypt
@@ -16086,6 +16096,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
 
         mx.encrypt_secrets(&store).unwrap();
@@ -16113,6 +16124,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
+            recovery_key: None,
         };
 
         mx.encrypt_secrets(&store).unwrap();
