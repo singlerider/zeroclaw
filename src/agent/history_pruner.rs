@@ -363,7 +363,7 @@ mod tests {
         };
         let stats = prune_history(&mut messages, &config);
         assert!(stats.dropped_messages >= 3); // assistant + 2 tools dropped together
-                                              // No orphaned tool messages
+        // No orphaned tool messages
         for (i, m) in messages.iter().enumerate() {
             if m.role == "tool" {
                 assert!(
