@@ -1,7 +1,7 @@
 use crate::cli_input::Input;
 use crate::config::schema::{
     DingTalkConfig, IrcConfig, LarkReceiveMode, LinqConfig, NextcloudTalkConfig, QQConfig,
-    SignalConfig, StreamMode, WhatsAppChatPolicy, WhatsAppConfig, WhatsAppWebMode,
+    SignalConfig, StreamMode, WhatsAppConfig,
 };
 #[cfg(feature = "channel-nostr")]
 use crate::config::schema::{NostrConfig, default_nostr_relays};
@@ -3757,9 +3757,21 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 print_bullet("3. Copy the bot token and paste it below");
                 println!();
 
-                let token: String = Input::new()
-                    .with_prompt("  Bot token (from @BotFather)")
+                let has_existing_tg = config.telegram.is_some();
+                let token_prompt_tg = if has_existing_tg {
+                    "  Bot token (Enter to keep existing)"
+                } else {
+                    "  Bot token (from @BotFather)"
+                };
+                let token_input: String = Input::new()
+                    .with_prompt(token_prompt_tg)
+                    .allow_empty(has_existing_tg)
                     .interact_text()?;
+                let token = if token_input.trim().is_empty() && has_existing_tg {
+                    config.telegram.as_ref().unwrap().bot_token.clone()
+                } else {
+                    token_input
+                };
 
                 if token.trim().is_empty() {
                     println!("  {} Skipped", style("→").dim());
@@ -3809,10 +3821,16 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 );
                 print_bullet("Use '*' only for temporary open testing.");
 
+                let tg_users_default = config
+                    .telegram
+                    .as_ref()
+                    .map(|tg| tg.allowed_users.join(", "))
+                    .unwrap_or_default();
                 let users_str: String = Input::new()
                     .with_prompt(
                         "  Allowed Telegram identities (comma-separated: username without '@' and/or numeric user ID, '*' for all)",
                     )
+                    .default(tg_users_default)
                     .allow_empty(true)
                     .interact_text()?;
 
@@ -3833,15 +3851,16 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     );
                 }
 
+                let existing_tg = config.telegram.as_ref();
                 config.telegram = Some(TelegramConfig {
                     bot_token: token,
                     allowed_users,
-                    stream_mode: StreamMode::default(),
-                    draft_update_interval_ms: 1000,
-                    interrupt_on_new_message: false,
-                    mention_only: false,
-                    ack_reactions: None,
-                    proxy_url: None,
+                    stream_mode: existing_tg.map(|t| t.stream_mode).unwrap_or_default(),
+                    draft_update_interval_ms: existing_tg.map(|t| t.draft_update_interval_ms).unwrap_or(1000),
+                    interrupt_on_new_message: existing_tg.map(|t| t.interrupt_on_new_message).unwrap_or(false),
+                    mention_only: existing_tg.map(|t| t.mention_only).unwrap_or(false),
+                    ack_reactions: existing_tg.and_then(|t| t.ack_reactions),
+                    proxy_url: existing_tg.and_then(|t| t.proxy_url.clone()),
                 });
             }
             ChannelMenuChoice::Discord => {
@@ -3858,7 +3877,21 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 print_bullet("4. Invite bot to your server with messages permission");
                 println!();
 
-                let token: String = Input::new().with_prompt("  Bot token").interact_text()?;
+                let has_existing_dc = config.discord.is_some();
+                let dc_token_prompt = if has_existing_dc {
+                    "  Bot token (Enter to keep existing)"
+                } else {
+                    "  Bot token"
+                };
+                let token_input: String = Input::new()
+                    .with_prompt(dc_token_prompt)
+                    .allow_empty(has_existing_dc)
+                    .interact_text()?;
+                let token = if token_input.trim().is_empty() && has_existing_dc {
+                    config.discord.as_ref().unwrap().bot_token.clone()
+                } else {
+                    token_input
+                };
 
                 if token.trim().is_empty() {
                     println!("  {} Skipped", style("→").dim());
@@ -3900,8 +3933,14 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     }
                 }
 
+                let guild_default = config
+                    .discord
+                    .as_ref()
+                    .and_then(|dc| dc.guild_id.clone())
+                    .unwrap_or_default();
                 let guild: String = Input::new()
                     .with_prompt("  Server (guild) ID (optional, Enter to skip)")
+                    .default(guild_default)
                     .allow_empty(true)
                     .interact_text()?;
 
@@ -3911,10 +3950,16 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 );
                 print_bullet("Use '*' only for temporary open testing.");
 
+                let dc_users_default = config
+                    .discord
+                    .as_ref()
+                    .map(|dc| dc.allowed_users.join(", "))
+                    .unwrap_or_default();
                 let allowed_users_str: String = Input::new()
                     .with_prompt(
                         "  Allowed Discord user IDs (comma-separated, recommended: your own ID, '*' for all)",
                     )
+                    .default(dc_users_default)
                     .allow_empty(true)
                     .interact_text()?;
 
@@ -3935,17 +3980,18 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     );
                 }
 
+                let existing_dc = config.discord.as_ref();
                 config.discord = Some(DiscordConfig {
                     bot_token: token,
                     guild_id: if guild.is_empty() { None } else { Some(guild) },
                     allowed_users,
-                    listen_to_bots: false,
-                    interrupt_on_new_message: false,
-                    mention_only: false,
-                    proxy_url: None,
-                    stream_mode: StreamMode::MultiMessage,
-                    draft_update_interval_ms: 1000,
-                    multi_message_delay_ms: 800,
+                    listen_to_bots: existing_dc.map(|d| d.listen_to_bots).unwrap_or(false),
+                    interrupt_on_new_message: existing_dc.map(|d| d.interrupt_on_new_message).unwrap_or(false),
+                    mention_only: existing_dc.map(|d| d.mention_only).unwrap_or(false),
+                    proxy_url: existing_dc.and_then(|d| d.proxy_url.clone()),
+                    stream_mode: existing_dc.map(|d| d.stream_mode).unwrap_or(StreamMode::MultiMessage),
+                    draft_update_interval_ms: existing_dc.map(|d| d.draft_update_interval_ms).unwrap_or(1000),
+                    multi_message_delay_ms: existing_dc.map(|d| d.multi_message_delay_ms).unwrap_or(800),
                 });
             }
             ChannelMenuChoice::Slack => {
@@ -3961,9 +4007,21 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 print_bullet("3. Install to workspace and copy the Bot Token");
                 println!();
 
-                let token: String = Input::new()
-                    .with_prompt("  Bot token (xoxb-...)")
+                let has_existing_sl = config.slack.is_some();
+                let sl_token_prompt = if has_existing_sl {
+                    "  Bot token (Enter to keep existing)"
+                } else {
+                    "  Bot token (xoxb-...)"
+                };
+                let token_input: String = Input::new()
+                    .with_prompt(sl_token_prompt)
+                    .allow_empty(has_existing_sl)
                     .interact_text()?;
+                let token = if token_input.trim().is_empty() && has_existing_sl {
+                    config.slack.as_ref().unwrap().bot_token.clone()
+                } else {
+                    token_input
+                };
 
                 if token.trim().is_empty() {
                     println!("  {} Skipped", style("→").dim());
@@ -4018,15 +4076,27 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     }
                 }
 
+                let sl_app_default = config
+                    .slack
+                    .as_ref()
+                    .and_then(|sl| sl.app_token.clone())
+                    .unwrap_or_default();
                 let app_token: String = Input::new()
                     .with_prompt("  App token (xapp-..., optional, Enter to skip)")
+                    .default(sl_app_default)
                     .allow_empty(true)
                     .interact_text()?;
 
+                let sl_channel_default = config
+                    .slack
+                    .as_ref()
+                    .and_then(|sl| sl.channel_id.clone())
+                    .unwrap_or_default();
                 let channel: String = Input::new()
                     .with_prompt(
                         "  Default channel ID (optional, Enter to skip for all accessible channels; '*' also means all)",
                     )
+                    .default(sl_channel_default)
                     .allow_empty(true)
                     .interact_text()?;
 
@@ -4036,10 +4106,16 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 );
                 print_bullet("Use '*' only for temporary open testing.");
 
+                let sl_users_default = config
+                    .slack
+                    .as_ref()
+                    .map(|sl| sl.allowed_users.join(", "))
+                    .unwrap_or_default();
                 let allowed_users_str: String = Input::new()
                     .with_prompt(
                         "  Allowed Slack user IDs (comma-separated, recommended: your own member ID, '*' for all)",
                     )
+                    .default(sl_users_default)
                     .allow_empty(true)
                     .interact_text()?;
 
@@ -4060,6 +4136,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     );
                 }
 
+                let existing_sl = config.slack.as_ref();
                 config.slack = Some(SlackConfig {
                     bot_token: token,
                     app_token: if app_token.is_empty() {
@@ -4072,16 +4149,16 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     } else {
                         Some(channel)
                     },
-                    channel_ids: Vec::new(),
+                    channel_ids: existing_sl.map(|s| s.channel_ids.clone()).unwrap_or_default(),
                     allowed_users,
-                    interrupt_on_new_message: false,
-                    thread_replies: None,
-                    mention_only: false,
-                    use_markdown_blocks: false,
-                    proxy_url: None,
-                    stream_drafts: false,
-                    draft_update_interval_ms: 1200,
-                    cancel_reaction: None,
+                    interrupt_on_new_message: existing_sl.map(|s| s.interrupt_on_new_message).unwrap_or(false),
+                    thread_replies: existing_sl.and_then(|s| s.thread_replies),
+                    mention_only: existing_sl.map(|s| s.mention_only).unwrap_or(false),
+                    use_markdown_blocks: existing_sl.map(|s| s.use_markdown_blocks).unwrap_or(false),
+                    proxy_url: existing_sl.and_then(|s| s.proxy_url.clone()),
+                    stream_drafts: existing_sl.map(|s| s.stream_drafts).unwrap_or(false),
+                    draft_update_interval_ms: existing_sl.map(|s| s.draft_update_interval_ms).unwrap_or(1200),
+                    cancel_reaction: existing_sl.and_then(|s| s.cancel_reaction.clone()),
                 });
             }
             ChannelMenuChoice::IMessage => {
@@ -4384,7 +4461,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     allowed_from,
                     ignore_attachments,
                     ignore_stories,
-                    proxy_url: None,
+                    proxy_url: config.signal.as_ref().and_then(|s| s.proxy_url.clone()),
                 });
 
                 println!("  {} Signal configured", style("✅").green().bold());
@@ -4471,6 +4548,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                         users_str.split(',').map(|s| s.trim().to_string()).collect()
                     };
 
+                    let existing_wa = config.whatsapp.as_ref();
                     config.whatsapp = Some(WhatsAppConfig {
                         access_token: None,
                         phone_number_id: None,
@@ -4482,13 +4560,13 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                         pair_code: (!pair_code.trim().is_empty())
                             .then(|| pair_code.trim().to_string()),
                         allowed_numbers,
-                        mode: WhatsAppWebMode::default(),
-                        dm_policy: WhatsAppChatPolicy::default(),
-                        group_policy: WhatsAppChatPolicy::default(),
-                        self_chat_mode: false,
-                        dm_mention_patterns: vec![],
-                        group_mention_patterns: vec![],
-                        proxy_url: None,
+                        mode: existing_wa.map(|w| w.mode.clone()).unwrap_or_default(),
+                        dm_policy: existing_wa.map(|w| w.dm_policy.clone()).unwrap_or_default(),
+                        group_policy: existing_wa.map(|w| w.group_policy.clone()).unwrap_or_default(),
+                        self_chat_mode: existing_wa.map(|w| w.self_chat_mode).unwrap_or(false),
+                        dm_mention_patterns: existing_wa.map(|w| w.dm_mention_patterns.clone()).unwrap_or_default(),
+                        group_mention_patterns: existing_wa.map(|w| w.group_mention_patterns.clone()).unwrap_or_default(),
+                        proxy_url: existing_wa.and_then(|w| w.proxy_url.clone()),
                     });
 
                     println!(
@@ -4581,22 +4659,23 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     users_str.split(',').map(|s| s.trim().to_string()).collect()
                 };
 
+                let existing_wa = config.whatsapp.as_ref();
                 config.whatsapp = Some(WhatsAppConfig {
                     access_token: Some(access_token.trim().to_string()),
                     phone_number_id: Some(phone_number_id.trim().to_string()),
                     verify_token: Some(verify_token.trim().to_string()),
-                    app_secret: None, // Can be set via ZEROCLAW_WHATSAPP_APP_SECRET env var
+                    app_secret: existing_wa.and_then(|w| w.app_secret.clone()),
                     session_path: None,
                     pair_phone: None,
                     pair_code: None,
                     allowed_numbers,
-                    mode: WhatsAppWebMode::default(),
-                    dm_policy: WhatsAppChatPolicy::default(),
-                    group_policy: WhatsAppChatPolicy::default(),
-                    self_chat_mode: false,
-                    dm_mention_patterns: vec![],
-                    group_mention_patterns: vec![],
-                    proxy_url: None,
+                    mode: existing_wa.map(|w| w.mode.clone()).unwrap_or_default(),
+                    dm_policy: existing_wa.map(|w| w.dm_policy.clone()).unwrap_or_default(),
+                    group_policy: existing_wa.map(|w| w.group_policy.clone()).unwrap_or_default(),
+                    self_chat_mode: existing_wa.map(|w| w.self_chat_mode).unwrap_or(false),
+                    dm_mention_patterns: existing_wa.map(|w| w.dm_mention_patterns.clone()).unwrap_or_default(),
+                    group_mention_patterns: existing_wa.map(|w| w.group_mention_patterns.clone()).unwrap_or_default(),
+                    proxy_url: existing_wa.and_then(|w| w.proxy_url.clone()),
                 });
             }
             ChannelMenuChoice::Linq => {
@@ -4809,7 +4888,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     server: server.trim().to_string(),
                     port,
                     nickname: nickname.trim().to_string(),
-                    username: None,
+                    username: config.irc.as_ref().and_then(|i| i.username.clone()),
                     channels,
                     allowed_users,
                     server_password: if server_password.trim().is_empty() {
@@ -4849,14 +4928,15 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     .allow_empty(true)
                     .interact_text()?;
 
+                let existing_wh = config.webhook.as_ref();
                 config.webhook = Some(WebhookConfig {
                     port: port.parse().unwrap_or(8080),
-                    listen_path: None,
-                    send_url: None,
-                    send_method: None,
-                    auth_header: None,
+                    listen_path: existing_wh.and_then(|w| w.listen_path.clone()),
+                    send_url: existing_wh.and_then(|w| w.send_url.clone()),
+                    send_method: existing_wh.and_then(|w| w.send_method.clone()),
+                    auth_header: existing_wh.and_then(|w| w.auth_header.clone()),
                     secret: if secret.is_empty() {
-                        None
+                        existing_wh.and_then(|w| w.secret.clone())
                     } else {
                         Some(secret)
                     },
@@ -4921,17 +5001,18 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                         .collect()
                 };
 
+                let existing_nc = config.nextcloud_talk.as_ref();
                 config.nextcloud_talk = Some(NextcloudTalkConfig {
                     base_url,
                     app_token: app_token.trim().to_string(),
                     webhook_secret: if webhook_secret.trim().is_empty() {
-                        None
+                        existing_nc.and_then(|n| n.webhook_secret.clone())
                     } else {
                         Some(webhook_secret.trim().to_string())
                     },
                     allowed_users,
-                    proxy_url: None,
-                    bot_name: None,
+                    proxy_url: existing_nc.and_then(|n| n.proxy_url.clone()),
+                    bot_name: existing_nc.and_then(|n| n.bot_name.clone()),
                 });
 
                 println!("  {} Nextcloud Talk configured", style("✅").green().bold());
@@ -5004,7 +5085,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     client_id,
                     client_secret,
                     allowed_users,
-                    proxy_url: None,
+                    proxy_url: config.dingtalk.as_ref().and_then(|d| d.proxy_url.clone()),
                 });
             }
             ChannelMenuChoice::QqOfficial => {
@@ -5081,7 +5162,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     app_id,
                     app_secret,
                     allowed_users,
-                    proxy_url: None,
+                    proxy_url: config.qq.as_ref().and_then(|q| q.proxy_url.clone()),
                 });
             }
             ChannelMenuChoice::Lark | ChannelMenuChoice::Feishu => {
@@ -5257,17 +5338,18 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     );
                 }
 
+                let existing_lk = config.lark.as_ref();
                 config.lark = Some(LarkConfig {
                     app_id,
                     app_secret,
                     verification_token,
-                    encrypt_key: None,
+                    encrypt_key: existing_lk.and_then(|l| l.encrypt_key.clone()),
                     allowed_users,
-                    mention_only: false,
+                    mention_only: existing_lk.map(|l| l.mention_only).unwrap_or(false),
                     use_feishu: is_feishu,
                     receive_mode,
                     port,
-                    proxy_url: None,
+                    proxy_url: existing_lk.and_then(|l| l.proxy_url.clone()),
                 });
             }
             #[cfg(feature = "channel-nostr")]
