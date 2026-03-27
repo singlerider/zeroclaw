@@ -104,7 +104,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
     let (provider, api_key, model, provider_api_url) = setup_provider(&workspace_dir).await?;
 
     print_step(3, 9, "Channels (How You Talk to ZeroClaw)");
-    let channels_config = setup_channels()?;
+    let channels_config = setup_channels(None)?;
 
     print_step(4, 9, "Tunnel (Expose to Internet)");
     let tunnel_config = setup_tunnel()?;
@@ -276,7 +276,7 @@ pub async fn run_channels_repair_wizard() -> Result<Config> {
     let mut config = Box::pin(Config::load_or_init()).await?;
 
     print_step(1, 1, "Channels (How You Talk to ZeroClaw)");
-    config.channels_config = setup_channels()?;
+    config.channels_config = setup_channels(Some(config.channels_config.clone()))?;
     config.save().await?;
     persist_workspace_selection(&config.config_path).await?;
 
@@ -3585,12 +3585,12 @@ fn channel_menu_choices() -> &'static [ChannelMenuChoice] {
 }
 
 #[allow(clippy::too_many_lines)]
-fn setup_channels() -> Result<ChannelsConfig> {
+fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
     print_bullet("Channels let you talk to ZeroClaw from anywhere.");
     print_bullet("CLI is always available. Connect more channels now.");
     println!();
 
-    let mut config = ChannelsConfig::default();
+    let mut config = existing.unwrap_or_default();
     let menu_choices = channel_menu_choices();
 
     loop {
@@ -7649,5 +7649,61 @@ mod tests {
             proxy_url: None,
         });
         assert!(has_launchable_channels(&channels));
+    }
+
+    #[test]
+    fn channels_repair_preserves_unmodified_channels() {
+        use crate::config::schema::{DiscordConfig, MatrixConfig, StreamMode};
+
+        let mut existing = ChannelsConfig::default();
+        existing.discord = Some(DiscordConfig {
+            bot_token: "keep-me".into(),
+            guild_id: None,
+            allowed_users: vec![],
+            listen_to_bots: false,
+            interrupt_on_new_message: false,
+            mention_only: false,
+            proxy_url: None,
+            stream_mode: StreamMode::default(),
+            draft_update_interval_ms: 1500,
+            multi_message_delay_ms: 800,
+        });
+        existing.matrix = Some(MatrixConfig {
+            homeserver: "https://m.org".into(),
+            access_token: "old-token".into(),
+            user_id: None,
+            device_id: None,
+            room_id: "!r:m".into(),
+            allowed_users: vec![],
+            allowed_rooms: vec![],
+            interrupt_on_new_message: false,
+            stream_mode: StreamMode::default(),
+            draft_update_interval_ms: 1500,
+            multi_message_delay_ms: 800,
+            recovery_key: None,
+        });
+
+        // Simulate the wizard starting from existing config and only updating Matrix
+        let mut config = existing;
+        config.matrix.as_mut().unwrap().access_token = "new-token".into();
+
+        // Discord should be untouched
+        assert!(config.discord.is_some());
+        assert_eq!(config.discord.as_ref().unwrap().bot_token, "keep-me");
+
+        // Matrix should reflect the update
+        assert_eq!(
+            config.matrix.as_ref().unwrap().access_token,
+            "new-token"
+        );
+    }
+
+    #[test]
+    fn channels_fresh_install_starts_empty() {
+        let config: ChannelsConfig = None.unwrap_or_default();
+        assert!(config.discord.is_none());
+        assert!(config.matrix.is_none());
+        assert!(config.telegram.is_none());
+        assert!(config.slack.is_none());
     }
 }
