@@ -7926,7 +7926,7 @@ mod tests {
 
     #[test]
     fn channels_fresh_install_starts_empty() {
-        let config: ChannelsConfig = None.unwrap_or_default();
+        let config = ChannelsConfig::default();
         assert!(config.discord.is_none());
         assert!(config.matrix.is_none());
         assert!(config.telegram.is_none());
