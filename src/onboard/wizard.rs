@@ -4140,19 +4140,37 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                 print_bullet("Get a token via Element → Settings → Help & About → Access Token.");
                 println!();
 
-                let homeserver: String = Input::new()
-                    .with_prompt("  Homeserver URL (e.g. https://matrix.org)")
-                    .interact_text()?;
+                let homeserver: String = if let Some(ref mx) = config.matrix {
+                    Input::new()
+                        .with_prompt("  Homeserver URL (e.g. https://matrix.org)")
+                        .default(mx.homeserver.clone())
+                        .interact_text()?
+                } else {
+                    Input::new()
+                        .with_prompt("  Homeserver URL (e.g. https://matrix.org)")
+                        .interact_text()?
+                };
 
                 if homeserver.trim().is_empty() {
                     println!("  {} Skipped", style("→").dim());
                     continue;
                 }
 
-                let access_token: String = dialoguer::Password::new()
-                    .with_prompt("  Access token")
-                    .allow_empty_password(false)
+                let has_existing_token = config.matrix.is_some();
+                let token_prompt = if has_existing_token {
+                    "  Access token (Enter to keep existing)"
+                } else {
+                    "  Access token"
+                };
+                let access_token_input: String = dialoguer::Password::new()
+                    .with_prompt(token_prompt)
+                    .allow_empty_password(has_existing_token)
                     .interact()?;
+                let access_token = if access_token_input.is_empty() && has_existing_token {
+                    config.matrix.as_ref().unwrap().access_token.clone()
+                } else {
+                    access_token_input
+                };
 
                 // Test connection (run entirely in separate thread — Response must be used/dropped there)
                 let hs = homeserver.trim_end_matches('/');
@@ -4213,13 +4231,25 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     }
                 };
 
-                let room_id: String = Input::new()
-                    .with_prompt("  Room ID (e.g. !abc123:matrix.org)")
-                    .interact_text()?;
+                let room_id: String = if let Some(ref mx) = config.matrix {
+                    Input::new()
+                        .with_prompt("  Room ID (e.g. !abc123:matrix.org)")
+                        .default(mx.room_id.clone())
+                        .interact_text()?
+                } else {
+                    Input::new()
+                        .with_prompt("  Room ID (e.g. !abc123:matrix.org)")
+                        .interact_text()?
+                };
 
+                let users_default = config
+                    .matrix
+                    .as_ref()
+                    .map(|mx| mx.allowed_users.join(", "))
+                    .unwrap_or_else(|| "*".into());
                 let users_str: String = Input::new()
                     .with_prompt("  Allowed users (comma-separated @user:server, or * for all)")
-                    .default("*")
+                    .default(users_default)
                     .interact_text()?;
 
                 let allowed_users = if users_str.trim() == "*" {
@@ -4228,16 +4258,24 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     users_str.split(',').map(|s| s.trim().to_string()).collect()
                 };
 
+                let has_existing_recovery = config.matrix.as_ref().is_some_and(|m| m.recovery_key.is_some());
+                let recovery_prompt = if has_existing_recovery {
+                    "  E2EE recovery key (Enter to keep existing — see docs/security/matrix-e2ee-guide.md section 4G)"
+                } else {
+                    "  E2EE recovery key (or Enter to skip — see docs/security/matrix-e2ee-guide.md section 4G)"
+                };
                 let recovery_input: String = dialoguer::Password::new()
-                    .with_prompt("  E2EE recovery key (or Enter to skip — see docs/security/matrix-e2ee-guide.md section 4G)")
+                    .with_prompt(recovery_prompt)
                     .allow_empty_password(true)
                     .interact()?;
                 let recovery_key = if recovery_input.trim().is_empty() {
-                    None
+                    // Keep existing recovery key if present
+                    config.matrix.as_ref().and_then(|m| m.recovery_key.clone())
                 } else {
                     Some(recovery_input.trim().to_string())
                 };
 
+                let existing_mx = config.matrix.as_ref();
                 config.matrix = Some(MatrixConfig {
                     homeserver: homeserver.trim_end_matches('/').to_string(),
                     access_token,
@@ -4245,11 +4283,12 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                     device_id: detected_device_id,
                     room_id,
                     allowed_users,
-                    allowed_rooms: vec![],
-                    interrupt_on_new_message: false,
-                    stream_mode: StreamMode::Partial,
-                    draft_update_interval_ms: 1500,
-                    multi_message_delay_ms: 800,
+                    // Preserve non-prompted fields from existing config (#4655)
+                    allowed_rooms: existing_mx.map(|m| m.allowed_rooms.clone()).unwrap_or_default(),
+                    interrupt_on_new_message: existing_mx.map(|m| m.interrupt_on_new_message).unwrap_or(false),
+                    stream_mode: existing_mx.map(|m| m.stream_mode).unwrap_or(StreamMode::Partial),
+                    draft_update_interval_ms: existing_mx.map(|m| m.draft_update_interval_ms).unwrap_or(1500),
+                    multi_message_delay_ms: existing_mx.map(|m| m.multi_message_delay_ms).unwrap_or(800),
                     recovery_key,
                 });
             }
@@ -7696,6 +7735,71 @@ mod tests {
             config.matrix.as_ref().unwrap().access_token,
             "new-token"
         );
+    }
+
+    #[test]
+    fn matrix_reconfigure_preserves_non_prompted_fields() {
+        use crate::config::schema::{MatrixConfig, StreamMode};
+
+        let mut existing = ChannelsConfig::default();
+        existing.matrix = Some(MatrixConfig {
+            homeserver: "https://m.org".into(),
+            access_token: "tok".into(),
+            user_id: None,
+            device_id: Some("ZEROCLAW".into()),
+            room_id: "!r:m".into(),
+            allowed_users: vec!["@u:m".into()],
+            allowed_rooms: vec!["!keep:m.org".into()],
+            interrupt_on_new_message: true,
+            stream_mode: StreamMode::Partial,
+            draft_update_interval_ms: 2000,
+            multi_message_delay_ms: 1000,
+            recovery_key: Some("recovery-secret".into()),
+        });
+
+        // Simulate re-configure: wizard preserves non-prompted fields
+        let existing_mx = existing.matrix.as_ref();
+        let preserved_rooms = existing_mx
+            .map(|m| m.allowed_rooms.clone())
+            .unwrap_or_default();
+        let preserved_interrupt = existing_mx
+            .map(|m| m.interrupt_on_new_message)
+            .unwrap_or(false);
+        let preserved_stream = existing_mx
+            .map(|m| m.stream_mode)
+            .unwrap_or(StreamMode::Partial);
+        let preserved_draft_ms = existing_mx
+            .map(|m| m.draft_update_interval_ms)
+            .unwrap_or(1500);
+        let preserved_multi_ms = existing_mx
+            .map(|m| m.multi_message_delay_ms)
+            .unwrap_or(800);
+
+        assert_eq!(preserved_rooms, vec!["!keep:m.org".to_string()]);
+        assert!(preserved_interrupt);
+        assert!(matches!(preserved_stream, StreamMode::Partial));
+        assert_eq!(preserved_draft_ms, 2000);
+        assert_eq!(preserved_multi_ms, 1000);
+    }
+
+    #[test]
+    fn matrix_fresh_install_uses_defaults_for_non_prompted_fields() {
+        use crate::config::schema::StreamMode;
+
+        let existing_mx: Option<&crate::config::schema::MatrixConfig> = None;
+        let rooms = existing_mx
+            .map(|m| m.allowed_rooms.clone())
+            .unwrap_or_default();
+        let interrupt = existing_mx
+            .map(|m| m.interrupt_on_new_message)
+            .unwrap_or(false);
+        let stream = existing_mx
+            .map(|m| m.stream_mode)
+            .unwrap_or(StreamMode::Partial);
+
+        assert!(rooms.is_empty());
+        assert!(!interrupt);
+        assert!(matches!(stream, StreamMode::Partial));
     }
 
     #[test]
