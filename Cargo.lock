@@ -12306,6 +12306,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "zeroclaw-robot-kit"
 version = "0.1.0"
 dependencies = [
@@ -12424,6 +12433,7 @@ dependencies = [
  "webpki-roots 1.0.6",
  "which",
  "wiremock",
+ "zeroclaw-macros",
  "zip",
 ]
 
