@@ -4400,6 +4400,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                         .map(|m| m.multi_message_delay_ms)
                         .unwrap_or(800),
                     recovery_key,
+                    mention_only: false,
                 });
             }
             ChannelMenuChoice::Signal => {

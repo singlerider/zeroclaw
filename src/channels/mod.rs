@@ -4576,6 +4576,7 @@ fn collect_configured_channels(
                     mx.draft_update_interval_ms,
                     mx.multi_message_delay_ms,
                 )
+                .with_mention_only(mx.mention_only)
                 .with_transcription(config.transcription.clone()),
             ),
         });
