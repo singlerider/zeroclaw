@@ -9495,9 +9495,7 @@ impl Config {
                 )?;
             }
 
-            // Decrypt gateway paired tokens
-=======
->>>>>>> 98c95277 (refactor(config): replace manual encrypt/decrypt with macro-derived methods)
+            // Collection secrets not covered by the macro (iterated containers)
             for token in &mut config.gateway.paired_tokens {
                 decrypt_secret(&store, token, "config.gateway.paired_tokens[]")?;
             }
@@ -15976,9 +15974,10 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
         };
-        assert!(mx
-            .set_secret("channels.matrix.nonexistent", "val".into())
-            .is_err());
+        assert!(
+            mx.set_secret("channels.matrix.nonexistent", "val".into())
+                .is_err()
+        );
     }
 
     #[test]
@@ -16044,9 +16043,11 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
     #[test]
     async fn config_set_secret_unknown_fails() {
         let mut config = Config::default();
-        assert!(config
-            .set_secret("nonexistent.field", "val".into())
-            .is_err());
+        assert!(
+            config
+                .set_secret("nonexistent.field", "val".into())
+                .is_err()
+        );
     }
 
     #[test]
