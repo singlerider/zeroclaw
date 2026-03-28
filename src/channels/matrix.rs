@@ -1308,6 +1308,16 @@ impl Channel for MatrixChannel {
             );
         }
 
+        // Send a typing notification in each encrypted room to force the SDK
+        // to process outgoing crypto requests (key claims, key queries).
+        // Without this, encrypted messages aren't decryptable until an
+        // unencrypted event triggers a full sync processing cycle.
+        for room in client.joined_rooms() {
+            let _ = room.typing_notice(true).await;
+            let _ = room.typing_notice(false).await;
+        }
+        tracing::debug!("Matrix: sent typing kickstart to all joined rooms");
+
         let recent_event_cache = Arc::new(Mutex::new((
             std::collections::VecDeque::new(),
             std::collections::HashSet::new(),
@@ -1360,9 +1370,10 @@ impl Channel for MatrixChannel {
                 }
 
                 tracing::debug!(
-                    "Matrix: received message in room {} from {}",
+                    "Matrix: received message in room {} from {} (encryption={:?})",
                     room.room_id(),
-                    event.sender
+                    event.sender,
+                    room.encryption_state()
                 );
 
                 if event.sender == my_user_id {
