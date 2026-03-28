@@ -10629,7 +10629,6 @@ This is an example JSON object for profile settings."#;
             show_receipts_in_response: false,
             media_pipeline: crate::config::MediaPipelineConfig::default(),
             transcription_config: crate::config::TranscriptionConfig::default(),
-            debouncer: Arc::new(debounce::MessageDebouncer::new(std::time::Duration::ZERO)),
         });
 
         process_channel_message(

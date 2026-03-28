@@ -7848,6 +7848,7 @@ mod tests {
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
             recovery_key: None,
+            mention_only: false,
         });
 
         // Simulate the wizard starting from existing config and only updating Matrix
@@ -7880,6 +7881,7 @@ mod tests {
             draft_update_interval_ms: 2000,
             multi_message_delay_ms: 1000,
             recovery_key: Some("recovery-secret".into()),
+            mention_only: false,
         });
 
         // Simulate re-configure: wizard preserves non-prompted fields
