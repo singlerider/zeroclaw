@@ -11,6 +11,7 @@ use matrix_sdk::{
         events::receipt::ReceiptThread,
         events::relation::{Annotation, Thread},
         events::room::MediaSource,
+        events::room::encrypted::OriginalSyncRoomEncryptedEvent,
         events::room::member::StrippedRoomMemberEvent,
         events::room::message::{
             MessageType, OriginalSyncRoomMessageEvent, Relation, ReplacementMetadata,
@@ -45,6 +46,7 @@ pub struct MatrixChannel {
     voice_mode: Arc<AtomicBool>,
     otk_conflict_detected: Arc<AtomicBool>,
     recovery_key: Option<String>,
+    password: Option<String>,
     mention_only: bool,
     transcription: Option<crate::config::TranscriptionConfig>,
     transcription_manager: Option<Arc<super::transcription::TranscriptionManager>>,
@@ -163,6 +165,7 @@ impl MatrixChannel {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -182,6 +185,7 @@ impl MatrixChannel {
             vec![],
             owner_hint,
             device_id_hint,
+            None,
             None,
             None,
         )
@@ -206,6 +210,7 @@ impl MatrixChannel {
             device_id_hint,
             zeroclaw_dir,
             None,
+            None,
         )
     }
 
@@ -219,6 +224,7 @@ impl MatrixChannel {
         device_id_hint: Option<String>,
         zeroclaw_dir: Option<PathBuf>,
         recovery_key: Option<String>,
+        password: Option<String>,
     ) -> Self {
         let homeserver = homeserver.trim_end_matches('/').to_string();
         let access_token = access_token.trim().to_string();
@@ -250,6 +256,7 @@ impl MatrixChannel {
             voice_mode: Arc::new(AtomicBool::new(false)),
             otk_conflict_detected: Arc::new(AtomicBool::new(false)),
             recovery_key,
+            password,
             mention_only: false,
             transcription: None,
             transcription_manager: None,
@@ -405,14 +412,32 @@ impl MatrixChannel {
     }
 
     async fn load_or_generate_device_id(&self) -> anyhow::Result<String> {
-        // Try to load a previously persisted device_id
+        // Try to load a previously persisted device_id — but only if the
+        // crypto store still exists. If the store was deleted (wiped) but
+        // the device_id file remains, the device_id is orphaned: the
+        // homeserver has stale keys for it and other clients will encrypt
+        // to keys we no longer have. In that case, discard the old
+        // device_id and generate a fresh one.
         if let Some(path) = self.device_id_path() {
             if path.exists() {
-                let stored = tokio::fs::read_to_string(&path).await?;
-                let stored = stored.trim().to_string();
-                if !stored.is_empty() {
-                    tracing::info!("Matrix using persisted device_id from {}", path.display());
-                    return Ok(stored);
+                let crypto_store_exists = self
+                    .matrix_store_dir()
+                    .map(|dir| dir.join("matrix-sdk-state.sqlite3").exists())
+                    .unwrap_or(false);
+
+                if crypto_store_exists {
+                    let stored = tokio::fs::read_to_string(&path).await?;
+                    let stored = stored.trim().to_string();
+                    if !stored.is_empty() {
+                        tracing::info!("Matrix using persisted device_id from {}", path.display());
+                        return Ok(stored);
+                    }
+                } else {
+                    tracing::warn!(
+                        "Matrix crypto store is missing but device_id file exists — \
+                         discarding orphaned device_id and generating a new one"
+                    );
+                    let _ = tokio::fs::remove_file(&path).await;
                 }
             }
         }
@@ -610,50 +635,234 @@ impl MatrixChannel {
 
                 let mut client_builder = MatrixSdkClient::builder().homeserver_url(&self.homeserver);
 
-                if let Some(store_dir) = self.matrix_store_dir() {
-                    tokio::fs::create_dir_all(&store_dir).await.map_err(|error| {
+                let store_dir = self.matrix_store_dir();
+                let crypto_store_exists = store_dir
+                    .as_ref()
+                    .map(|dir| dir.join("matrix-sdk-crypto.sqlite3").exists())
+                    .unwrap_or(false);
+
+                if let Some(ref store_dir) = store_dir {
+                    tokio::fs::create_dir_all(store_dir).await.map_err(|error| {
                         anyhow::anyhow!(
                             "Matrix failed to initialize persistent store directory at '{}': {error}",
                             store_dir.display()
                         )
                     })?;
-                    client_builder = client_builder.sqlite_store(&store_dir, None);
+                    client_builder = client_builder.sqlite_store(store_dir, None);
                 }
 
                 let client = client_builder.build().await?;
 
-                let user_id: OwnedUserId = resolved_user_id.parse()?;
-                let session = MatrixSession {
-                    meta: SessionMeta {
-                        user_id,
-                        device_id: resolved_device_id.into(),
-                    },
-                    tokens: SessionTokens {
-                        access_token: self.access_token.clone(),
-                        refresh_token: None,
-                    },
+                // Check for a persisted session from a previous fresh login.
+                let session_path = store_dir.as_ref().map(|d| d.join("session.json"));
+                let persisted_session: Option<(String, String)> = if let Some(ref path) = session_path {
+                    if path.exists() {
+                        tokio::fs::read_to_string(path).await.ok().and_then(|s| {
+                            let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+                            Some((
+                                v.get("access_token")?.as_str()?.to_string(),
+                                v.get("device_id")?.as_str()?.to_string(),
+                            ))
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 };
 
-                client.restore_session(session).await?;
-                tracing::debug!("Matrix session restored for device");
+                if !crypto_store_exists && self.password.is_some() {
+                    // Crypto store missing — old device keys are gone. Log in
+                    // fresh with password to get a new device_id + new keys.
+                    let password = self.password.as_deref().unwrap();
+                    let localpart = resolved_user_id
+                        .strip_prefix('@')
+                        .and_then(|rest| rest.split(':').next())
+                        .unwrap_or(&resolved_user_id);
 
-                // Attempt E2EE key recovery if a recovery key is configured
+                    tracing::warn!(
+                        "Matrix crypto store missing — performing fresh login for new device"
+                    );
+
+                    let login_response = client
+                        .matrix_auth()
+                        .login_username(localpart, password)
+                        .initial_device_display_name("ZeroClaw")
+                        .await
+                        .map_err(|error| anyhow::anyhow!("Matrix fresh login failed: {error}"))?;
+
+                    tracing::info!(
+                        "Matrix fresh login — new device_id={}, user_id={}",
+                        login_response.device_id, login_response.user_id
+                    );
+
+                    // Persist the new session so restarts use the correct token + device_id.
+                    if let Some(ref path) = session_path {
+                        let session_data = serde_json::json!({
+                            "access_token": login_response.access_token,
+                            "device_id": login_response.device_id,
+                        });
+                        if let Err(error) = tokio::fs::write(path, session_data.to_string()).await {
+                            tracing::warn!("Matrix: failed to persist session: {error}");
+                        } else {
+                            tracing::info!("Matrix: persisted new session to {}", path.display());
+                        }
+                    }
+                } else if let Some((ref token, ref device_id)) = persisted_session {
+                    // Restore from a previous fresh login's persisted session.
+                    tracing::info!("Matrix: restoring session from persisted login (device_id={})", device_id);
+                    let user_id: OwnedUserId = resolved_user_id.parse()?;
+                    let session = MatrixSession {
+                        meta: SessionMeta {
+                            user_id,
+                            device_id: device_id.clone().into(),
+                        },
+                        tokens: SessionTokens {
+                            access_token: token.clone(),
+                            refresh_token: None,
+                        },
+                    };
+                    client.restore_session(session).await?;
+                } else {
+                    if !crypto_store_exists {
+                        tracing::error!(
+                            "Matrix crypto store missing and no password configured — \
+                             E2EE will NOT work until a password is added to the config"
+                        );
+                    }
+                    let user_id: OwnedUserId = resolved_user_id.parse()?;
+                    let session = MatrixSession {
+                        meta: SessionMeta {
+                            user_id,
+                            device_id: resolved_device_id.clone().into(),
+                        },
+                        tokens: SessionTokens {
+                            access_token: self.access_token.clone(),
+                            refresh_token: None,
+                        },
+                    };
+                    client.restore_session(session).await?;
+                }
+                tracing::info!(
+                    "Matrix session restored — user_id={}, device_id={}",
+                    resolved_user_id, resolved_device_id
+                );
+
+                // Log our device's identity keys (what other clients use to encrypt to us)
+                if let Ok(Some(own_device)) = client.encryption().get_own_device().await {
+                    tracing::info!(
+                        "Matrix own device: id={}, verified={}, ed25519={:?}, curve25519={:?}",
+                        own_device.device_id(),
+                        own_device.is_verified(),
+                        own_device.ed25519_key().map(|k| k.to_base64()),
+                        own_device.curve25519_key().map(|k| k.to_base64()),
+                    );
+                } else {
+                    tracing::warn!("Matrix: could not read own device from store");
+                }
+
+                // E2EE recovery
                 if let Some(ref key) = self.recovery_key {
                     match client.encryption().recovery().recover(key).await {
                         Ok(()) => {
-                            tracing::info!(
-                                "Matrix E2EE recovery successful — room keys and cross-signing secrets restored from server backup."
-                            );
+                            tracing::info!("Matrix E2EE recovery successful — cross-signing secrets restored");
+                            // Log own device again after recovery (verification may have changed)
+                            if let Ok(Some(own_device)) = client.encryption().get_own_device().await {
+                                tracing::info!(
+                                    "Matrix own device after recovery: id={}, verified={}",
+                                    own_device.device_id(), own_device.is_verified()
+                                );
+                            }
                         }
-                        Err(error) => {
-                            tracing::warn!(
-                                "Matrix E2EE recovery failed: {error}. \
-                                 The recovery key may be incorrect, or server-side key backup may not be configured. \
-                                 The bot will still work in unencrypted rooms. \
-                                 See docs/security/matrix-e2ee-guide.md section 4I."
-                            );
+                        Err(error) => tracing::warn!("Matrix E2EE recovery failed: {error}"),
+                    }
+                }
+
+                // Initial sync: uploads device keys and processes to-device key shares
+                let _ = client.sync_once(SyncSettings::new()).await;
+                tracing::info!("Matrix: initial sync after recovery complete");
+
+                // Verify what the homeserver has for our device keys after sync
+                let keys_query_url = format!(
+                    "{}/_matrix/client/v3/keys/query",
+                    self.homeserver
+                );
+                let query_body = serde_json::json!({
+                    "device_keys": { &resolved_user_id: [] }
+                });
+                match self.http_client
+                    .post(&keys_query_url)
+                    .header("Authorization", self.auth_header_value())
+                    .json(&query_body)
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(body) = resp.json::<serde_json::Value>().await {
+                            if let Some(device_keys) = body
+                                .get("device_keys")
+                                .and_then(|dk| dk.get(&resolved_user_id))
+                                .and_then(|u| u.as_object())
+                            {
+                                for (device_id, device_info) in device_keys {
+                                    let curve_key = device_info
+                                        .get("keys")
+                                        .and_then(|k| k.as_object())
+                                        .and_then(|keys| {
+                                            keys.iter()
+                                                .find(|(k, _)| k.starts_with("curve25519:"))
+                                                .map(|(_, v)| v.as_str().unwrap_or("?"))
+                                        });
+                                    tracing::info!(
+                                        "Matrix HOMESERVER has device {} with curve25519={}",
+                                        device_id,
+                                        curve_key.unwrap_or("unknown")
+                                    );
+                                }
+                            }
                         }
                     }
+                    Ok(resp) => tracing::warn!("Matrix /keys/query failed: {}", resp.status()),
+                    Err(error) => tracing::warn!("Matrix /keys/query failed: {error}"),
+                }
+
+                // Log what the homeserver knows about allowed users' devices
+                for allowed_user in &self.allowed_users {
+                    if allowed_user == "*" { continue; }
+                    let user_id: OwnedUserId = match allowed_user.parse() {
+                        Ok(uid) => uid,
+                        Err(_) => continue,
+                    };
+                    match client.encryption().get_user_devices(&user_id).await {
+                        Ok(devices) => {
+                            for device in devices.devices() {
+                                tracing::info!(
+                                    "Matrix: user {} device {} — verified={}, ed25519={:?}, curve25519={:?}",
+                                    allowed_user,
+                                    device.device_id(),
+                                    device.is_verified(),
+                                    device.ed25519_key().map(|k| k.to_base64()),
+                                    device.curve25519_key().map(|k| k.to_base64()),
+                                );
+                            }
+                        }
+                        Err(error) => tracing::warn!("Matrix: failed to query devices for {}: {error}", allowed_user),
+                    }
+                }
+
+                // Download room keys from backup for all joined rooms.
+                // recover() only imports cross-signing secrets, not megolm keys.
+                if self.recovery_key.is_some() {
+                    let backup_enabled = client.encryption().backups().are_enabled().await;
+                    tracing::info!("Matrix: backup enabled={} before room key download", backup_enabled);
+                    for room in client.joined_rooms() {
+                        let room_id = room.room_id().to_owned();
+                        match client.encryption().backups().download_room_keys_for_room(&room_id).await {
+                            Ok(()) => tracing::info!("Matrix: downloaded room keys for {}", room_id),
+                            Err(error) => tracing::warn!("Matrix: room key download FAILED for {}: {error}", room_id),
+                        }
+                    }
+                    tracing::info!("Matrix: room key download from backup complete");
                 }
 
                 Ok::<MatrixSdkClient, anyhow::Error>(client)
@@ -772,51 +981,11 @@ impl MatrixChannel {
         .to_string()
     }
 
-    async fn log_e2ee_diagnostics(&self, client: &MatrixSdkClient) {
-        match client.encryption().get_own_device().await {
-            Ok(Some(device)) => {
-                if device.is_verified() {
-                    tracing::info!(
-                        "Matrix device '{}' is verified for E2EE.",
-                        device.device_id()
-                    );
-                } else {
-                    tracing::warn!(
-                        "Matrix device '{}' is not verified. Other clients will label bot messages as unverified. \
-                         Verify this device from a trusted session and keep device_id stable across restarts. \
-                         See docs/security/matrix-e2ee-guide.md section 4D.",
-                        device.device_id()
-                    );
-                }
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    "Matrix own-device metadata is unavailable; verify/signing status cannot be determined. \
-                     See docs/security/matrix-e2ee-guide.md section 4D."
-                );
-            }
-            Err(error) => {
-                tracing::warn!("Matrix own-device verification check failed: {error}");
-            }
-        }
-
-        if client.encryption().backups().are_enabled().await {
-            tracing::info!("Matrix room-key backup is enabled for this device.");
-        } else {
-            let _ = client.encryption().backups().disable().await;
-            if self.recovery_key.is_some() {
-                tracing::info!(
-                    "Matrix room-key backup is not active on this device, but a recovery key is configured. \
-                     Room keys will be restored from server backup on startup."
-                );
-            } else {
-                tracing::warn!(
-                    "Matrix room-key backup is not enabled for this device. \
-                     To automatically restore room keys after a device reset, set recovery_key in your Matrix config. \
-                     See docs/security/matrix-e2ee-guide.md section 4I."
-                );
-            }
-        }
+    async fn log_e2ee_diagnostics(&self, _client: &MatrixSdkClient) {
+        // Intentionally minimal. The SDK handles E2EE internally after
+        // restore_session + recover(). Previous versions of this method
+        // called backups().disable() which broke encrypted room decryption
+        // (see #4878). Do not add backup/verification manipulation here.
     }
 }
 
@@ -1108,6 +1277,22 @@ impl Channel for MatrixChannel {
         self.log_e2ee_diagnostics(&client).await;
 
         let _ = client.sync_once(SyncSettings::new()).await;
+
+        // Diagnostic: log all rooms the SDK knows about after initial sync.
+        let joined_rooms: Vec<String> = client
+            .joined_rooms()
+            .iter()
+            .map(|r| r.room_id().to_string())
+            .collect();
+        tracing::info!("Matrix SDK joined rooms after sync: {:?}", joined_rooms);
+        for configured_room in &self.allowed_rooms {
+            if !joined_rooms.iter().any(|r| r == configured_room) {
+                tracing::warn!(
+                    "Matrix: configured allowed_room {} is NOT in joined rooms — bot may need to be invited/joined",
+                    configured_room
+                );
+            }
+        }
 
         if self.allowed_rooms.is_empty() {
             tracing::info!(
@@ -1424,6 +1609,76 @@ impl Channel for MatrixChannel {
                 };
 
                 let _ = tx.send(msg).await;
+            }
+        });
+
+        // UTD handler: log everything, download room keys, notify sender.
+        client.add_event_handler(move |event: OriginalSyncRoomEncryptedEvent, room: Room, client: MatrixSdkClient| {
+            async move {
+                let room_id = room.room_id();
+                tracing::warn!(
+                    "Matrix UTD: event_id={}, room={}, sender={}, content={:?}",
+                    event.event_id, room_id, event.sender, event.content
+                );
+
+                // Log sender's devices as we see them
+                if let Ok(sender_uid) = event.sender.to_string().parse::<OwnedUserId>() {
+                    match client.encryption().get_user_devices(&sender_uid).await {
+                        Ok(devices) => {
+                            for device in devices.devices() {
+                                tracing::info!(
+                                    "Matrix UTD: sender device {} — verified={}, curve25519={:?}",
+                                    device.device_id(),
+                                    device.is_verified(),
+                                    device.curve25519_key().map(|k| k.to_base64()),
+                                );
+                            }
+                        }
+                        Err(error) => tracing::warn!("Matrix UTD: can't query sender devices: {error}"),
+                    }
+                }
+
+                // Log our own device for cross-reference
+                if let Ok(Some(own)) = client.encryption().get_own_device().await {
+                    tracing::info!(
+                        "Matrix UTD: our device {} — curve25519={:?}",
+                        own.device_id(),
+                        own.curve25519_key().map(|k| k.to_base64()),
+                    );
+                }
+
+                // Extract session_id from the encrypted content if megolm
+                let session_id = match &event.content.scheme {
+                    matrix_sdk::ruma::events::room::encrypted::EncryptedEventScheme::MegolmV1AesSha2(c) => {
+                        Some(c.session_id.clone())
+                    }
+                    _ => None,
+                };
+
+                // Try downloading the SPECIFIC session key from backup
+                let backup_enabled = client.encryption().backups().are_enabled().await;
+                tracing::info!("Matrix UTD: backup enabled={}, looking for session_id={:?}", backup_enabled, session_id);
+
+                if let Some(ref sid) = session_id {
+                    match client.encryption().backups().download_room_key(room_id, sid).await {
+                        Ok(true) => tracing::info!("Matrix UTD: downloaded session key {} for {}", sid, room_id),
+                        Ok(false) => tracing::warn!("Matrix UTD: session key {} NOT FOUND in backup for {}", sid, room_id),
+                        Err(error) => tracing::warn!("Matrix UTD: session key download FAILED for {}: {error}", room_id),
+                    }
+                } else {
+                    match client.encryption().backups().download_room_keys_for_room(room_id).await {
+                        Ok(()) => tracing::info!("Matrix UTD: downloaded room keys for {}", room_id),
+                        Err(error) => tracing::warn!("Matrix UTD: room key download FAILED for {}: {error}", room_id),
+                    }
+                }
+
+                let notice = RoomMessageEventContent::notice_plain(
+                    "I couldn't decrypt your message — downloading room keys from backup. \
+                     Please try sending again."
+                );
+                if let Err(error) = room.send(notice).await {
+                    tracing::debug!("Matrix UTD: failed to send notice: {error}");
+                }
             }
         });
 
@@ -1992,7 +2247,10 @@ impl Channel for MatrixChannel {
                 }
 
                 sent_map.remove(&room_id);
-                self.multi_message_empty_consumed.lock().await.remove(&room_id);
+                self.multi_message_empty_consumed
+                    .lock()
+                    .await
+                    .remove(&room_id);
                 self.multi_message_thread_ts.lock().await.remove(&room_id);
                 Ok(())
             }
@@ -2013,7 +2271,10 @@ impl Channel for MatrixChannel {
             StreamMode::MultiMessage => {
                 // Paragraphs already sent can't be unsent. Just clean up state.
                 self.multi_message_sent_len.lock().await.remove(&room_id);
-                self.multi_message_empty_consumed.lock().await.remove(&room_id);
+                self.multi_message_empty_consumed
+                    .lock()
+                    .await
+                    .remove(&room_id);
                 self.multi_message_thread_ts.lock().await.remove(&room_id);
                 Ok(())
             }

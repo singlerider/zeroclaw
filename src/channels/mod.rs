@@ -4594,6 +4594,7 @@ fn collect_configured_channels(
                     mx.device_id.clone(),
                     config.config_path.parent().map(|path| path.to_path_buf()),
                     mx.recovery_key.clone(),
+                    mx.password.clone(),
                 )
                 .with_streaming(
                     mx.stream_mode,

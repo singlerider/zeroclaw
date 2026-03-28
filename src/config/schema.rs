@@ -6784,6 +6784,10 @@ pub struct MatrixConfig {
     #[secret]
     #[serde(default)]
     pub recovery_key: Option<String>,
+    /// Matrix account password for fresh login when crypto store is missing.
+    #[secret]
+    #[serde(default)]
+    pub password: Option<String>,
     /// When true, only respond to messages that @-mention the bot in group rooms.
     /// DMs bypass this gate.
     #[serde(default)]
@@ -10850,6 +10854,7 @@ auto_save = true
                     draft_update_interval_ms: default_draft_update_interval_ms(),
                     interrupt_on_new_message: false,
                     mention_only: false,
+            password: None,
                     ack_reactions: None,
                     proxy_url: None,
                 }),
@@ -11663,6 +11668,7 @@ default_temperature = 0.7
             draft_update_interval_ms: 500,
             interrupt_on_new_message: true,
             mention_only: false,
+            password: None,
             ack_reactions: None,
             proxy_url: None,
         };
@@ -11693,6 +11699,7 @@ default_temperature = 0.7
             listen_to_bots: false,
             interrupt_on_new_message: false,
             mention_only: false,
+            password: None,
             proxy_url: None,
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
@@ -11713,6 +11720,7 @@ default_temperature = 0.7
             listen_to_bots: false,
             interrupt_on_new_message: false,
             mention_only: false,
+            password: None,
             proxy_url: None,
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
@@ -11772,6 +11780,7 @@ default_temperature = 0.7
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
         let json = serde_json::to_string(&mc).unwrap();
         let parsed: MatrixConfig = serde_json::from_str(&json).unwrap();
@@ -11799,6 +11808,7 @@ default_temperature = 0.7
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
         let toml_str = toml::to_string(&mc).unwrap();
         let parsed: MatrixConfig = toml::from_str(&toml_str).unwrap();
@@ -11898,6 +11908,7 @@ allowed_users = ["@ops:matrix.org"]
                 multi_message_delay_ms: 800,
                 recovery_key: None,
                 mention_only: false,
+            password: None,
             }),
             signal: None,
             whatsapp: None,
@@ -14174,6 +14185,7 @@ default_model = "persisted-profile"
             verification_token: Some("verify_token".into()),
             allowed_users: vec!["user_123".into(), "user_456".into()],
             mention_only: false,
+            password: None,
             use_feishu: true,
             receive_mode: LarkReceiveMode::Websocket,
             port: None,
@@ -14198,6 +14210,7 @@ default_model = "persisted-profile"
             verification_token: Some("verify_token".into()),
             allowed_users: vec!["*".into()],
             mention_only: false,
+            password: None,
             use_feishu: false,
             receive_mode: LarkReceiveMode::Webhook,
             port: Some(9898),
@@ -14531,6 +14544,7 @@ require_otp_to_resume = true
             draft_update_interval_ms: default_draft_update_interval_ms(),
             interrupt_on_new_message: false,
             mention_only: false,
+            password: None,
             ack_reactions: None,
             proxy_url: None,
         });
@@ -15444,6 +15458,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
         let fields = mx.secret_fields();
         assert_eq!(fields.len(), 2);
@@ -15470,6 +15485,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
         let fields = mx.secret_fields();
         assert!(!fields[0].is_set);
@@ -15491,6 +15507,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
         mx.set_secret("channels.matrix.access-token", "new-token".into())
             .unwrap();
@@ -15513,6 +15530,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
         assert!(mx
             .set_secret("channels.matrix.nonexistent", "val".into())
@@ -15537,6 +15555,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         });
 
         let fields = config.secret_fields();
@@ -15563,6 +15582,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         });
 
         config
@@ -15608,6 +15628,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
 
         // Encrypt
@@ -15639,6 +15660,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
 
         mx.encrypt_secrets(&store).unwrap();
@@ -15668,6 +15690,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         };
 
         mx.encrypt_secrets(&store).unwrap();

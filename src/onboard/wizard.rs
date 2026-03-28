@@ -4401,6 +4401,7 @@ fn setup_channels(existing: Option<ChannelsConfig>) -> Result<ChannelsConfig> {
                         .unwrap_or(800),
                     recovery_key,
                     mention_only: false,
+            password: None,
                 });
             }
             ChannelMenuChoice::Signal => {
@@ -7830,6 +7831,7 @@ mod tests {
             listen_to_bots: false,
             interrupt_on_new_message: false,
             mention_only: false,
+            password: None,
             proxy_url: None,
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1500,
@@ -7849,6 +7851,7 @@ mod tests {
             multi_message_delay_ms: 800,
             recovery_key: None,
             mention_only: false,
+            password: None,
         });
 
         // Simulate the wizard starting from existing config and only updating Matrix
@@ -7882,6 +7885,7 @@ mod tests {
             multi_message_delay_ms: 1000,
             recovery_key: Some("recovery-secret".into()),
             mention_only: false,
+            password: None,
         });
 
         // Simulate re-configure: wizard preserves non-prompted fields
