@@ -1036,52 +1036,16 @@ impl Channel for MatrixChannel {
                 .unwrap_or(false);
 
             if tts_ok && mp3_path.exists() {
-                if let Ok(audio_data) = tokio::fs::read(&mp3_path).await {
-                    let upload_url = format!(
-                        "{}/_matrix/media/v3/upload?filename=voice-reply.mp3",
-                        self.homeserver
-                    );
-                    if let Ok(resp) = self
-                        .http_client
-                        .post(&upload_url)
-                        .header("Authorization", self.auth_header_value())
-                        .header("Content-Type", "audio/mpeg")
-                        .body(audio_data)
-                        .send()
-                        .await
-                    {
-                        if resp.status().is_success() {
-                            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                                if let Some(content_uri) = body["content_uri"].as_str() {
-                                    let encoded_room = Self::encode_path_segment(&target_room_id);
-                                    let txn_id = format!(
-                                        "voice_{}",
-                                        std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis()
-                                    );
-                                    let audio_msg = serde_json::json!({
-                                        "msgtype": "m.audio",
-                                        "body": "Voice reply",
-                                        "url": content_uri,
-                                        "info": { "mimetype": "audio/mpeg" }
-                                    });
-                                    let send_url = format!(
-                                        "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
-                                        self.homeserver, encoded_room, txn_id
-                                    );
-                                    let _ = self
-                                        .http_client
-                                        .put(&send_url)
-                                        .header("Authorization", self.auth_header_value())
-                                        .json(&audio_msg)
-                                        .send()
-                                        .await;
-                                }
-                            }
-                        }
-                    }
+                if let Err(err) = self
+                    .send_media(
+                        &room,
+                        mp3_path.to_str().unwrap_or("/tmp/zeroclaw-voice/reply.mp3"),
+                        "m.audio",
+                        message.thread_ts.as_deref(),
+                    )
+                    .await
+                {
+                    tracing::warn!("Matrix: failed to send voice reply: {err}");
                 }
             }
         }
