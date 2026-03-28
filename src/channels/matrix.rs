@@ -2476,4 +2476,96 @@ mod tests {
         assert!(!sanitized.contains("sk-proj-abc123xyz"));
         assert!(sanitized.contains("[REDACTED]"));
     }
+
+    // ── media marker tests ──
+
+    #[test]
+    fn extract_image_marker() {
+        let (cleaned, markers) = extract_media_markers("Here is the chart [IMAGE:/tmp/chart.png] for you");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].path, "/tmp/chart.png");
+        assert_eq!(markers[0].msgtype, "m.image");
+        assert_eq!(cleaned, "Here is the chart  for you");
+    }
+
+    #[test]
+    fn extract_file_marker() {
+        let (_, markers) = extract_media_markers("[FILE:/tmp/report.pdf]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].path, "/tmp/report.pdf");
+        assert_eq!(markers[0].msgtype, "m.file");
+    }
+
+    #[test]
+    fn extract_document_marker_alias() {
+        let (_, markers) = extract_media_markers("[DOCUMENT:/tmp/doc.txt]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.file");
+    }
+
+    #[test]
+    fn extract_audio_marker() {
+        let (_, markers) = extract_media_markers("[AUDIO:/tmp/clip.mp3]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.audio");
+    }
+
+    #[test]
+    fn extract_voice_marker_alias() {
+        let (_, markers) = extract_media_markers("[VOICE:/tmp/voice.ogg]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.audio");
+    }
+
+    #[test]
+    fn extract_video_marker() {
+        let (_, markers) = extract_media_markers("[VIDEO:/tmp/clip.mp4]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.video");
+    }
+
+    #[test]
+    fn extract_multiple_markers() {
+        let (cleaned, markers) =
+            extract_media_markers("See [IMAGE:/a.png] and [FILE:/b.pdf] attached");
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].msgtype, "m.image");
+        assert_eq!(markers[1].msgtype, "m.file");
+        assert_eq!(cleaned, "See  and  attached");
+    }
+
+    #[test]
+    fn extract_no_markers() {
+        let (cleaned, markers) = extract_media_markers("Just a regular message");
+        assert!(markers.is_empty());
+        assert_eq!(cleaned, "Just a regular message");
+    }
+
+    #[test]
+    fn extract_unknown_marker_preserved() {
+        let (cleaned, markers) = extract_media_markers("Check [UNKNOWN:data] out");
+        assert!(markers.is_empty());
+        assert_eq!(cleaned, "Check [UNKNOWN:data] out");
+    }
+
+    #[test]
+    fn extract_empty_target_skipped() {
+        let (cleaned, markers) = extract_media_markers("[IMAGE:] nothing");
+        assert!(markers.is_empty());
+        assert_eq!(cleaned, "[IMAGE:] nothing");
+    }
+
+    #[test]
+    fn extract_case_insensitive() {
+        let (_, markers) = extract_media_markers("[image:/tmp/pic.jpg]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.image");
+    }
+
+    #[test]
+    fn extract_photo_alias() {
+        let (_, markers) = extract_media_markers("[PHOTO:/tmp/pic.jpg]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.image");
+    }
 }
