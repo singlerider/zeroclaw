@@ -1730,7 +1730,7 @@ impl Channel for MatrixChannel {
                 let sent_so_far = sent_map.get(&room_id).copied().unwrap_or(0);
 
                 if text.len() > sent_so_far {
-                    let remaining = text[sent_so_far..].trim().to_string();
+                    let remaining = multi_message_remaining_text(text, sent_so_far).to_string();
                     if !remaining.is_empty() {
                         let thread_ts = self
                             .multi_message_thread_ts
@@ -1771,6 +1771,22 @@ impl Channel for MatrixChannel {
                 Ok(())
             }
         }
+    }
+}
+
+/// Compute the unsent tail for MultiMessage finalize.
+///
+/// `update_draft` sends all complete paragraphs (delimited by `\n\n`)
+/// via recursion, so the only remaining content is the tail after the
+/// last boundary.  Using `rsplit_once` avoids relying on a byte offset
+/// that may not align with the (sanitized) finalize text.
+fn multi_message_remaining_text<'a>(text: &'a str, sent_so_far: usize) -> &'a str {
+    if sent_so_far > 0 {
+        text.rsplit_once("\n\n")
+            .map_or(text, |(_, tail)| tail)
+            .trim()
+    } else {
+        text.trim()
     }
 }
 
@@ -2328,5 +2344,50 @@ mod tests {
         let sanitized = MatrixChannel::sanitize_error_for_log(&"auth failed: sk-proj-abc123xyz");
         assert!(!sanitized.contains("sk-proj-abc123xyz"));
         assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn multi_message_remaining_leading_newlines_trimmed_by_sanitize() {
+        // accumulated was "\n\nHello world", sent_so_far=2 from empty paragraph.
+        // Sanitized text has leading \n\n stripped.
+        assert_eq!(
+            super::multi_message_remaining_text("Hello world", 2),
+            "Hello world"
+        );
+    }
+
+    #[test]
+    fn multi_message_remaining_after_sent_paragraph() {
+        // "Para 1\n\nPara 2" — Para 1 was sent, tail is Para 2.
+        assert_eq!(
+            super::multi_message_remaining_text("Para 1\n\nPara 2", 15),
+            "Para 2"
+        );
+    }
+
+    #[test]
+    fn multi_message_remaining_nothing_sent() {
+        // No paragraphs sent, flush everything.
+        assert_eq!(
+            super::multi_message_remaining_text("Hello world", 0),
+            "Hello world"
+        );
+    }
+
+    #[test]
+    fn multi_message_remaining_all_paragraphs_sent() {
+        // All paragraphs sent (sent_so_far exceeds sanitized text length).
+        // Guard in finalize_draft prevents entering this path, but the
+        // helper still returns the tail safely.
+        assert_eq!(
+            super::multi_message_remaining_text("Para 1\n\nPara 2", 28),
+            "Para 2"
+        );
+    }
+
+    #[test]
+    fn multi_message_remaining_leading_whitespace_no_paragraphs() {
+        // accumulated was "  Hello", sent_so_far=0, sanitized trimmed.
+        assert_eq!(super::multi_message_remaining_text("Hello", 0), "Hello");
     }
 }
