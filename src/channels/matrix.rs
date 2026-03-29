@@ -2355,7 +2355,6 @@ mod tests {
         assert!(sanitized.contains("[REDACTED]"));
     }
 
-
     // ── media marker tests ──
 
     #[test]
