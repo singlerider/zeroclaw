@@ -15914,12 +15914,14 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             mention_only: false,
         };
         let fields = mx.secret_fields();
-        assert_eq!(fields.len(), 2);
+        assert_eq!(fields.len(), 3);
         assert_eq!(fields[0].name, "channels.matrix.access-token");
         assert_eq!(fields[0].category, "Channels");
         assert!(fields[0].is_set);
         assert_eq!(fields[1].name, "channels.matrix.recovery-key");
         assert!(!fields[1].is_set);
+        assert_eq!(fields[2].name, "channels.matrix.password");
+        assert!(!fields[2].is_set);
     }
 
     #[test]
