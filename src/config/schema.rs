@@ -6658,11 +6658,8 @@ pub struct MattermostConfig {
     /// Mattermost server URL (e.g. `"https://mattermost.example.com"`).
     pub url: String,
     /// Mattermost bot access token.
-/// Optional when `bot_id` + `bot_password` are provided; the channel will
-    /// obtain a session token via `POST /api/v4/users/login` at runtime.
     #[secret]
-    #[serde(default)]
-    pub bot_token: Option<String>,
+    pub bot_token: String,
     /// Optional channel ID to restrict the bot to a single channel.
     pub channel_id: Option<String>,
     /// Allowed Mattermost user IDs. Empty = deny all.
@@ -6788,7 +6785,7 @@ pub struct MatrixConfig {
     #[secret]
     #[serde(default)]
     pub recovery_key: Option<String>,
-/// Matrix account password. Required alongside `recovery_key` for automatic
+    /// Matrix account password. Required alongside `recovery_key` for automatic
     /// E2EE recovery when the crypto store is lost. When both are set, the bot
     /// performs a fresh login (new device) and restores room keys from backup.
     /// See docs/security/matrix-e2ee-guide.md.
