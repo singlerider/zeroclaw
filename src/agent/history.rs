@@ -1,3 +1,4 @@
+use crate::agent::history_pruner::remove_orphaned_tool_messages;
 use crate::providers::ChatMessage;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -106,6 +107,7 @@ pub(crate) fn emergency_history_trim(
             dropped += 1;
         }
     }
+    dropped += remove_orphaned_tool_messages(history);
     dropped
 }
 
@@ -139,6 +141,7 @@ pub(crate) fn trim_history(history: &mut Vec<ChatMessage>, max_history: usize) {
     let start = if has_system { 1 } else { 0 };
     let to_remove = non_system_count - max_history;
     history.drain(start..start + to_remove);
+    remove_orphaned_tool_messages(history);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

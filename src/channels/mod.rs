@@ -104,6 +104,7 @@ pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use whatsapp_web::WhatsAppWebChannel;
 
+use crate::agent::history_pruner::remove_orphaned_tool_messages;
 use crate::agent::loop_::{
     build_tool_instructions, clear_model_switch_request, get_model_switch_state,
     is_model_switch_requested, run_tool_call_loop, scrub_credentials,
@@ -732,6 +733,7 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
         }
     }
 
+    remove_orphaned_tool_messages(&mut normalized);
     normalized
 }
 
@@ -1233,6 +1235,7 @@ fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatM
     while turns.len() > max_history {
         turns.remove(0);
     }
+    remove_orphaned_tool_messages(turns);
 }
 
 /// Extract tool-call (assistant with tool_call content) and tool-result
@@ -5585,6 +5588,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
             if msgs.is_empty() {
                 continue;
             }
+            // Remove tool messages orphaned by truncation or prior crashes.
+            remove_orphaned_tool_messages(&mut msgs);
             // Close orphaned user turns from crashed sessions.
             if msgs.last().is_some_and(|m| m.role == "user") {
                 let closure =
