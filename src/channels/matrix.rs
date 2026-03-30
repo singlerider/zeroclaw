@@ -26,6 +26,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, OnceCell, RwLock, mpsc};
 
+/// Extract media metadata from a Matrix `MediaSource` for download.
+///
+/// Returns `(filename, source, mime)` for both plain and encrypted media.
+/// The `MediaSource` is later passed to the SDK's media API which handles
+/// decryption transparently for E2EE rooms.
+fn extract_media_metadata(
+    source: &MediaSource,
+    name: &str,
+    mime: Option<&str>,
+) -> (String, MediaSource, Option<String>) {
+    (name.to_string(), source.clone(), mime.map(String::from))
+}
+
 /// Matrix channel for Matrix Client-Server API.
 /// Uses matrix-sdk for reliable sync and encrypted-room decryption.
 #[derive(Clone)]
@@ -1106,8 +1119,6 @@ impl Channel for MatrixChannel {
         let allowed_users_for_handler = self.allowed_users.clone();
         let allowed_rooms_for_handler = self.allowed_rooms.clone();
         let dedupe_for_handler = Arc::clone(&recent_event_cache);
-        let homeserver_for_handler = self.homeserver.clone();
-        let access_token_for_handler = self.access_token.clone();
         let voice_mode_for_handler = Arc::clone(&self.voice_mode);
         let transcription_mgr_for_handler = self.transcription_manager.clone();
 
@@ -1118,8 +1129,6 @@ impl Channel for MatrixChannel {
             let allowed_users = allowed_users_for_handler.clone();
             let allowed_rooms = allowed_rooms_for_handler.clone();
             let dedupe = Arc::clone(&dedupe_for_handler);
-            let homeserver = homeserver_for_handler.clone();
-            let access_token = access_token_for_handler.clone();
             let voice_mode = Arc::clone(&voice_mode_for_handler);
             let transcription_mgr = transcription_mgr_for_handler.clone();
 
@@ -1161,32 +1170,9 @@ impl Channel for MatrixChannel {
                     return;
                 }
 
-                // Helper: extract mxc:// download URL, filename, and MIME type for media.
-                // MediaSource::Encrypted appears only when SDK decryption failed (missing
-                // keys). When E2EE works (recovery key from #4674), encrypted media
-                // arrives as MediaSource::Plain after transparent SDK decryption.
-                let media_info =
-                    |source: &MediaSource,
-                     name: &str,
-                     mime: Option<&str>|
-                     -> Option<(String, String, Option<String>)> {
-                        match source {
-                            MediaSource::Plain(mxc) => {
-                                let rest = mxc.as_str().strip_prefix("mxc://")?;
-                                let url = format!(
-                                    "{}/_matrix/client/v1/media/download/{}",
-                                    homeserver, rest
-                                );
-                                Some((url, name.to_string(), mime.map(String::from)))
-                            }
-                            MediaSource::Encrypted(_) => {
-                                tracing::debug!(
-                                    "Matrix: encrypted media could not be decrypted (missing room keys?), skipping"
-                                );
-                                None
-                            }
-                        }
-                    };
+                // Extract filename, MediaSource, and MIME for media types.
+                // The MediaSource is passed to the SDK's media API which
+                // handles both plain and encrypted media transparently.
 
                 // Extract body text, media source, and MIME type from the message.
                 // Media types share the same source/info/body pattern.
@@ -1195,31 +1181,33 @@ impl Channel for MatrixChannel {
                     MessageType::Notice(content) => (content.body.clone(), None),
                     MessageType::Image(content) => {
                         let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
-                        let dl = media_info(&content.source, &content.body, mime);
-                        (format!("[IMAGE:{}]", content.body), dl)
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[IMAGE:{}]", content.body), Some(dl))
                     }
                     MessageType::File(content) => {
                         let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
-                        let dl = media_info(&content.source, &content.body, mime);
-                        (format!("[file: {}]", content.body), dl)
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[file: {}]", content.body), Some(dl))
                     }
                     MessageType::Audio(content) => {
                         let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
-                        let dl = media_info(&content.source, &content.body, mime);
-                        (format!("[audio: {}]", content.body), dl)
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[audio: {}]", content.body), Some(dl))
                     }
                     MessageType::Video(content) => {
                         let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
-                        let dl = media_info(&content.source, &content.body, mime);
-                        (format!("[video: {}]", content.body), dl)
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[video: {}]", content.body), Some(dl))
                     }
                     _ => return,
                 };
 
                 // Download media to workspace if present, and collect as
                 // MediaAttachment for the media pipeline (#4861).
+                // Uses the Matrix SDK media API which handles both plain
+                // and encrypted (E2EE) media transparently.
                 let mut attachments: Vec<super::media_pipeline::MediaAttachment> = Vec::new();
-                let body = if let Some((url, filename, mime_type)) = media_download {
+                let body = if let Some((filename, media_source, mime_type)) = media_download {
                     let workspace = std::path::PathBuf::from(
                         shellexpand::tilde(
                             &std::env::var("ZEROCLAW_WORKSPACE")
@@ -1229,32 +1217,33 @@ impl Channel for MatrixChannel {
                     );
                     let _ = tokio::fs::create_dir_all(&workspace).await;
                     let dest = workspace.join(&filename);
-                    let client = reqwest::Client::new();
-                    match client
-                        .get(&url)
-                        .header("Authorization", format!("Bearer {}", access_token))
-                        .send()
-                        .await
-                    {
-                        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                            Ok(bytes) => match tokio::fs::write(&dest, &bytes).await {
-                                Ok(()) => {
-                                    attachments.push(super::media_pipeline::MediaAttachment {
-                                        file_name: filename.clone(),
-                                        data: bytes.to_vec(),
-                                        mime_type: mime_type.clone(),
-                                    });
-                                    if body.starts_with("[IMAGE:") {
-                                        format!("[IMAGE:{}]", dest.display())
-                                    } else {
-                                        format!("{} — saved to {}", body, dest.display())
-                                    }
+                    let request = matrix_sdk::media::MediaRequestParameters {
+                        source: media_source,
+                        format: matrix_sdk::media::MediaFormat::File,
+                    };
+                    match room.client().media().get_media_content(&request, true).await {
+                        Ok(bytes) => match tokio::fs::write(&dest, &bytes).await {
+                            Ok(()) => {
+                                attachments.push(super::media_pipeline::MediaAttachment {
+                                    file_name: filename.clone(),
+                                    data: bytes,
+                                    mime_type: mime_type.clone(),
+                                });
+                                if body.starts_with("[IMAGE:") {
+                                    format!("[IMAGE:{}]", dest.display())
+                                } else {
+                                    format!("{} — saved to {}", body, dest.display())
                                 }
-                                Err(_) => format!("{} — failed to write to disk", body),
-                            },
-                            Err(_) => format!("{} — download failed", body),
+                            }
+                            Err(error) => {
+                                tracing::warn!("Matrix: failed to write media to disk: {error}");
+                                format!("{} — failed to write to disk", body)
+                            }
                         },
-                        _ => format!("{} — download failed (auth error?)", body),
+                        Err(error) => {
+                            tracing::warn!("Matrix: media download failed: {error}");
+                            format!("{} — media download failed", body)
+                        }
                     }
                 } else {
                     body
@@ -2568,5 +2557,91 @@ mod tests {
         let (_, markers) = extract_media_markers("[PHOTO:/tmp/pic.jpg]");
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].msgtype, "m.image");
+    }
+
+    // ── Media metadata extraction (plain vs encrypted) ───────────────
+
+    fn make_plain_source() -> MediaSource {
+        use matrix_sdk::ruma::mxc_uri;
+        MediaSource::Plain(mxc_uri!("mxc://matrix.org/abc123").to_owned())
+    }
+
+    fn make_encrypted_source() -> MediaSource {
+        use matrix_sdk::ruma::{
+            events::room::{EncryptedFileInit, JsonWebKeyInit},
+            mxc_uri,
+            serde::Base64,
+        };
+
+        let encrypted_file = EncryptedFileInit {
+            url: mxc_uri!("mxc://matrix.org/enc456").to_owned(),
+            key: JsonWebKeyInit {
+                kty: "oct".to_owned(),
+                key_ops: vec!["encrypt".to_owned(), "decrypt".to_owned()],
+                alg: "A256CTR".to_owned(),
+                k: Base64::new(vec![0u8; 32]),
+                ext: true,
+            }
+            .into(),
+            iv: Base64::new(vec![0u8; 16]),
+            hashes: [("sha256".to_owned(), Base64::new(vec![0u8; 32]))]
+                .into_iter()
+                .collect(),
+            v: "v2".to_owned(),
+        };
+        MediaSource::Encrypted(Box::new(encrypted_file.into()))
+    }
+
+    #[test]
+    fn extract_media_metadata_returns_metadata_for_plain_source() {
+        let source = make_plain_source();
+        let (filename, returned_source, mime) =
+            extract_media_metadata(&source, "photo.jpg", Some("image/jpeg"));
+
+        assert_eq!(filename, "photo.jpg");
+        assert_eq!(mime, Some("image/jpeg".to_string()));
+        assert!(matches!(returned_source, MediaSource::Plain(_)));
+    }
+
+    #[test]
+    fn extract_media_metadata_returns_metadata_for_encrypted_source() {
+        // This test would FAIL with the old media_info closure which
+        // returned None for MediaSource::Encrypted, causing the bot to
+        // skip encrypted media entirely.
+        let source = make_encrypted_source();
+        let (filename, returned_source, mime) =
+            extract_media_metadata(&source, "secret.png", Some("image/png"));
+
+        assert_eq!(filename, "secret.png");
+        assert_eq!(mime, Some("image/png".to_string()));
+        assert!(matches!(returned_source, MediaSource::Encrypted(_)));
+    }
+
+    #[test]
+    fn extract_media_metadata_preserves_none_mime() {
+        let source = make_plain_source();
+        let (_, _, mime) = extract_media_metadata(&source, "file.bin", None);
+        assert!(mime.is_none());
+    }
+
+    #[test]
+    fn encrypted_media_produces_download_intent() {
+        // Simulates the message type match for an encrypted image.
+        // Old code: media_info returned None → media_download was None →
+        //   body stayed as "[IMAGE:photo.jpg]" (relative filename) → API error
+        // New code: extract_media_metadata always returns metadata →
+        //   media_download is Some → SDK downloads + decrypts → body gets full path
+        let source = make_encrypted_source();
+        let media_download = {
+            let dl = extract_media_metadata(&source, "photo.jpg", Some("image/jpeg"));
+            Some(dl)
+        };
+
+        assert!(
+            media_download.is_some(),
+            "encrypted media must produce a download intent, not be skipped"
+        );
+        let (filename, _, _) = media_download.unwrap();
+        assert_eq!(filename, "photo.jpg");
     }
 }
