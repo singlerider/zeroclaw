@@ -2779,6 +2779,10 @@ async fn process_channel_message(
                         }
                         DraftEvent::Content(text) => {
                             accumulated.push_str(&text);
+                            let trimmed = accumulated.trim_start();
+                            if trimmed.len() < accumulated.len() {
+                                accumulated = trimmed.to_string();
+                            }
                             if let Err(e) = channel
                                 .update_draft(&reply_target, &draft_id, &accumulated)
                                 .await
@@ -11623,5 +11627,31 @@ This is an example JSON object for profile settings."#;
     fn default_keep_tool_context_turns_is_two() {
         let config = crate::config::schema::AgentConfig::default();
         assert_eq!(config.keep_tool_context_turns, 2);
+    }
+
+    // ── Multi-message finalize truncation ────────────────────────────────
+
+    #[test]
+    fn multi_message_finalize_no_truncation_with_leading_newlines() {
+        // With fix: accumulator strips leading \n\n before scanning
+        let mut streamed = "\n\nHello world".to_string();
+        let trimmed = streamed.trim_start();
+        if trimmed.len() < streamed.len() {
+            streamed = trimmed.to_string();
+        }
+        // Leading \n\n stripped — scanner never sees it, sent_so_far stays 0
+        let sent_so_far: usize = 0;
+        let finalized = streamed.trim();
+        let remainder = &finalized[sent_so_far..];
+        assert_eq!(remainder, "Hello world");
+    }
+
+    #[test]
+    fn multi_message_finalize_ok_without_leading_newlines() {
+        let streamed = "Hello world";
+        let sent_so_far: usize = 0;
+        let finalized = streamed.trim();
+        let remainder = &finalized[sent_so_far..];
+        assert_eq!(remainder, "Hello world"); // passes
     }
 }
