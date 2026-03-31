@@ -955,7 +955,25 @@ impl Channel for MatrixChannel {
 
         self.log_e2ee_diagnostics(&client).await;
 
-        let _ = client.sync_once(SyncSettings::new()).await;
+        // Seed the dedup cache with event IDs from the initial sync so that
+        // messages already in the timeline are not re-processed after a daemon
+        // restart (the SDK persists the sync token, but the dedup cache does not
+        // survive across process boundaries).
+        if let Ok(sync_response) = client.sync_once(SyncSettings::new()).await {
+            let mut guard = self.recent_event_cache.lock().await;
+            let (recent_order, recent_lookup) = &mut *guard;
+            for (_room_id, room_update) in &sync_response.rooms.joined {
+                for event in &room_update.timeline.events {
+                    if let Some(event_id) = event.event_id() {
+                        Self::cache_event_id(&event_id.to_string(), recent_order, recent_lookup);
+                    }
+                }
+            }
+            let seeded = recent_lookup.len();
+            if seeded > 0 {
+                tracing::info!("Matrix: seeded dedup cache with {seeded} event(s) from initial sync");
+            }
+        }
 
         if self.allowed_rooms.is_empty() {
             tracing::info!(
