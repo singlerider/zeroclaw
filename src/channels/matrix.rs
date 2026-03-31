@@ -77,6 +77,10 @@ pub struct MatrixChannel {
     multi_message_empty_consumed: Arc<Mutex<HashMap<String, usize>>>,
     /// Thread context captured from `send_draft()` for MultiMessage paragraph delivery.
     multi_message_thread_ts: Arc<Mutex<HashMap<String, Option<String>>>>,
+    /// Dedup cache for incoming events, shared across listener restarts so
+    /// stacked event handlers (from supervisor re-calls of `listen()`) all
+    /// check the same set.
+    recent_event_cache: Arc<Mutex<(std::collections::VecDeque<String>, std::collections::HashSet<String>)>>,
 }
 
 impl std::fmt::Debug for MatrixChannel {
@@ -280,6 +284,10 @@ impl MatrixChannel {
             multi_message_sent_len: Arc::new(Mutex::new(HashMap::new())),
             multi_message_empty_consumed: Arc::new(Mutex::new(HashMap::new())),
             multi_message_thread_ts: Arc::new(Mutex::new(HashMap::new())),
+            recent_event_cache: Arc::new(Mutex::new((
+                std::collections::VecDeque::new(),
+                std::collections::HashSet::new(),
+            ))),
         }
     }
 
@@ -1331,10 +1339,7 @@ impl Channel for MatrixChannel {
         }
         tracing::debug!("Matrix: sent typing kickstart to all joined rooms");
 
-        let recent_event_cache = Arc::new(Mutex::new((
-            std::collections::VecDeque::new(),
-            std::collections::HashSet::new(),
-        )));
+        let recent_event_cache = Arc::clone(&self.recent_event_cache);
 
         let tx_handler = tx.clone();
         let target_room_for_handler = target_room.clone();
@@ -1346,7 +1351,7 @@ impl Channel for MatrixChannel {
         let transcription_mgr_for_handler = self.transcription_manager.clone();
         let mention_only_for_handler = self.mention_only;
 
-        client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, room: Room| {
+        let _msg_handler_guard = client.event_handler_drop_guard(client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, room: Room| {
             let tx = tx_handler.clone();
             let target_room = target_room_for_handler.clone();
             let my_user_id = my_user_id_for_handler.clone();
@@ -1610,10 +1615,10 @@ impl Channel for MatrixChannel {
 
                 let _ = tx.send(msg).await;
             }
-        });
+        }));
 
         // UTD handler: log everything, download room keys, notify sender.
-        client.add_event_handler(move |event: OriginalSyncRoomEncryptedEvent, room: Room, client: MatrixSdkClient| {
+        let _utd_handler_guard = client.event_handler_drop_guard(client.add_event_handler(move |event: OriginalSyncRoomEncryptedEvent, room: Room, client: MatrixSdkClient| {
             async move {
                 let room_id = room.room_id();
                 tracing::warn!(
@@ -1680,11 +1685,11 @@ impl Channel for MatrixChannel {
                     tracing::debug!("Matrix UTD: failed to send notice: {error}");
                 }
             }
-        });
+        }));
 
         // Invite handler: auto-accept invites for allowed rooms, auto-reject others
         let allowed_rooms_for_invite = self.allowed_rooms.clone();
-        client.add_event_handler(move |event: StrippedRoomMemberEvent, room: Room| {
+        let _invite_handler_guard = client.event_handler_drop_guard(client.add_event_handler(move |event: StrippedRoomMemberEvent, room: Room| {
             let allowed_rooms = allowed_rooms_for_invite.clone();
             async move {
                 // Only process invite events targeting us
@@ -1719,7 +1724,7 @@ impl Channel for MatrixChannel {
                     }
                 }
             }
-        });
+        }));
 
         let sync_settings = SyncSettings::new().timeout(std::time::Duration::from_secs(30));
         let otk_conflict_detected = Arc::clone(&self.otk_conflict_detected);
