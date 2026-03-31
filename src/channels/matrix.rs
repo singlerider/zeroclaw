@@ -80,7 +80,12 @@ pub struct MatrixChannel {
     /// Dedup cache for incoming events, shared across listener restarts so
     /// stacked event handlers (from supervisor re-calls of `listen()`) all
     /// check the same set.
-    recent_event_cache: Arc<Mutex<(std::collections::VecDeque<String>, std::collections::HashSet<String>)>>,
+    recent_event_cache: Arc<
+        Mutex<(
+            std::collections::VecDeque<String>,
+            std::collections::HashSet<String>,
+        )>,
+    >,
 }
 
 impl std::fmt::Debug for MatrixChannel {
@@ -1689,42 +1694,47 @@ impl Channel for MatrixChannel {
 
         // Invite handler: auto-accept invites for allowed rooms, auto-reject others
         let allowed_rooms_for_invite = self.allowed_rooms.clone();
-        let _invite_handler_guard = client.event_handler_drop_guard(client.add_event_handler(move |event: StrippedRoomMemberEvent, room: Room| {
-            let allowed_rooms = allowed_rooms_for_invite.clone();
-            async move {
-                // Only process invite events targeting us
-                if event.content.membership
-                    != matrix_sdk::ruma::events::room::member::MembershipState::Invite
-                {
-                    return;
-                }
-
-                let room_id_str = room.room_id().to_string();
-
-                if MatrixChannel::is_room_allowed_static(&allowed_rooms, &room_id_str) {
-                    // Room is allowed (or no allowlist configured): auto-accept
-                    tracing::info!(
-                        "Matrix: auto-accepting invite for allowed room {}",
-                        room_id_str
-                    );
-                    if let Err(error) = room.join().await {
-                        tracing::warn!("Matrix: failed to auto-join room {}: {error}", room_id_str);
+        let _invite_handler_guard = client.event_handler_drop_guard(client.add_event_handler(
+            move |event: StrippedRoomMemberEvent, room: Room| {
+                let allowed_rooms = allowed_rooms_for_invite.clone();
+                async move {
+                    // Only process invite events targeting us
+                    if event.content.membership
+                        != matrix_sdk::ruma::events::room::member::MembershipState::Invite
+                    {
+                        return;
                     }
-                } else {
-                    // Room is NOT in allowlist: auto-reject
-                    tracing::info!(
-                        "Matrix: auto-rejecting invite for room {} (not in allowed_rooms)",
-                        room_id_str
-                    );
-                    if let Err(error) = room.leave().await {
-                        tracing::warn!(
-                            "Matrix: failed to reject invite for room {}: {error}",
+
+                    let room_id_str = room.room_id().to_string();
+
+                    if MatrixChannel::is_room_allowed_static(&allowed_rooms, &room_id_str) {
+                        // Room is allowed (or no allowlist configured): auto-accept
+                        tracing::info!(
+                            "Matrix: auto-accepting invite for allowed room {}",
                             room_id_str
                         );
+                        if let Err(error) = room.join().await {
+                            tracing::warn!(
+                                "Matrix: failed to auto-join room {}: {error}",
+                                room_id_str
+                            );
+                        }
+                    } else {
+                        // Room is NOT in allowlist: auto-reject
+                        tracing::info!(
+                            "Matrix: auto-rejecting invite for room {} (not in allowed_rooms)",
+                            room_id_str
+                        );
+                        if let Err(error) = room.leave().await {
+                            tracing::warn!(
+                                "Matrix: failed to reject invite for room {}: {error}",
+                                room_id_str
+                            );
+                        }
                     }
                 }
-            }
-        }));
+            },
+        ));
 
         let sync_settings = SyncSettings::new().timeout(std::time::Duration::from_secs(30));
         let otk_conflict_detected = Arc::clone(&self.otk_conflict_detected);
