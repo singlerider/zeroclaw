@@ -2308,8 +2308,7 @@ pub(crate) async fn run_tool_call_loop(
         },
     );
 
-    /// Accumulated display text across all iterations. The return value
-    /// of this function is the full response, not just the last iteration.
+    // Accumulated display text across all tool-loop calls.
     let mut accumulated_display_text = String::new();
 
     for iteration in 0..max_iterations {

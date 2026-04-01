@@ -88,6 +88,10 @@ Tool receipts:
 
 The system prompt instructs the LLM to echo receipts when referencing tool results. These appear inline in the response. The leak detector is configured to NOT redact `zc-receipt-` tokens.
 
+### LLM-echoed receipt blocks
+
+The LLM may independently include a `Tool receipts:` block in its response text — it sees receipts in conversation history and can reproduce them. This is separate from the system-appended receipts block. The behavior can be controlled via system prompt instructions in `AGENTS.md` by telling the model whether or not to include tool receipts in its output. If both the LLM and the system append receipts, the user may see duplicate blocks.
+
 ---
 
 ## Security properties
