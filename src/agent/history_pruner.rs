@@ -105,10 +105,13 @@ pub(crate) fn remove_orphaned_tool_messages(messages: &mut Vec<ChatMessage>) -> 
             continue;
         }
 
-        // Walk backwards from `i` to find the nearest assistant message
-        // (skipping consecutive tool messages that belong to the same batch).
+        // Walk backwards from `i` to find the nearest assistant message,
+        // skipping only consecutive tool messages (same batch). Stop if we
+        // hit a user or other non-tool role — the tool_use must be in the
+        // immediately preceding assistant, not separated by other turns.
         let assistant_idx = (0..i)
             .rev()
+            .take_while(|&j| messages[j].role == "assistant" || messages[j].role == "tool")
             .find(|&j| messages[j].role == "assistant");
 
         let is_orphan = match assistant_idx {

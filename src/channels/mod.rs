@@ -701,15 +701,17 @@ fn build_channel_system_prompt(
 }
 
 fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
-    let mut normalized = Vec::with_capacity(turns.len());
+    // Remove orphan tool messages BEFORE merging so that consecutive
+    // assistants caused by orphan removal don't concatenate tool_calls
+    // JSON into plain text (which breaks structured tool_use parsing).
+    let mut cleaned: Vec<ChatMessage> = turns;
+    remove_orphaned_tool_messages(&mut cleaned);
+
+    let mut normalized = Vec::with_capacity(cleaned.len());
     let mut expecting_user = true;
 
-    for turn in turns {
+    for turn in cleaned {
         match (expecting_user, turn.role.as_str()) {
-            // Pass through tool-role messages preserved by
-            // keep_tool_context_turns (#4827).  After a tool result the
-            // next expected message is an assistant response, same as
-            // after a user message.
             (_, "tool") | (true, "user") => {
                 normalized.push(turn);
                 expecting_user = false;
@@ -718,8 +720,7 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
                 normalized.push(turn);
                 expecting_user = true;
             }
-            // Interrupted channel turns can produce consecutive user messages
-            // (no assistant persisted yet). Merge instead of dropping.
+            // Consecutive same-role messages — merge instead of dropping.
             (false, "user") | (true, "assistant") => {
                 if let Some(last_turn) = normalized.last_mut() {
                     tracing::info!(
@@ -741,7 +742,6 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
         }
     }
 
-    remove_orphaned_tool_messages(&mut normalized);
     normalized
 }
 
