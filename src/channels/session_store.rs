@@ -57,6 +57,11 @@ impl SessionStore {
                 continue;
             }
             if let Ok(msg) = serde_json::from_str::<ChatMessage>(trimmed) {
+                // Skip empty assistant responses that corrupted sessions
+                // prior to the fix that prevents persisting them.
+                if msg.role == "assistant" && msg.content.trim().is_empty() {
+                    continue;
+                }
                 messages.push(msg);
             }
         }
@@ -193,6 +198,23 @@ mod tests {
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].role, "assistant");
         assert_eq!(messages[1].content, "hi there");
+    }
+
+    #[test]
+    fn load_filters_empty_assistant_responses() {
+        let tmp = TempDir::new().unwrap();
+        let store = SessionStore::new(tmp.path()).unwrap();
+
+        store.append("corrupted", &ChatMessage::user("decode this")).unwrap();
+        store.append("corrupted", &ChatMessage::assistant("")).unwrap();
+        store.append("corrupted", &ChatMessage::user("hello?")).unwrap();
+        store.append("corrupted", &ChatMessage::assistant("")).unwrap();
+        store.append("corrupted", &ChatMessage::user("hey")).unwrap();
+
+        let messages = store.load("corrupted");
+        // Empty assistant turns should be stripped on load
+        assert_eq!(messages.len(), 3);
+        assert!(messages.iter().all(|m| m.role == "user"));
     }
 
     #[test]
