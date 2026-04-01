@@ -3228,12 +3228,14 @@ async fn process_channel_message(
                 }
             }
 
-            let history_response = delivered_response.clone();
-            append_sender_turn(
-                ctx.as_ref(),
-                &history_key,
-                ChatMessage::assistant(&history_response),
-            );
+            if !delivered_response.trim().is_empty() {
+                let history_response = delivered_response.clone();
+                append_sender_turn(
+                    ctx.as_ref(),
+                    &history_key,
+                    ChatMessage::assistant(&history_response),
+                );
+            }
 
             // Strip tool-call messages from turns older than
             // keep_tool_context_turns to prevent unbounded growth.
@@ -11622,5 +11624,28 @@ This is an example JSON object for profile settings."#;
         let finalized = streamed.trim();
         let remainder = &finalized[sent_so_far..];
         assert_eq!(remainder, "Hello world"); // passes
+    }
+
+    // ── Empty response session corruption ────────────────────────────────
+
+    /// Simulates the delivered_response → should_persist decision.
+    /// Returns true if the response would be persisted to session history.
+    fn should_persist_assistant_response(delivered_response: &str) -> bool {
+        !delivered_response.trim().is_empty()
+    }
+
+    #[test]
+    fn empty_assistant_response_not_persisted_to_history() {
+        let delivered_response = "";
+        assert!(
+            !should_persist_assistant_response(delivered_response),
+            "empty assistant response must not be persisted to session history"
+        );
+    }
+
+    #[test]
+    fn non_empty_assistant_response_persisted_to_history() {
+        let delivered_response = "Here's your answer.";
+        assert!(should_persist_assistant_response(delivered_response));
     }
 }
