@@ -1997,6 +1997,19 @@ async fn consume_provider_streaming_response(
     cancellation_token: Option<&CancellationToken>,
     on_delta: Option<&tokio::sync::mpsc::Sender<DraftEvent>>,
 ) -> Result<StreamedChatOutcome> {
+    tracing::info!(
+        message_count = messages.len(),
+        "DIAG:about to call provider.stream_chat"
+    );
+    for (idx, msg) in messages.iter().enumerate() {
+        tracing::info!(
+            idx,
+            role = %msg.role,
+            content_len = msg.content.len(),
+            content_preview = &msg.content[..msg.content.len().min(120)],
+            "DIAG:provider request message"
+        );
+    }
     let mut provider_stream = provider.stream_chat(
         ChatRequest {
             messages,
@@ -2672,6 +2685,21 @@ pub(crate) async fn run_tool_call_loop(
                     .and_then(|usage| record_tool_loop_cost_usage(provider_name, model, usage));
 
                 let response_text = resp.text_or_empty().to_string();
+                tracing::info!(
+                    response_text_len = response_text.len(),
+                    response_text_empty = response_text.trim().is_empty(),
+                    response_text_is_none = resp.text.is_none(),
+                    has_tool_calls = !resp.tool_calls.is_empty(),
+                    tool_call_count = resp.tool_calls.len(),
+                    iteration = iteration + 1,
+                    "DIAG:provider response received"
+                );
+                if response_text.trim().is_empty() && resp.tool_calls.is_empty() {
+                    tracing::info!(
+                        response_text_preview = &response_text[..response_text.len().min(100)],
+                        "DIAG:provider returned empty text AND no tool calls"
+                    );
+                }
                 // First try native structured tool calls (OpenAI-format).
                 // Fall back to text-based parsing (XML tags, markdown blocks,
                 // GLM format) only if the provider returned no native calls —
@@ -2770,6 +2798,11 @@ pub(crate) async fn run_tool_call_loop(
             }
             Err(e) => {
                 let safe_error = crate::providers::sanitize_api_error(&e.to_string());
+                tracing::info!(
+                    error = %safe_error,
+                    iteration = iteration + 1,
+                    "DIAG:provider returned error"
+                );
                 observer.record_event(&ObserverEvent::LlmResponse {
                     provider: provider_name.to_string(),
                     model: model.to_string(),
@@ -2830,6 +2863,12 @@ pub(crate) async fn run_tool_call_loop(
         } else {
             parsed_text
         };
+        tracing::info!(
+            display_text_len = display_text.len(),
+            display_text_empty = display_text.trim().is_empty(),
+            has_tool_calls = !tool_calls.is_empty(),
+            "DIAG:display_text resolved"
+        );
 
         // ── Progress: LLM responded ─────────────────────────────
         if let Some(ref tx) = on_delta {

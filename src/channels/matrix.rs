@@ -2071,6 +2071,12 @@ impl Channel for MatrixChannel {
                 // Return a synthetic ID so the draft_updater task runs.
                 // Capture thread context for paragraph delivery.
                 let room_id = Self::extract_room_id(&message.recipient, &self.room_id);
+                let cleared_keys: Vec<String> = self.multi_message_sent_len.lock().await.keys().cloned().collect();
+                tracing::info!(
+                    cleared_keys = ?cleared_keys,
+                    new_room_id = %room_id,
+                    "DIAG:matrix send_draft MultiMessage .clear() — wiping all sent_len entries"
+                );
                 self.multi_message_sent_len.lock().await.clear();
                 self.multi_message_empty_consumed.lock().await.clear();
                 self.multi_message_thread_ts
@@ -2131,9 +2137,17 @@ impl Channel for MatrixChannel {
                 let mut sent_map = self.multi_message_sent_len.lock().await;
                 let sent_so_far = sent_map.get(&room_id).copied().unwrap_or(0);
 
+                tracing::info!(
+                    text_len = text.len(),
+                    sent_so_far,
+                    room_id = %room_id,
+                    "DIAG:matrix update_draft MultiMessage entry"
+                );
+
                 // If accumulated text is shorter than what we've tracked, a
                 // DraftEvent::Clear reset the accumulator — reset our counter.
                 if text.len() < sent_so_far {
+                    tracing::info!(text_len = text.len(), sent_so_far, "DIAG:matrix clear reset sent_so_far→0");
                     sent_map.insert(room_id.clone(), 0);
                     self.multi_message_empty_consumed
                         .lock()
@@ -2173,6 +2187,17 @@ impl Channel for MatrixChannel {
                         && bytes[scan_pos + 1] == b'\n'
                     {
                         let paragraph = new_text[..scan_pos].trim().to_string();
+                        let consumed = scan_pos + 2;
+                        let new_sent = sent_map.get(&room_id).copied().unwrap_or(0) + consumed;
+                        tracing::info!(
+                            paragraph_len = paragraph.len(),
+                            paragraph_empty = paragraph.is_empty(),
+                            scan_pos,
+                            consumed,
+                            new_sent_so_far = new_sent,
+                            paragraph_preview = &paragraph[..paragraph.len().min(60)],
+                            "DIAG:matrix paragraph found"
+                        );
                         if !paragraph.is_empty() {
                             let msg = SendMessage::new(&paragraph, recipient)
                                 .in_thread(thread_ts.clone());
@@ -2196,7 +2221,6 @@ impl Channel for MatrixChannel {
                                 .or_insert(0) += scan_pos + 2;
                         }
                         // Advance past the \n\n and update tracking.
-                        let consumed = scan_pos + 2;
                         *sent_map.entry(room_id.clone()).or_insert(0) += consumed;
                         // Recurse on remaining text by slicing.
                         let remaining = &new_text[consumed..];
@@ -2262,8 +2286,22 @@ impl Channel for MatrixChannel {
                     .unwrap_or(0);
                 let adjusted_offset = sent_so_far.saturating_sub(empty_consumed);
 
+                tracing::info!(
+                    text_len = text.len(),
+                    sent_so_far,
+                    empty_consumed,
+                    adjusted_offset,
+                    room_id = %room_id,
+                    "DIAG:matrix finalize_draft MultiMessage entry"
+                );
+
                 if text.len() > adjusted_offset {
                     let remaining = text[adjusted_offset..].trim().to_string();
+                    tracing::info!(
+                        remaining_len = remaining.len(),
+                        remaining_preview = &remaining[..remaining.len().min(80)],
+                        "DIAG:matrix finalize_draft sending remainder"
+                    );
                     if !remaining.is_empty() {
                         let thread_ts = self
                             .multi_message_thread_ts
@@ -2277,6 +2315,8 @@ impl Channel for MatrixChannel {
                             tracing::debug!("Multi-message final flush failed: {e}");
                         }
                     }
+                } else {
+                    tracing::info!("DIAG:matrix finalize_draft nothing to flush (text_len <= adjusted_offset)");
                 }
 
                 sent_map.remove(&room_id);

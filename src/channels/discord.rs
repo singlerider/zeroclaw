@@ -1271,6 +1271,12 @@ impl Channel for DiscordChannel {
             StreamMode::MultiMessage => {
                 // No initial draft — paragraphs are sent as new messages.
                 // Store thread context for paragraph delivery.
+                let cleared_keys: Vec<String> = self.multi_message_sent_len.lock().keys().cloned().collect();
+                tracing::info!(
+                    cleared_keys = ?cleared_keys,
+                    new_recipient = %message.recipient,
+                    "DIAG:discord send_draft MultiMessage .clear() — wiping all sent_len entries"
+                );
                 self.multi_message_sent_len.lock().clear();
                 self.multi_message_thread_ts
                     .lock()
@@ -1352,8 +1358,16 @@ impl Channel for DiscordChannel {
                     let mut sent_map = self.multi_message_sent_len.lock();
                     let sent_so_far = sent_map.get(recipient).copied().unwrap_or(0);
 
+                    tracing::info!(
+                        text_len = text.len(),
+                        sent_so_far,
+                        recipient,
+                        "DIAG:discord update_draft MultiMessage entry"
+                    );
+
                     // DraftEvent::Clear resets accumulated text — reset our counter.
                     if text.len() < sent_so_far {
+                        tracing::info!(text_len = text.len(), sent_so_far, "DIAG:discord clear reset sent_so_far→0");
                         sent_map.insert(recipient.to_string(), 0);
                         return Ok(());
                     }
@@ -1386,7 +1400,16 @@ impl Channel for DiscordChannel {
                         {
                             let paragraph = new_text[..scan_pos].trim().to_string();
                             let consumed = scan_pos + 2;
+                            let new_sent = sent_map.get(recipient).copied().unwrap_or(0) + consumed;
                             *sent_map.entry(recipient.to_string()).or_insert(0) += consumed;
+                            tracing::info!(
+                                paragraph_len = paragraph.len(),
+                                scan_pos,
+                                consumed,
+                                new_sent_so_far = new_sent,
+                                paragraph_preview = &paragraph[..paragraph.len().min(60)],
+                                "DIAG:discord paragraph found"
+                            );
                             if !paragraph.is_empty() {
                                 found_paragraph = Some(paragraph);
                             }
@@ -1437,14 +1460,28 @@ impl Channel for DiscordChannel {
                 .lock()
                 .remove(recipient)
                 .unwrap_or(0);
+            tracing::info!(
+                text_len = text.len(),
+                sent_so_far,
+                recipient,
+                has_thread_ts = thread_ts.is_some(),
+                "DIAG:discord finalize_draft MultiMessage entry"
+            );
             if text.len() > sent_so_far {
                 let remaining = text[sent_so_far..].trim().to_string();
+                tracing::info!(
+                    remaining_len = remaining.len(),
+                    remaining_preview = &remaining[..remaining.len().min(80)],
+                    "DIAG:discord finalize_draft sending remainder"
+                );
                 if !remaining.is_empty() {
                     let msg = SendMessage::new(&remaining, recipient).in_thread(thread_ts);
                     if let Err(e) = self.send(&msg).await {
                         tracing::debug!("Discord multi-message final flush failed: {e}");
                     }
                 }
+            } else {
+                tracing::info!("DIAG:discord finalize_draft nothing to flush (text_len <= sent_so_far)");
             }
             return Ok(());
         }

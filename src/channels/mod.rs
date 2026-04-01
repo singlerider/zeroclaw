@@ -721,6 +721,13 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
             // (no assistant persisted yet). Merge instead of dropping.
             (false, "user") | (true, "assistant") => {
                 if let Some(last_turn) = normalized.last_mut() {
+                    tracing::info!(
+                        merging_role = %turn.role,
+                        into_role = %last_turn.role,
+                        merging_content_preview = &turn.content[..turn.content.len().min(60)],
+                        into_content_preview = &last_turn.content[..last_turn.content.len().min(60)],
+                        "DIAG:normalize merging consecutive same-role turn"
+                    );
                     if !turn.content.is_empty() {
                         if !last_turn.content.is_empty() {
                             last_turn.content.push_str("\n\n");
@@ -1208,6 +1215,13 @@ fn proactive_trim_turns(turns: &mut Vec<ChatMessage>, budget: usize) -> usize {
 }
 
 fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatMessage) {
+    tracing::info!(
+        sender_key = %sender_key,
+        role = %turn.role,
+        content_len = turn.content.len(),
+        content_empty = turn.content.trim().is_empty(),
+        "DIAG:append_sender_turn persisting"
+    );
     // Persist to JSONL before adding to in-memory history.
     if let Some(ref store) = ctx.session_store {
         if let Err(e) = store.append(sender_key, &turn) {
@@ -2567,6 +2581,11 @@ async fn process_channel_message(
     };
 
     // Preserve user turn before the LLM call so interrupted requests keep context.
+    tracing::info!(
+        history_key = %history_key,
+        content_preview = &msg.content[..msg.content.len().min(60)],
+        "DIAG:appending user turn to history"
+    );
     append_sender_turn(ctx.as_ref(), &history_key, ChatMessage::user(&msg.content));
 
     // Build history from per-sender conversation cache.
@@ -2609,6 +2628,20 @@ async fn process_channel_message(
         turns
     };
     let mut prior_turns = normalize_cached_channel_turns(prior_turns_raw);
+    // Log the full history being sent to the LLM
+    tracing::info!(
+        turn_count = prior_turns.len(),
+        "DIAG:history turns before processing"
+    );
+    for (i, turn) in prior_turns.iter().enumerate() {
+        tracing::info!(
+            idx = i,
+            role = %turn.role,
+            content_len = turn.content.len(),
+            content_preview = &turn.content[..turn.content.len().min(80)],
+            "DIAG:history turn"
+        );
+    }
 
     // Strip stale tool_result blocks from cached turns so the LLM never
     // sees a `<tool_result>` without a preceding `<tool_call>`, which
@@ -2755,6 +2788,26 @@ async fn process_channel_message(
         }
     }
 
+    // Log final history being sent to LLM (after all processing)
+    {
+        let non_system: Vec<_> = history.iter().filter(|t| t.role != "system").collect();
+        tracing::info!(
+            total_turns = history.len(),
+            non_system_turns = non_system.len(),
+            "DIAG:final history to LLM"
+        );
+        for (i, turn) in non_system.iter().enumerate() {
+            tracing::info!(
+                idx = i,
+                role = %turn.role,
+                content_len = turn.content.len(),
+                content_empty = turn.content.trim().is_empty(),
+                content_preview = &turn.content[..turn.content.len().min(80)],
+                "DIAG:final history turn"
+            );
+        }
+    }
+
     let use_draft_streaming = target_channel
         .as_ref()
         .is_some_and(|ch| ch.supports_draft_updates());
@@ -2824,11 +2877,19 @@ async fn process_channel_message(
                             }
                         }
                         DraftEvent::Content(text) => {
+                            let _pre_len = accumulated.len();
                             accumulated.push_str(&text);
                             let trimmed = accumulated.trim_start();
+                            let trim_stripped = accumulated.len() - trimmed.len();
                             if trimmed.len() < accumulated.len() {
                                 accumulated = trimmed.to_string();
                             }
+                            tracing::info!(
+                                accumulated_len = accumulated.len(),
+                                token_len = text.len(),
+                                trim_stripped,
+                                "DIAG:accumulator token appended"
+                            );
                             if let Err(e) = channel
                                 .update_draft(&reply_target, &draft_id, &accumulated)
                                 .await
@@ -3033,7 +3094,7 @@ async fn process_channel_message(
     if let Some(handle) = draft_updater {
         let _ = handle.await;
     }
-    tracing::debug!("Post-loop: draft updater completed");
+    tracing::info!("DIAG:draft updater completed — streaming phase done");
 
     // Thread the final reply only if tools were used (multi-message response)
     if notify_observer_flag.tools_used.load(Ordering::Relaxed) && msg.channel != "cli" {
@@ -3093,6 +3154,12 @@ async fn process_channel_message(
             }
         }
         LlmExecutionResult::Completed(Ok(Ok(response))) => {
+            tracing::info!(
+                raw_response_len = response.len(),
+                raw_response_empty = response.trim().is_empty(),
+                raw_response_preview = &response[..response.len().min(100)],
+                "DIAG:LLM raw response received"
+            );
             // ── Hook: on_message_sending (modifying) ─────────
             let mut outbound_response = response;
             if let Some(hooks) = &ctx.hooks {
@@ -3158,13 +3225,67 @@ async fn process_channel_message(
 
             let sanitized_response =
                 sanitize_channel_response(&outbound_response, ctx.tools_registry.as_ref());
-            let mut delivered_response = if sanitized_response.is_empty()
-                && !outbound_response.trim().is_empty()
-            {
-                "I encountered malformed tool-call output and could not produce a safe reply. Please try again.".to_string()
+            tracing::info!(
+                outbound_len = outbound_response.len(),
+                sanitized_len = sanitized_response.len(),
+                outbound_empty = outbound_response.trim().is_empty(),
+                sanitized_empty = sanitized_response.trim().is_empty(),
+                "DIAG:sanitize outbound→sanitized"
+            );
+            let mut delivered_response = if sanitized_response.trim().is_empty() {
+                if !outbound_response.trim().is_empty() {
+                    tracing::info!("DIAG:sanitized empty but outbound non-empty — using fallback message");
+                    let msg = "I encountered malformed tool-call output and could not produce a safe reply. Please try again.".to_string();
+                    tracing::info!(fallback_len = msg.len(), "DIAG:fallback1 created");
+                    msg
+                } else {
+                    tracing::info!("DIAG:both outbound AND sanitized are empty — LLM returned nothing, removing poisoned user turn");
+                    // Remove the user turn that caused the empty response so it
+                    // doesn't merge with future messages and permanently corrupt
+                    // the session (e.g. base64-encoded offensive content).
+                    {
+                        let mut histories = ctx
+                            .conversation_histories
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let before_len = histories.get(&history_key).map(|h| h.len()).unwrap_or(0);
+                        if let Some(turns) = histories.get_mut(&history_key) {
+                            let last_role = turns.last().map(|t| t.role.clone());
+                            tracing::info!(
+                                history_len_before = before_len,
+                                last_role = ?last_role,
+                                "DIAG:checking in-memory history for removal"
+                            );
+                            if turns.last().is_some_and(|t| t.role == "user") {
+                                let last_content = turns.last().map(|t| t.content.clone()).unwrap_or_default();
+                                turns.pop();
+                                tracing::info!(
+                                    removed_content_preview = &last_content[..last_content.len().min(60)],
+                                    history_len_after = turns.len(),
+                                    "DIAG:removed user turn from in-memory history"
+                                );
+                            } else {
+                                tracing::info!("DIAG:last turn is not user role, not removing");
+                            }
+                        } else {
+                            tracing::info!(history_key = %history_key, "DIAG:history_key not found in map");
+                        }
+                    }
+                    if let Some(ref store) = ctx.session_store {
+                        match store.remove_last(&history_key) {
+                            Ok(removed) => tracing::info!(removed, "DIAG:removed from persistent store"),
+                            Err(e) => tracing::warn!(error = %e, "DIAG:failed to remove from persistent store"),
+                        }
+                    }
+                    let msg = "I got nothing for that one. What else you got?".to_string();
+                    tracing::info!(fallback_len = msg.len(), "DIAG:fallback2 created");
+                    msg
+                }
             } else {
+                tracing::info!(sanitized_len = sanitized_response.len(), "DIAG:using sanitized_response");
                 sanitized_response
             };
+            tracing::info!(delivered_response_len = delivered_response.len(), delivered_response_empty = delivered_response.trim().is_empty(), "DIAG:delivered_response immediately after assignment");
 
             // Append a footer when the response was served by a different provider family.
             // Intra-family fallbacks (e.g. minimax → minimax-cn) are suppressed.
@@ -3271,7 +3392,19 @@ async fn process_channel_message(
                 truncate_with_ellipsis(&delivered_response, 80)
             );
             if let Some(channel) = target_channel.as_ref() {
+                tracing::info!(
+                    delivered_len = delivered_response.len(),
+                    delivered_empty = delivered_response.trim().is_empty(),
+                    delivered_preview = &delivered_response[..delivered_response.len().min(100)],
+                    "DIAG:about to finalize/send response"
+                );
                 if let Some(ref draft_id) = draft_message_id {
+                    tracing::info!(
+                        delivered_len = delivered_response.len(),
+                        draft_id = %draft_id,
+                        reply_target = %msg.reply_target,
+                        "DIAG:finalize_draft calling with delivered_response"
+                    );
                     if let Err(e) = channel
                         .finalize_draft(&msg.reply_target, draft_id, &delivered_response)
                         .await
@@ -3284,15 +3417,21 @@ async fn process_channel_message(
                             )
                             .await;
                     }
-                } else if let Err(e) = channel
-                    .send(
-                        &SendMessage::new(&delivered_response, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone())
-                            .with_cancellation(cancellation_token.clone()),
-                    )
-                    .await
-                {
-                    eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
+                } else {
+                    tracing::info!(
+                        delivered_len = delivered_response.len(),
+                        "DIAG:no draft_id — sending full response via channel.send()"
+                    );
+                    if let Err(e) = channel
+                        .send(
+                            &SendMessage::new(&delivered_response, &msg.reply_target)
+                                .in_thread(msg.thread_ts.clone())
+                                .with_cancellation(cancellation_token.clone()),
+                        )
+                        .await
+                    {
+                        eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
+                    }
                 }
             }
         }
