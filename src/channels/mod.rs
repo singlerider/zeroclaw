@@ -3283,19 +3283,24 @@ async fn process_channel_message(
                 }
             }
 
-            // Append tool receipts to user-visible response when configured (#4830)
-            if ctx.show_receipts_in_response {
+            // Build tool receipts as a separate block (sent after finalize_draft).
+            let receipts_block = if ctx.show_receipts_in_response {
                 let receipts = tool_receipts_collector
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                if !receipts.is_empty() {
+                if receipts.is_empty() {
+                    None
+                } else {
                     use std::fmt::Write as _;
-                    write!(delivered_response, "\n\n---\nTool receipts:").ok();
+                    let mut block = String::from("---\nTool receipts:");
                     for r in receipts.iter() {
-                        write!(delivered_response, "\n  {r}").ok();
+                        write!(block, "\n  {r}").ok();
                     }
+                    Some(block)
                 }
-            }
+            } else {
+                None
+            };
 
             runtime_trace::record_event(
                 "channel_message_outbound",
@@ -3409,6 +3414,15 @@ async fn process_channel_message(
                     {
                         eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
                     }
+                }
+                // Send tool receipts as a separate message after the response.
+                if let Some(ref block) = receipts_block {
+                    let _ = channel
+                        .send(
+                            &SendMessage::new(block, &msg.reply_target)
+                                .in_thread(msg.thread_ts.clone()),
+                        )
+                        .await;
                 }
             }
         }
