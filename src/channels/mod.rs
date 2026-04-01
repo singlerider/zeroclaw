@@ -3226,52 +3226,37 @@ async fn process_channel_message(
             );
             let mut delivered_response = if sanitized_response.trim().is_empty() {
                 if !outbound_response.trim().is_empty() {
-                    tracing::info!("DIAG:sanitized empty but outbound non-empty — using fallback message");
-                    let msg = "I encountered malformed tool-call output and could not produce a safe reply. Please try again.".to_string();
-                    tracing::info!(fallback_len = msg.len(), "DIAG:fallback1 created");
-                    msg
+                    // Sanitizer stripped everything — tool output was malformed.
+                    if let Some(channel) = target_channel.as_ref() {
+                        let _ = channel.add_reaction(&msg.reply_target, &msg.id, "\u{26A0}\u{FE0F}").await;
+                    }
+                    "The provider returned tool output that could not be safely rendered.".to_string()
                 } else {
-                    tracing::info!("DIAG:both outbound AND sanitized are empty — LLM returned nothing, removing poisoned user turn");
-                    // Remove the user turn that caused the empty response so it
-                    // doesn't merge with future messages and permanently corrupt
-                    // the session (e.g. base64-encoded offensive content).
+                    // Provider returned no text at all.
+                    tracing::warn!(
+                        channel = %msg.channel,
+                        sender = %msg.sender,
+                        "Provider returned empty response — removing poisoned user turn"
+                    );
+                    // Remove the user turn so it doesn't corrupt the session.
                     {
                         let mut histories = ctx
                             .conversation_histories
                             .lock()
                             .unwrap_or_else(|e| e.into_inner());
-                        let before_len = histories.get(&history_key).map(|h| h.len()).unwrap_or(0);
                         if let Some(turns) = histories.get_mut(&history_key) {
-                            let last_role = turns.last().map(|t| t.role.clone());
-                            tracing::info!(
-                                history_len_before = before_len,
-                                last_role = ?last_role,
-                                "DIAG:checking in-memory history for removal"
-                            );
                             if turns.last().is_some_and(|t| t.role == "user") {
-                                let last_content = turns.last().map(|t| t.content.clone()).unwrap_or_default();
                                 turns.pop();
-                                tracing::info!(
-                                    removed_content_preview = &last_content[..last_content.len().min(60)],
-                                    history_len_after = turns.len(),
-                                    "DIAG:removed user turn from in-memory history"
-                                );
-                            } else {
-                                tracing::info!("DIAG:last turn is not user role, not removing");
                             }
-                        } else {
-                            tracing::info!(history_key = %history_key, "DIAG:history_key not found in map");
                         }
                     }
                     if let Some(ref store) = ctx.session_store {
-                        match store.remove_last(&history_key) {
-                            Ok(removed) => tracing::info!(removed, "DIAG:removed from persistent store"),
-                            Err(e) => tracing::warn!(error = %e, "DIAG:failed to remove from persistent store"),
-                        }
+                        let _ = store.remove_last(&history_key);
                     }
-                    let msg = "I got nothing for that one. What else you got?".to_string();
-                    tracing::info!(fallback_len = msg.len(), "DIAG:fallback2 created");
-                    msg
+                    if let Some(channel) = target_channel.as_ref() {
+                        let _ = channel.add_reaction(&msg.reply_target, &msg.id, "\u{26A0}\u{FE0F}").await;
+                    }
+                    "The provider returned an empty response for this message.".to_string()
                 }
             } else {
                 tracing::info!(sanitized_len = sanitized_response.len(), "DIAG:using sanitized_response");
