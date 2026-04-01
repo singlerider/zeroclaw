@@ -3238,20 +3238,29 @@ async fn process_channel_message(
                         sender = %msg.sender,
                         "Provider returned empty response — removing poisoned user turn"
                     );
-                    // Remove the user turn so it doesn't corrupt the session.
+                    // Remove the entire failed exchange (user turn + any
+                    // intermediate assistant/tool messages from the tool loop)
+                    // so orphan tool_results don't corrupt future requests.
+                    let removed_count;
                     {
                         let mut histories = ctx
                             .conversation_histories
                             .lock()
                             .unwrap_or_else(|e| e.into_inner());
+                        let before_len = histories.get(&history_key).map_or(0, |t| t.len());
                         if let Some(turns) = histories.get_mut(&history_key) {
-                            if turns.last().is_some_and(|t| t.role == "user") {
-                                turns.pop();
+                            if let Some(last_user_idx) = turns.iter().rposition(|t| t.role == "user") {
+                                turns.truncate(last_user_idx);
                             }
                         }
+                        let after_len = histories.get(&history_key).map_or(0, |t| t.len());
+                        removed_count = before_len.saturating_sub(after_len);
                     }
+                    // Remove the same number of messages from persistent storage.
                     if let Some(ref store) = ctx.session_store {
-                        let _ = store.remove_last(&history_key);
+                        for _ in 0..removed_count {
+                            let _ = store.remove_last(&history_key);
+                        }
                     }
                     if let Some(channel) = target_channel.as_ref() {
                         let _ = channel.add_reaction(&msg.reply_target, &msg.id, "\u{26A0}\u{FE0F}").await;
