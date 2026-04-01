@@ -513,6 +513,23 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
     false
 }
 
+/// Returns true if `command` contains an unquoted `>` that is NOT a safe
+/// stderr form (`2>/dev/null`, `2>&1`).
+fn contains_unsafe_output_redirect(command: &str) -> bool {
+    // Strip safe stderr patterns, then check for remaining `>`.
+    let safe = command
+        .replace("2>/dev/null", "")
+        .replace("2>&1", "");
+    contains_unquoted_char(&safe, '>')
+}
+
+/// Returns true if `command` contains an unquoted `<` that is NOT a heredoc (`<<`).
+fn contains_unquoted_input_redirect(command: &str) -> bool {
+    // Strip heredocs first, then check for remaining `<`.
+    let without_heredocs = command.replace("<<", "");
+    contains_unquoted_char(&without_heredocs, '<')
+}
+
 /// Detect unquoted shell variable expansions like `$HOME`, `$1`, `$?`.
 ///
 /// Escaped dollars (`\$`) are ignored. Variables inside single quotes are
@@ -958,10 +975,13 @@ impl SecurityPolicy {
             return false;
         }
 
-        // Block shell redirections (`<`, `>`, `>>`) — they can read/write
-        // arbitrary paths and bypass path checks.
-        // Ignore quoted literals, e.g. `echo "a>b"` and `echo "a<b"`.
-        if contains_unquoted_char(command, '>') || contains_unquoted_char(command, '<') {
+        // Block shell redirections that target files. Allow safe forms:
+        //   - `2>/dev/null`, `2>&1` (stderr suppression/merging)
+        //   - `<<` heredocs (input literals)
+        if contains_unsafe_output_redirect(command) {
+            return false;
+        }
+        if contains_unquoted_input_redirect(command) {
             return false;
         }
 
@@ -2265,6 +2285,41 @@ mod tests {
         let p = default_policy();
         assert!(!p.is_command_allowed("cat <(echo pwned)"));
         assert!(!p.is_command_allowed("ls >(cat /etc/passwd)"));
+    }
+
+    #[test]
+    fn heredoc_allowed_but_input_redirect_blocked() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("cat << 'EOF'\nhello\nEOF"));
+        assert!(p.is_command_allowed("cat <<EOF\nworld\nEOF"));
+        assert!(p.is_command_allowed("cat <<- 'MARKER'\n\tindented\nMARKER"));
+        assert!(p.is_command_allowed("cat <<< 'hello'"));
+        assert!(!p.is_command_allowed("cat < /etc/passwd"));
+        assert!(!p.is_command_allowed("wc -l < secret.txt"));
+    }
+
+    #[test]
+    fn stderr_redirect_allowed_but_file_redirect_blocked() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("python3 script.py 2>/dev/null"));
+        assert!(p.is_command_allowed("ls 2>&1"));
+        assert!(p.is_command_allowed("grep foo bar 2>/dev/null"));
+        assert!(!p.is_command_allowed("echo secret > output.txt"));
+        assert!(!p.is_command_allowed("cat foo >> log.txt"));
+    }
+
+    #[test]
+    fn redirect_helper_unit_tests() {
+        // Input redirects
+        assert!(!contains_unquoted_input_redirect("cat << 'EOF'"));
+        assert!(!contains_unquoted_input_redirect("cat <<< 'hello'"));
+        assert!(contains_unquoted_input_redirect("cat < /etc/passwd"));
+        assert!(!contains_unquoted_input_redirect("echo 'a<b'"));
+        // Output redirects
+        assert!(!contains_unsafe_output_redirect("cmd 2>/dev/null"));
+        assert!(!contains_unsafe_output_redirect("cmd 2>&1"));
+        assert!(contains_unsafe_output_redirect("echo hi > file.txt"));
+        assert!(!contains_unsafe_output_redirect("echo 'a>b'"));
     }
 
     #[test]
