@@ -41,6 +41,7 @@ pub mod nostr;
 pub mod notion;
 pub mod qq;
 pub mod reddit;
+pub mod response_stream;
 pub mod session_backend;
 pub mod session_sqlite;
 pub mod session_store;
@@ -2821,7 +2822,7 @@ async fn process_channel_message(
 
     // Partial mode: delta channel for draft updates (progress + text).
     let (delta_tx, delta_rx) = if use_draft_streaming {
-        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::DraftEvent>(64);
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::StreamDelta>(64);
         (Some(tx), Some(rx))
     } else {
         (None, None)
@@ -2861,14 +2862,12 @@ async fn process_channel_message(
             let reply_target = msg.reply_target.clone();
             let draft_id = draft_id_ref.to_string();
             Some(tokio::spawn(async move {
-                use crate::agent::loop_::DraftEvent;
-                let mut accumulated = String::new();
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        DraftEvent::Clear => {
-                            accumulated.clear();
-                        }
-                        DraftEvent::Progress(text) => {
+                use crate::agent::loop_::StreamDelta;
+                use crate::channels::response_stream::ResponseStream;
+                let mut stream = ResponseStream::new();
+                while let Some(delta) = rx.recv().await {
+                    match delta {
+                        StreamDelta::Status(text) => {
                             if let Err(e) = channel
                                 .update_draft_progress(&reply_target, &draft_id, &text)
                                 .await
@@ -2876,22 +2875,15 @@ async fn process_channel_message(
                                 tracing::debug!("Draft progress update failed: {e}");
                             }
                         }
-                        DraftEvent::Content(text) => {
-                            let _pre_len = accumulated.len();
-                            accumulated.push_str(&text);
-                            let trimmed = accumulated.trim_start();
-                            let trim_stripped = accumulated.len() - trimmed.len();
-                            if trimmed.len() < accumulated.len() {
-                                accumulated = trimmed.to_string();
-                            }
+                        StreamDelta::Text(text) => {
+                            stream.push(&text);
                             tracing::info!(
-                                accumulated_len = accumulated.len(),
+                                accumulated_len = stream.text().len(),
                                 token_len = text.len(),
-                                trim_stripped,
                                 "DIAG:accumulator token appended"
                             );
                             if let Err(e) = channel
-                                .update_draft(&reply_target, &draft_id, &accumulated)
+                                .update_draft(&reply_target, &draft_id, stream.text())
                                 .await
                             {
                                 tracing::debug!("Draft update failed: {e}");
