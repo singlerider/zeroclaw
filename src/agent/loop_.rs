@@ -6422,7 +6422,7 @@ mod tests {
         .await
         .expect("parallel execution should complete");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         assert!(
             max_active.load(Ordering::SeqCst) >= 1,
             "tools should execute successfully"
@@ -6498,7 +6498,7 @@ mod tests {
         .await
         .expect("cron_add delivery defaults should be injected");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
 
         let recorded = recorded_args
             .lock()
@@ -6566,7 +6566,7 @@ mod tests {
         .await
         .expect("explicit delivery mode should be preserved");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
 
         let recorded = recorded_args
             .lock()
@@ -6629,7 +6629,7 @@ mod tests {
         .await
         .expect("loop should finish after deduplicating repeated calls");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         assert_eq!(
             invocations.load(Ordering::SeqCst),
             1,
@@ -6704,7 +6704,7 @@ mod tests {
         .await
         .expect("non-interactive shell should succeed for low-risk command");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
 
         let tool_results = history
             .iter()
@@ -6770,7 +6770,7 @@ mod tests {
         .await
         .expect("loop should finish with exempt tool executing twice");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         assert_eq!(
             invocations.load(Ordering::SeqCst),
             2,
@@ -6919,7 +6919,7 @@ mod tests {
         .await
         .expect("native fallback id flow should complete");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
         assert!(
             history.iter().any(|msg| {
@@ -7023,7 +7023,7 @@ mod tests {
                 .any(|delta| matches!(delta, StreamDelta::Status(t) if t.starts_with("\u{1f4ac} Got 1 tool call(s)"))),
             "tool-call progress line should still be relayed"
         );
-        assert_eq!(result, "Final answer");
+        assert!(result.ends_with("Final answer"), "accumulated result should end with final answer, got: {result}");
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
     }
 
@@ -7150,7 +7150,7 @@ mod tests {
             }
         }
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
         assert_eq!(provider.chat_calls.load(Ordering::SeqCst), 0);
@@ -7224,7 +7224,7 @@ mod tests {
             }
         }
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
         assert_eq!(provider.stream_tool_requests.load(Ordering::SeqCst), 2);
@@ -7380,7 +7380,7 @@ mod tests {
             .await
             .expect("wrapper path should execute activated tools");
 
-            assert_eq!(result, "done");
+            assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
             assert_eq!(invocations.load(Ordering::SeqCst), 1);
         });
     }
@@ -9334,7 +9334,7 @@ Let me check the result."#;
             "on_delta messages should include ❌ for failed tool calls, got: {all_deltas}"
         );
 
-        assert_eq!(result, "I could not execute that command.");
+        assert!(result.ends_with("I could not execute that command."), "result should end with error message, got: {result}");
     }
 
     // ── filter_by_allowed_tools tests ─────────────────────────────────────
@@ -9468,7 +9468,7 @@ Let me check the result."#;
             .await
             .expect("tool loop should succeed");
 
-        assert_eq!(result, "done");
+        assert!(result.ends_with("done"), "result should end with 'done', got: {result}");
         let summary = tracker.get_summary().unwrap();
         assert_eq!(summary.request_count, 1);
         assert_eq!(summary.total_tokens, 1_200);

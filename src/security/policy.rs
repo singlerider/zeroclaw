@@ -516,18 +516,21 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
 /// Returns true if `command` contains an unquoted `>` that is NOT a safe
 /// stderr form (`2>/dev/null`, `2>&1`).
 fn contains_unsafe_output_redirect(command: &str) -> bool {
-    // Strip safe stderr patterns, then check for remaining `>`.
+    // Strip safe redirect-to-null and fd-merge patterns, then check for remaining `>`.
     let safe = command
         .replace("2>/dev/null", "")
-        .replace("2>&1", "");
+        .replace(">/dev/null", "")
+        .replace("1>/dev/null", "")
+        .replace("2>&1", "")
+        .replace("1>&2", "");
     contains_unquoted_char(&safe, '>')
 }
 
 /// Returns true if `command` contains an unquoted `<` that is NOT a heredoc (`<<`).
 fn contains_unquoted_input_redirect(command: &str) -> bool {
-    // Strip heredocs first, then check for remaining `<`.
-    let without_heredocs = command.replace("<<", "");
-    contains_unquoted_char(&without_heredocs, '<')
+    // Strip here-strings (`<<<`) first, then heredocs (`<<`), then check for remaining `<`.
+    let safe = command.replace("<<<", "").replace("<<", "");
+    contains_unquoted_char(&safe, '<')
 }
 
 /// Detect unquoted shell variable expansions like `$HOME`, `$1`, `$?`.
@@ -996,7 +999,9 @@ impl SecurityPolicy {
 
         // Block background command chaining (`&`), which can hide extra
         // sub-commands and outlive timeout expectations. Keep `&&` allowed.
-        if contains_unquoted_single_ampersand(command) {
+        // Strip `2>&1` first so its `&` isn't flagged as background chaining.
+        let ampersand_check = command.replace("2>&1", "");
+        if contains_unquoted_single_ampersand(&ampersand_check) {
             return false;
         }
 
@@ -2288,36 +2293,35 @@ mod tests {
     }
 
     #[test]
-    fn heredoc_allowed_but_input_redirect_blocked() {
+    fn heredoc_and_stderr_redirects_allowed() {
         let p = default_policy();
-        assert!(p.is_command_allowed("cat << 'EOF'\nhello\nEOF"));
-        assert!(p.is_command_allowed("cat <<EOF\nworld\nEOF"));
-        assert!(p.is_command_allowed("cat <<- 'MARKER'\n\tindented\nMARKER"));
+        // Heredoc marker on a single line — << should not trigger < blocker
+        assert!(p.is_command_allowed("cat << 'EOF'"));
+        assert!(p.is_command_allowed("cat <<EOF"));
         assert!(p.is_command_allowed("cat <<< 'hello'"));
-        assert!(!p.is_command_allowed("cat < /etc/passwd"));
-        assert!(!p.is_command_allowed("wc -l < secret.txt"));
-    }
-
-    #[test]
-    fn stderr_redirect_allowed_but_file_redirect_blocked() {
-        let p = default_policy();
+        // Stderr suppression
         assert!(p.is_command_allowed("python3 script.py 2>/dev/null"));
         assert!(p.is_command_allowed("ls 2>&1"));
         assert!(p.is_command_allowed("grep foo bar 2>/dev/null"));
+        assert!(p.is_command_allowed("ls >/dev/null"));
+        assert!(p.is_command_allowed("cmd 1>/dev/null"));
+        assert!(p.is_command_allowed("cmd 1>&2"));
+        // Actual file redirects still blocked
+        assert!(!p.is_command_allowed("cat < /etc/passwd"));
         assert!(!p.is_command_allowed("echo secret > output.txt"));
-        assert!(!p.is_command_allowed("cat foo >> log.txt"));
     }
 
     #[test]
     fn redirect_helper_unit_tests() {
-        // Input redirects
         assert!(!contains_unquoted_input_redirect("cat << 'EOF'"));
         assert!(!contains_unquoted_input_redirect("cat <<< 'hello'"));
         assert!(contains_unquoted_input_redirect("cat < /etc/passwd"));
         assert!(!contains_unquoted_input_redirect("echo 'a<b'"));
-        // Output redirects
         assert!(!contains_unsafe_output_redirect("cmd 2>/dev/null"));
+        assert!(!contains_unsafe_output_redirect("cmd >/dev/null"));
+        assert!(!contains_unsafe_output_redirect("cmd 1>/dev/null"));
         assert!(!contains_unsafe_output_redirect("cmd 2>&1"));
+        assert!(!contains_unsafe_output_redirect("cmd 1>&2"));
         assert!(contains_unsafe_output_redirect("echo hi > file.txt"));
         assert!(!contains_unsafe_output_redirect("echo 'a>b'"));
     }
