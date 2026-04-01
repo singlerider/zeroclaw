@@ -725,8 +725,8 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
                     tracing::info!(
                         merging_role = %turn.role,
                         into_role = %last_turn.role,
-                        merging_content_preview = &turn.content[..turn.content.len().min(60)],
-                        into_content_preview = &last_turn.content[..last_turn.content.len().min(60)],
+                        merging_content_preview = crate::util::truncate_with_ellipsis(&turn.content, 60),
+                        into_content_preview = crate::util::truncate_with_ellipsis(&last_turn.content, 60),
                         "DIAG:normalize merging consecutive same-role turn"
                     );
                     if !turn.content.is_empty() {
@@ -2584,7 +2584,7 @@ async fn process_channel_message(
     // Preserve user turn before the LLM call so interrupted requests keep context.
     tracing::info!(
         history_key = %history_key,
-        content_preview = &msg.content[..msg.content.len().min(60)],
+        content_preview = crate::util::truncate_with_ellipsis(&msg.content, 60),
         "DIAG:appending user turn to history"
     );
     append_sender_turn(ctx.as_ref(), &history_key, ChatMessage::user(&msg.content));
@@ -2639,7 +2639,7 @@ async fn process_channel_message(
             idx = i,
             role = %turn.role,
             content_len = turn.content.len(),
-            content_preview = &turn.content[..turn.content.len().min(80)],
+            content_preview = crate::util::truncate_with_ellipsis(&turn.content, 80),
             "DIAG:history turn"
         );
     }
@@ -2803,7 +2803,7 @@ async fn process_channel_message(
                 role = %turn.role,
                 content_len = turn.content.len(),
                 content_empty = turn.content.trim().is_empty(),
-                content_preview = &turn.content[..turn.content.len().min(80)],
+                content_preview = crate::util::truncate_with_ellipsis(&turn.content, 80),
                 "DIAG:final history turn"
             );
         }
@@ -3149,7 +3149,7 @@ async fn process_channel_message(
             tracing::info!(
                 raw_response_len = response.len(),
                 raw_response_empty = response.trim().is_empty(),
-                raw_response_preview = &response[..response.len().min(100)],
+                raw_response_preview = crate::util::truncate_with_ellipsis(&response, 100),
                 "DIAG:LLM raw response received"
             );
             // ── Hook: on_message_sending (modifying) ─────────
@@ -3377,7 +3377,7 @@ async fn process_channel_message(
                 tracing::info!(
                     delivered_len = delivered_response.len(),
                     delivered_empty = delivered_response.trim().is_empty(),
-                    delivered_preview = &delivered_response[..delivered_response.len().min(100)],
+                    delivered_preview = crate::util::truncate_with_ellipsis(&delivered_response, 100),
                     "DIAG:about to finalize/send response"
                 );
                 if let Some(ref draft_id) = draft_message_id {

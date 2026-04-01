@@ -2006,7 +2006,7 @@ async fn consume_provider_streaming_response(
             idx,
             role = %msg.role,
             content_len = msg.content.len(),
-            content_preview = &msg.content[..msg.content.len().min(120)],
+            content_preview = crate::util::truncate_with_ellipsis(&msg.content, 120),
             "DIAG:provider request message"
         );
     }
@@ -2682,7 +2682,7 @@ pub(crate) async fn run_tool_call_loop(
                 );
                 if response_text.trim().is_empty() && resp.tool_calls.is_empty() {
                     tracing::info!(
-                        response_text_preview = &response_text[..response_text.len().min(100)],
+                        response_text_preview = crate::util::truncate_with_ellipsis(&response_text, 100),
                         "DIAG:provider returned empty text AND no tool calls"
                     );
                 }

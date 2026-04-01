@@ -2195,7 +2195,7 @@ impl Channel for MatrixChannel {
                             scan_pos,
                             consumed,
                             new_sent_so_far = new_sent,
-                            paragraph_preview = &paragraph[..paragraph.len().min(60)],
+                            paragraph_preview = crate::util::truncate_with_ellipsis(&paragraph, 60),
                             "DIAG:matrix paragraph found"
                         );
                         if !paragraph.is_empty() {
@@ -2299,7 +2299,7 @@ impl Channel for MatrixChannel {
                     let remaining = text[adjusted_offset..].trim().to_string();
                     tracing::info!(
                         remaining_len = remaining.len(),
-                        remaining_preview = &remaining[..remaining.len().min(80)],
+                        remaining_preview = crate::util::truncate_with_ellipsis(&remaining, 80),
                         "DIAG:matrix finalize_draft sending remainder"
                     );
                     if !remaining.is_empty() {
