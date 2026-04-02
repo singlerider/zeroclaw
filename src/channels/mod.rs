@@ -457,6 +457,20 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     }
 }
 
+/// Generate the legacy session key as it would appear after lossy filename sanitization.
+/// Used to find sessions persisted before the percent-encoding fix (#4806).
+fn legacy_sanitized_key(key: &str) -> String {
+    key.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn followup_thread_id(msg: &traits::ChannelMessage) -> Option<String> {
     msg.thread_ts.clone().or_else(|| Some(msg.id.clone()))
 }
@@ -2623,12 +2637,37 @@ async fn process_channel_message(
     let prior_turns_raw = if force_fresh_session {
         vec![ChatMessage::user(&msg.content)]
     } else {
-        ctx.conversation_histories
+        let mut histories = ctx
+            .conversation_histories
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&history_key)
-            .cloned()
-            .unwrap_or_default()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut turns = histories.get(&history_key).cloned().unwrap_or_default();
+
+        // Fallback: check for sessions persisted under the legacy lossy-sanitized
+        // key (pre-#4806). If found, migrate to the correct key.
+        if turns.is_empty() {
+            let legacy_key = legacy_sanitized_key(&history_key);
+            if legacy_key != history_key {
+                if let Some(legacy_turns) = histories.pop(&legacy_key) {
+                    if !legacy_turns.is_empty() {
+                        tracing::info!(
+                            old_key = %legacy_key,
+                            new_key = %history_key,
+                            "Migrated legacy session to percent-encoded key"
+                        );
+                        histories.push(history_key.clone(), legacy_turns.clone());
+                        if let Some(ref store) = ctx.session_store {
+                            for turn in &legacy_turns {
+                                let _ = store.append(&history_key, turn);
+                            }
+                        }
+                        turns = legacy_turns;
+                    }
+                }
+            }
+        }
+
+        turns
     };
     let mut prior_turns = normalize_cached_channel_turns(prior_turns_raw);
 
@@ -4690,7 +4729,9 @@ fn collect_configured_channels(
                         mx.device_id.clone(),
                         config.config_path.parent().map(|path| path.to_path_buf()),
                         mx.recovery_key.clone(),
+                        mx.password.clone(),
                     )
+                    .with_mention_only(mx.mention_only)
                     .with_streaming(
                         mx.stream_mode,
                         mx.draft_update_interval_ms,
@@ -5703,21 +5744,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
         let mut hydrated = 0usize;
         let mut orphans_closed = 0usize;
         let session_keys = store.list_sessions();
-
-        // Sort by file mtime (most recently modified first) for predictable hydration.
-        // Collect mtimes up front to avoid repeated FS reads inside the comparator.
-        let mut keyed: Vec<_> = session_keys
-            .into_iter()
-            .map(|k| {
-                let mt = store
-                    .session_mtime(&k)
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                (k, mt)
-            })
-            .collect();
-        keyed.sort_by(|a, b| b.1.cmp(&a.1));
-        keyed.truncate(MAX_CONVERSATION_SENDERS);
-        let session_keys: Vec<String> = keyed.into_iter().map(|(k, _)| k).collect();
 
         let mut histories = runtime_ctx
             .conversation_histories

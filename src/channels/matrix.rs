@@ -11,6 +11,7 @@ use matrix_sdk::{
         events::receipt::ReceiptThread,
         events::relation::{Annotation, Thread},
         events::room::MediaSource,
+        events::room::encrypted::OriginalSyncRoomEncryptedEvent,
         events::room::member::StrippedRoomMemberEvent,
         events::room::message::{
             MessageType, OriginalSyncRoomMessageEvent, Relation, ReplacementMetadata,
@@ -25,6 +26,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, OnceCell, RwLock, mpsc};
+
+/// Extract media metadata from a Matrix `MediaSource` for download.
+///
+/// Returns `(filename, source, mime)` for both plain and encrypted media.
+/// The `MediaSource` is later passed to the SDK's media API which handles
+/// decryption transparently for E2EE rooms.
+fn extract_media_metadata(
+    source: &MediaSource,
+    name: &str,
+    mime: Option<&str>,
+) -> (String, MediaSource, Option<String>) {
+    (name.to_string(), source.clone(), mime.map(String::from))
+}
 
 /// Matrix channel for Matrix Client-Server API.
 /// Uses matrix-sdk for reliable sync and encrypted-room decryption.
@@ -45,6 +59,8 @@ pub struct MatrixChannel {
     voice_mode: Arc<AtomicBool>,
     otk_conflict_detected: Arc<AtomicBool>,
     recovery_key: Option<String>,
+    password: Option<String>,
+    mention_only: bool,
     transcription: Option<crate::config::TranscriptionConfig>,
     transcription_manager: Option<Arc<super::transcription::TranscriptionManager>>,
     stream_mode: crate::config::StreamMode,
@@ -55,8 +71,21 @@ pub struct MatrixChannel {
     /// Tracks how much text has been sent in MultiMessage mode so we can
     /// detect new paragraphs from the accumulated text passed to `update_draft`.
     multi_message_sent_len: Arc<Mutex<HashMap<String, usize>>>,
+    /// Bytes consumed from empty paragraphs (leading `\n\n`) during MultiMessage
+    /// streaming.  Used to adjust `sent_so_far` in `finalize_draft` when the
+    /// finalize text has been sanitized (leading whitespace trimmed).
+    multi_message_empty_consumed: Arc<Mutex<HashMap<String, usize>>>,
     /// Thread context captured from `send_draft()` for MultiMessage paragraph delivery.
     multi_message_thread_ts: Arc<Mutex<HashMap<String, Option<String>>>>,
+    /// Dedup cache for incoming events, shared across listener restarts so
+    /// stacked event handlers (from supervisor re-calls of `listen()`) all
+    /// check the same set.
+    recent_event_cache: Arc<
+        Mutex<(
+            std::collections::VecDeque<String>,
+            std::collections::HashSet<String>,
+        )>,
+    >,
 }
 
 impl std::fmt::Debug for MatrixChannel {
@@ -158,6 +187,7 @@ impl MatrixChannel {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -177,6 +207,7 @@ impl MatrixChannel {
             vec![],
             owner_hint,
             device_id_hint,
+            None,
             None,
             None,
         )
@@ -201,6 +232,7 @@ impl MatrixChannel {
             device_id_hint,
             zeroclaw_dir,
             None,
+            None,
         )
     }
 
@@ -214,6 +246,7 @@ impl MatrixChannel {
         device_id_hint: Option<String>,
         zeroclaw_dir: Option<PathBuf>,
         recovery_key: Option<String>,
+        password: Option<String>,
     ) -> Self {
         let homeserver = homeserver.trim_end_matches('/').to_string();
         let access_token = access_token.trim().to_string();
@@ -245,6 +278,8 @@ impl MatrixChannel {
             voice_mode: Arc::new(AtomicBool::new(false)),
             otk_conflict_detected: Arc::new(AtomicBool::new(false)),
             recovery_key,
+            password,
+            mention_only: false,
             transcription: None,
             transcription_manager: None,
             stream_mode: crate::config::StreamMode::Off,
@@ -252,7 +287,12 @@ impl MatrixChannel {
             multi_message_delay_ms: 800,
             last_draft_edit: Arc::new(Mutex::new(HashMap::new())),
             multi_message_sent_len: Arc::new(Mutex::new(HashMap::new())),
+            multi_message_empty_consumed: Arc::new(Mutex::new(HashMap::new())),
             multi_message_thread_ts: Arc::new(Mutex::new(HashMap::new())),
+            recent_event_cache: Arc::new(Mutex::new((
+                std::collections::VecDeque::new(),
+                std::collections::HashSet::new(),
+            ))),
         }
     }
 
@@ -268,6 +308,27 @@ impl MatrixChannel {
         self.draft_update_interval_ms = draft_update_interval_ms;
         self.multi_message_delay_ms = multi_message_delay_ms;
         self
+    }
+
+    /// When true, only respond to messages that @-mention the bot in group rooms.
+    pub fn with_mention_only(mut self, mention_only: bool) -> Self {
+        self.mention_only = mention_only;
+        self
+    }
+
+    /// Check whether a message body contains a mention of the bot's user ID.
+    fn body_contains_mention(body: &str, bot_user_id: &str) -> bool {
+        body.contains(bot_user_id)
+    }
+
+    /// Strip the bot's user ID mention from the message body.
+    fn strip_mention(body: &str, bot_user_id: &str) -> String {
+        body.replace(bot_user_id, "").trim().to_string()
+    }
+
+    /// Determine if a room is a DM (≤2 joined members).
+    fn is_dm_room(joined_member_count: u64) -> bool {
+        joined_member_count <= 2
     }
 
     /// Configure voice transcription for audio messages.
@@ -377,14 +438,32 @@ impl MatrixChannel {
     }
 
     async fn load_or_generate_device_id(&self) -> anyhow::Result<String> {
-        // Try to load a previously persisted device_id
+        // Try to load a previously persisted device_id — but only if the
+        // crypto store still exists. If the store was deleted (wiped) but
+        // the device_id file remains, the device_id is orphaned: the
+        // homeserver has stale keys for it and other clients will encrypt
+        // to keys we no longer have. In that case, discard the old
+        // device_id and generate a fresh one.
         if let Some(path) = self.device_id_path() {
             if path.exists() {
-                let stored = tokio::fs::read_to_string(&path).await?;
-                let stored = stored.trim().to_string();
-                if !stored.is_empty() {
-                    tracing::info!("Matrix using persisted device_id from {}", path.display());
-                    return Ok(stored);
+                let crypto_store_exists = self
+                    .matrix_store_dir()
+                    .map(|dir| dir.join("matrix-sdk-state.sqlite3").exists())
+                    .unwrap_or(false);
+
+                if crypto_store_exists {
+                    let stored = tokio::fs::read_to_string(&path).await?;
+                    let stored = stored.trim().to_string();
+                    if !stored.is_empty() {
+                        tracing::info!("Matrix using persisted device_id from {}", path.display());
+                        return Ok(stored);
+                    }
+                } else {
+                    tracing::warn!(
+                        "Matrix crypto store is missing but device_id file exists — \
+                         discarding orphaned device_id and generating a new one"
+                    );
+                    let _ = tokio::fs::remove_file(&path).await;
                 }
             }
         }
@@ -582,50 +661,234 @@ impl MatrixChannel {
 
                 let mut client_builder = MatrixSdkClient::builder().homeserver_url(&self.homeserver);
 
-                if let Some(store_dir) = self.matrix_store_dir() {
-                    tokio::fs::create_dir_all(&store_dir).await.map_err(|error| {
+                let store_dir = self.matrix_store_dir();
+                let crypto_store_exists = store_dir
+                    .as_ref()
+                    .map(|dir| dir.join("matrix-sdk-crypto.sqlite3").exists())
+                    .unwrap_or(false);
+
+                if let Some(ref store_dir) = store_dir {
+                    tokio::fs::create_dir_all(store_dir).await.map_err(|error| {
                         anyhow::anyhow!(
                             "Matrix failed to initialize persistent store directory at '{}': {error}",
                             store_dir.display()
                         )
                     })?;
-                    client_builder = client_builder.sqlite_store(&store_dir, None);
+                    client_builder = client_builder.sqlite_store(store_dir, None);
                 }
 
                 let client = client_builder.build().await?;
 
-                let user_id: OwnedUserId = resolved_user_id.parse()?;
-                let session = MatrixSession {
-                    meta: SessionMeta {
-                        user_id,
-                        device_id: resolved_device_id.into(),
-                    },
-                    tokens: SessionTokens {
-                        access_token: self.access_token.clone(),
-                        refresh_token: None,
-                    },
+                // Check for a persisted session from a previous fresh login.
+                let session_path = store_dir.as_ref().map(|d| d.join("session.json"));
+                let persisted_session: Option<(String, String)> = if let Some(ref path) = session_path {
+                    if path.exists() {
+                        tokio::fs::read_to_string(path).await.ok().and_then(|s| {
+                            let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+                            Some((
+                                v.get("access_token")?.as_str()?.to_string(),
+                                v.get("device_id")?.as_str()?.to_string(),
+                            ))
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 };
 
-                client.restore_session(session).await?;
-                tracing::debug!("Matrix session restored for device");
+                if !crypto_store_exists && self.password.is_some() {
+                    // Crypto store missing — old device keys are gone. Log in
+                    // fresh with password to get a new device_id + new keys.
+                    let password = self.password.as_deref().unwrap();
+                    let localpart = resolved_user_id
+                        .strip_prefix('@')
+                        .and_then(|rest| rest.split(':').next())
+                        .unwrap_or(&resolved_user_id);
 
-                // Attempt E2EE key recovery if a recovery key is configured
+                    tracing::warn!(
+                        "Matrix crypto store missing — performing fresh login for new device"
+                    );
+
+                    let login_response = client
+                        .matrix_auth()
+                        .login_username(localpart, password)
+                        .initial_device_display_name("ZeroClaw")
+                        .await
+                        .map_err(|error| anyhow::anyhow!("Matrix fresh login failed: {error}"))?;
+
+                    tracing::info!(
+                        "Matrix fresh login — new device_id={}, user_id={}",
+                        login_response.device_id, login_response.user_id
+                    );
+
+                    // Persist the new session so restarts use the correct token + device_id.
+                    if let Some(ref path) = session_path {
+                        let session_data = serde_json::json!({
+                            "access_token": login_response.access_token,
+                            "device_id": login_response.device_id,
+                        });
+                        if let Err(error) = tokio::fs::write(path, session_data.to_string()).await {
+                            tracing::warn!("Matrix: failed to persist session: {error}");
+                        } else {
+                            tracing::info!("Matrix: persisted new session to {}", path.display());
+                        }
+                    }
+                } else if let Some((ref token, ref device_id)) = persisted_session {
+                    // Restore from a previous fresh login's persisted session.
+                    tracing::info!("Matrix: restoring session from persisted login (device_id={})", device_id);
+                    let user_id: OwnedUserId = resolved_user_id.parse()?;
+                    let session = MatrixSession {
+                        meta: SessionMeta {
+                            user_id,
+                            device_id: device_id.clone().into(),
+                        },
+                        tokens: SessionTokens {
+                            access_token: token.clone(),
+                            refresh_token: None,
+                        },
+                    };
+                    client.restore_session(session).await?;
+                } else {
+                    if !crypto_store_exists {
+                        tracing::error!(
+                            "Matrix crypto store missing and no password configured — \
+                             E2EE will NOT work until a password is added to the config"
+                        );
+                    }
+                    let user_id: OwnedUserId = resolved_user_id.parse()?;
+                    let session = MatrixSession {
+                        meta: SessionMeta {
+                            user_id,
+                            device_id: resolved_device_id.clone().into(),
+                        },
+                        tokens: SessionTokens {
+                            access_token: self.access_token.clone(),
+                            refresh_token: None,
+                        },
+                    };
+                    client.restore_session(session).await?;
+                }
+                tracing::info!(
+                    "Matrix session restored — user_id={}, device_id={}",
+                    resolved_user_id, resolved_device_id
+                );
+
+                // Log our device's identity keys (what other clients use to encrypt to us)
+                if let Ok(Some(own_device)) = client.encryption().get_own_device().await {
+                    tracing::info!(
+                        "Matrix own device: id={}, verified={}, ed25519={:?}, curve25519={:?}",
+                        own_device.device_id(),
+                        own_device.is_verified(),
+                        own_device.ed25519_key().map(|k| k.to_base64()),
+                        own_device.curve25519_key().map(|k| k.to_base64()),
+                    );
+                } else {
+                    tracing::warn!("Matrix: could not read own device from store");
+                }
+
+                // E2EE recovery
                 if let Some(ref key) = self.recovery_key {
                     match client.encryption().recovery().recover(key).await {
                         Ok(()) => {
-                            tracing::info!(
-                                "Matrix E2EE recovery successful — room keys and cross-signing secrets restored from server backup."
-                            );
+                            tracing::info!("Matrix E2EE recovery successful — cross-signing secrets restored");
+                            // Log own device again after recovery (verification may have changed)
+                            if let Ok(Some(own_device)) = client.encryption().get_own_device().await {
+                                tracing::info!(
+                                    "Matrix own device after recovery: id={}, verified={}",
+                                    own_device.device_id(), own_device.is_verified()
+                                );
+                            }
                         }
-                        Err(error) => {
-                            tracing::warn!(
-                                "Matrix E2EE recovery failed: {error}. \
-                                 The recovery key may be incorrect, or server-side key backup may not be configured. \
-                                 The bot will still work in unencrypted rooms. \
-                                 See docs/security/matrix-e2ee-guide.md section 4I."
-                            );
+                        Err(error) => tracing::warn!("Matrix E2EE recovery failed: {error}"),
+                    }
+                }
+
+                // Initial sync: uploads device keys and processes to-device key shares
+                let _ = client.sync_once(SyncSettings::new()).await;
+                tracing::info!("Matrix: initial sync after recovery complete");
+
+                // Verify what the homeserver has for our device keys after sync
+                let keys_query_url = format!(
+                    "{}/_matrix/client/v3/keys/query",
+                    self.homeserver
+                );
+                let query_body = serde_json::json!({
+                    "device_keys": { &resolved_user_id: [] }
+                });
+                match self.http_client
+                    .post(&keys_query_url)
+                    .header("Authorization", self.auth_header_value())
+                    .json(&query_body)
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(body) = resp.json::<serde_json::Value>().await {
+                            if let Some(device_keys) = body
+                                .get("device_keys")
+                                .and_then(|dk| dk.get(&resolved_user_id))
+                                .and_then(|u| u.as_object())
+                            {
+                                for (device_id, device_info) in device_keys {
+                                    let curve_key = device_info
+                                        .get("keys")
+                                        .and_then(|k| k.as_object())
+                                        .and_then(|keys| {
+                                            keys.iter()
+                                                .find(|(k, _)| k.starts_with("curve25519:"))
+                                                .map(|(_, v)| v.as_str().unwrap_or("?"))
+                                        });
+                                    tracing::info!(
+                                        "Matrix HOMESERVER has device {} with curve25519={}",
+                                        device_id,
+                                        curve_key.unwrap_or("unknown")
+                                    );
+                                }
+                            }
                         }
                     }
+                    Ok(resp) => tracing::warn!("Matrix /keys/query failed: {}", resp.status()),
+                    Err(error) => tracing::warn!("Matrix /keys/query failed: {error}"),
+                }
+
+                // Log what the homeserver knows about allowed users' devices
+                for allowed_user in &self.allowed_users {
+                    if allowed_user == "*" { continue; }
+                    let user_id: OwnedUserId = match allowed_user.parse() {
+                        Ok(uid) => uid,
+                        Err(_) => continue,
+                    };
+                    match client.encryption().get_user_devices(&user_id).await {
+                        Ok(devices) => {
+                            for device in devices.devices() {
+                                tracing::info!(
+                                    "Matrix: user {} device {} — verified={}, ed25519={:?}, curve25519={:?}",
+                                    allowed_user,
+                                    device.device_id(),
+                                    device.is_verified(),
+                                    device.ed25519_key().map(|k| k.to_base64()),
+                                    device.curve25519_key().map(|k| k.to_base64()),
+                                );
+                            }
+                        }
+                        Err(error) => tracing::warn!("Matrix: failed to query devices for {}: {error}", allowed_user),
+                    }
+                }
+
+                // Download room keys from backup for all joined rooms.
+                // recover() only imports cross-signing secrets, not megolm keys.
+                if self.recovery_key.is_some() {
+                    let backup_enabled = client.encryption().backups().are_enabled().await;
+                    tracing::info!("Matrix: backup enabled={} before room key download", backup_enabled);
+                    for room in client.joined_rooms() {
+                        let room_id = room.room_id().to_owned();
+                        match client.encryption().backups().download_room_keys_for_room(&room_id).await {
+                            Ok(()) => tracing::info!("Matrix: downloaded room keys for {}", room_id),
+                            Err(error) => tracing::warn!("Matrix: room key download FAILED for {}: {error}", room_id),
+                        }
+                    }
+                    tracing::info!("Matrix: room key download from backup complete");
                 }
 
                 Ok::<MatrixSdkClient, anyhow::Error>(client)
@@ -744,51 +1007,148 @@ impl MatrixChannel {
         .to_string()
     }
 
-    async fn log_e2ee_diagnostics(&self, client: &MatrixSdkClient) {
-        match client.encryption().get_own_device().await {
-            Ok(Some(device)) => {
-                if device.is_verified() {
-                    tracing::info!(
-                        "Matrix device '{}' is verified for E2EE.",
-                        device.device_id()
-                    );
-                } else {
-                    tracing::warn!(
-                        "Matrix device '{}' is not verified. Other clients will label bot messages as unverified. \
-                         Verify this device from a trusted session and keep device_id stable across restarts. \
-                         See docs/security/matrix-e2ee-guide.md section 4D.",
-                        device.device_id()
-                    );
-                }
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    "Matrix own-device metadata is unavailable; verify/signing status cannot be determined. \
-                     See docs/security/matrix-e2ee-guide.md section 4D."
-                );
-            }
-            Err(error) => {
-                tracing::warn!("Matrix own-device verification check failed: {error}");
+    async fn log_e2ee_diagnostics(&self, _client: &MatrixSdkClient) {
+        // Intentionally minimal. The SDK handles E2EE internally after
+        // restore_session + recover(). Previous versions of this method
+        // called backups().disable() which broke encrypted room decryption
+        // (see #4878). Do not add backup/verification manipulation here.
+    }
+}
+
+// ── Outgoing media helpers ─────────────────────────────────────────────
+
+/// Parsed `[IMAGE:/path]`, `[FILE:/path]`, etc. marker from agent output.
+struct OutgoingMedia {
+    path: String,
+    msgtype: &'static str,
+}
+
+/// Extract media markers from message text, returning cleaned text and markers.
+fn extract_media_markers(message: &str) -> (String, Vec<OutgoingMedia>) {
+    let mut cleaned = String::with_capacity(message.len());
+    let mut markers = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(rel_start) = message[cursor..].find('[') {
+        let start = cursor + rel_start;
+        cleaned.push_str(&message[cursor..start]);
+        let Some(rel_end) = message[start..].find(']') else {
+            cleaned.push_str(&message[start..]);
+            cursor = message.len();
+            break;
+        };
+        let end = start + rel_end;
+        let inner = &message[start + 1..end];
+        let parsed = inner.split_once(':').and_then(|(kind, target)| {
+            let msgtype = match kind.trim().to_ascii_uppercase().as_str() {
+                "IMAGE" | "PHOTO" => "m.image",
+                "DOCUMENT" | "FILE" => "m.file",
+                "VIDEO" => "m.video",
+                "AUDIO" | "VOICE" => "m.audio",
+                _ => return None,
+            };
+            let target = target.trim();
+            (!target.is_empty()).then(|| OutgoingMedia {
+                path: target.to_string(),
+                msgtype,
+            })
+        });
+        if let Some(m) = parsed {
+            markers.push(m);
+        } else {
+            cleaned.push_str(&message[start..=end]);
+        }
+        cursor = end + 1;
+    }
+    if cursor < message.len() {
+        cleaned.push_str(&message[cursor..]);
+    }
+    (cleaned.trim().to_string(), markers)
+}
+
+impl MatrixChannel {
+    /// Upload a file and send it as a media message in the room.
+    async fn send_media(
+        &self,
+        room: &Room,
+        path: &str,
+        msgtype: &str,
+        thread_ts: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let file_path = std::path::Path::new(path);
+        anyhow::ensure!(file_path.exists(), "file not found: {path}");
+
+        let bytes = tokio::fs::read(file_path).await?;
+        let filename = file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment");
+        let mime = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+
+        // Upload to Matrix media repo
+        let homeserver = self.homeserver.trim_end_matches('/');
+        let client = reqwest::Client::new();
+        let upload_resp = client
+            .post(format!(
+                "{homeserver}/_matrix/media/v3/upload?filename={}",
+                urlencoding::encode(filename)
+            ))
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Content-Type", &mime)
+            .body(bytes)
+            .send()
+            .await?;
+        anyhow::ensure!(
+            upload_resp.status().is_success(),
+            "media upload failed: {}",
+            upload_resp.status()
+        );
+
+        let content_uri: String = upload_resp
+            .json::<serde_json::Value>()
+            .await?
+            .get("content_uri")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("missing content_uri in upload response"))?;
+
+        let mut event_content = serde_json::json!({
+            "msgtype": msgtype,
+            "body": filename,
+            "url": content_uri,
+            "info": { "mimetype": mime },
+        });
+        if let Some(thread_id) = thread_ts {
+            if let Ok(thread_root) = thread_id.parse::<OwnedEventId>() {
+                event_content["m.relates_to"] = serde_json::json!({
+                    "rel_type": "m.thread",
+                    "event_id": thread_root.to_string(),
+                    "is_falling_back": true,
+                    "m.in_reply_to": { "event_id": thread_root.to_string() },
+                });
             }
         }
 
-        if client.encryption().backups().are_enabled().await {
-            tracing::info!("Matrix room-key backup is enabled for this device.");
-        } else {
-            let _ = client.encryption().backups().disable().await;
-            if self.recovery_key.is_some() {
-                tracing::info!(
-                    "Matrix room-key backup is not active on this device, but a recovery key is configured. \
-                     Room keys will be restored from server backup on startup."
-                );
-            } else {
-                tracing::warn!(
-                    "Matrix room-key backup is not enabled for this device. \
-                     To automatically restore room keys after a device reset, set recovery_key in your Matrix config. \
-                     See docs/security/matrix-e2ee-guide.md section 4I."
-                );
-            }
-        }
+        let txn_id = uuid::Uuid::new_v4();
+        let room_id = room.room_id();
+        let send_resp = client
+            .put(format!(
+                "{homeserver}/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn_id}"
+            ))
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .json(&event_content)
+            .send()
+            .await?;
+        anyhow::ensure!(
+            send_resp.status().is_success(),
+            "media send failed: {}",
+            send_resp.status()
+        );
+
+        tracing::debug!(filename, msgtype, "Matrix: sent media attachment");
+        Ok(())
     }
 }
 
@@ -830,18 +1190,49 @@ impl Channel for MatrixChannel {
             tracing::warn!("Matrix failed to stop typing notification: {error}");
         }
 
-        let mut content = RoomMessageEventContent::text_markdown(&message.content);
-
-        if let Some(ref thread_ts) = message.thread_ts {
-            if let Ok(thread_root) = thread_ts.parse::<OwnedEventId>() {
-                content.relates_to = Some(Relation::Thread(Thread::plain(
-                    thread_root.clone(),
-                    thread_root,
-                )));
+        // Parse and send any media attachment markers before the text message.
+        // Follows the same [IMAGE:/path], [DOCUMENT:/path], [VIDEO:/path], [AUDIO:/path]
+        // marker convention used by Discord and Telegram channels.
+        let (cleaned_content, media_markers) = extract_media_markers(&message.content);
+        for marker in &media_markers {
+            if let Err(err) = self
+                .send_media(
+                    &room,
+                    &marker.path,
+                    marker.msgtype,
+                    message.thread_ts.as_deref(),
+                )
+                .await
+            {
+                tracing::warn!(
+                    path = %marker.path,
+                    msgtype = marker.msgtype,
+                    "Matrix: failed to send media attachment: {err}"
+                );
             }
         }
 
-        room.send(content).await?;
+        let text_to_send = if media_markers.is_empty() {
+            &message.content
+        } else {
+            &cleaned_content
+        };
+
+        // Only send text if there's meaningful content after marker removal
+        if !text_to_send.trim().is_empty() {
+            let mut content = RoomMessageEventContent::text_markdown(text_to_send);
+
+            if let Some(ref thread_ts) = message.thread_ts {
+                if let Ok(thread_root) = thread_ts.parse::<OwnedEventId>() {
+                    content.relates_to = Some(Relation::Thread(Thread::plain(
+                        thread_root.clone(),
+                        thread_root,
+                    )));
+                }
+            }
+
+            room.send(content).await?;
+        }
 
         // Voice reply: generate TTS audio and send as m.audio when voice_mode is active
         if self.voice_mode.load(Ordering::Relaxed) {
@@ -868,52 +1259,16 @@ impl Channel for MatrixChannel {
                 .unwrap_or(false);
 
             if tts_ok && mp3_path.exists() {
-                if let Ok(audio_data) = tokio::fs::read(&mp3_path).await {
-                    let upload_url = format!(
-                        "{}/_matrix/media/v3/upload?filename=voice-reply.mp3",
-                        self.homeserver
-                    );
-                    if let Ok(resp) = self
-                        .http_client
-                        .post(&upload_url)
-                        .header("Authorization", self.auth_header_value())
-                        .header("Content-Type", "audio/mpeg")
-                        .body(audio_data)
-                        .send()
-                        .await
-                    {
-                        if resp.status().is_success() {
-                            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                                if let Some(content_uri) = body["content_uri"].as_str() {
-                                    let encoded_room = Self::encode_path_segment(&target_room_id);
-                                    let txn_id = format!(
-                                        "voice_{}",
-                                        std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis()
-                                    );
-                                    let audio_msg = serde_json::json!({
-                                        "msgtype": "m.audio",
-                                        "body": "Voice reply",
-                                        "url": content_uri,
-                                        "info": { "mimetype": "audio/mpeg" }
-                                    });
-                                    let send_url = format!(
-                                        "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
-                                        self.homeserver, encoded_room, txn_id
-                                    );
-                                    let _ = self
-                                        .http_client
-                                        .put(&send_url)
-                                        .header("Authorization", self.auth_header_value())
-                                        .json(&audio_msg)
-                                        .send()
-                                        .await;
-                                }
-                            }
-                        }
-                    }
+                if let Err(err) = self
+                    .send_media(
+                        &room,
+                        mp3_path.to_str().unwrap_or("/tmp/zeroclaw-voice/reply.mp3"),
+                        "m.audio",
+                        message.thread_ts.as_deref(),
+                    )
+                    .await
+                {
+                    tracing::warn!("Matrix: failed to send voice reply: {err}");
                 }
             }
         }
@@ -947,7 +1302,43 @@ impl Channel for MatrixChannel {
 
         self.log_e2ee_diagnostics(&client).await;
 
-        let _ = client.sync_once(SyncSettings::new()).await;
+        // Seed the dedup cache with event IDs from the initial sync so that
+        // messages already in the timeline are not re-processed after a daemon
+        // restart (the SDK persists the sync token, but the dedup cache does not
+        // survive across process boundaries).
+        if let Ok(sync_response) = client.sync_once(SyncSettings::new()).await {
+            let mut guard = self.recent_event_cache.lock().await;
+            let (recent_order, recent_lookup) = &mut *guard;
+            for (_room_id, room_update) in &sync_response.rooms.joined {
+                for event in &room_update.timeline.events {
+                    if let Some(event_id) = event.event_id() {
+                        Self::cache_event_id(&event_id.to_string(), recent_order, recent_lookup);
+                    }
+                }
+            }
+            let seeded = recent_lookup.len();
+            if seeded > 0 {
+                tracing::info!(
+                    "Matrix: seeded dedup cache with {seeded} event(s) from initial sync"
+                );
+            }
+        }
+
+        // Diagnostic: log all rooms the SDK knows about after initial sync.
+        let joined_rooms: Vec<String> = client
+            .joined_rooms()
+            .iter()
+            .map(|r| r.room_id().to_string())
+            .collect();
+        tracing::info!("Matrix SDK joined rooms after sync: {:?}", joined_rooms);
+        for configured_room in &self.allowed_rooms {
+            if !joined_rooms.iter().any(|r| r == configured_room) {
+                tracing::warn!(
+                    "Matrix: configured allowed_room {} is NOT in joined rooms — bot may need to be invited/joined",
+                    configured_room
+                );
+            }
+        }
 
         if self.allowed_rooms.is_empty() {
             tracing::info!(
@@ -963,10 +1354,17 @@ impl Channel for MatrixChannel {
             );
         }
 
-        let recent_event_cache = Arc::new(Mutex::new((
-            std::collections::VecDeque::new(),
-            std::collections::HashSet::new(),
-        )));
+        // Send a typing notification in each encrypted room to force the SDK
+        // to process outgoing crypto requests (key claims, key queries).
+        // Without this, encrypted messages aren't decryptable until an
+        // unencrypted event triggers a full sync processing cycle.
+        for room in client.joined_rooms() {
+            let _ = room.typing_notice(true).await;
+            let _ = room.typing_notice(false).await;
+        }
+        tracing::debug!("Matrix: sent typing kickstart to all joined rooms");
+
+        let recent_event_cache = Arc::clone(&self.recent_event_cache);
 
         let tx_handler = tx.clone();
         let target_room_for_handler = target_room.clone();
@@ -974,22 +1372,20 @@ impl Channel for MatrixChannel {
         let allowed_users_for_handler = self.allowed_users.clone();
         let allowed_rooms_for_handler = self.allowed_rooms.clone();
         let dedupe_for_handler = Arc::clone(&recent_event_cache);
-        let homeserver_for_handler = self.homeserver.clone();
-        let access_token_for_handler = self.access_token.clone();
         let voice_mode_for_handler = Arc::clone(&self.voice_mode);
         let transcription_mgr_for_handler = self.transcription_manager.clone();
+        let mention_only_for_handler = self.mention_only;
 
-        client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, room: Room| {
+        let _msg_handler_guard = client.event_handler_drop_guard(client.add_event_handler(move |event: OriginalSyncRoomMessageEvent, room: Room| {
             let tx = tx_handler.clone();
             let target_room = target_room_for_handler.clone();
             let my_user_id = my_user_id_for_handler.clone();
             let allowed_users = allowed_users_for_handler.clone();
             let allowed_rooms = allowed_rooms_for_handler.clone();
             let dedupe = Arc::clone(&dedupe_for_handler);
-            let homeserver = homeserver_for_handler.clone();
-            let access_token = access_token_for_handler.clone();
             let voice_mode = Arc::clone(&voice_mode_for_handler);
             let transcription_mgr = transcription_mgr_for_handler.clone();
+            let mention_only = mention_only_for_handler;
 
             async move {
                 // Room filtering: use allowed_rooms if set, otherwise fall back to single room_id
@@ -1013,9 +1409,10 @@ impl Channel for MatrixChannel {
                 }
 
                 tracing::debug!(
-                    "Matrix: received message in room {} from {}",
+                    "Matrix: received message in room {} from {} (encryption={:?})",
                     room.room_id(),
-                    event.sender
+                    event.sender,
+                    room.encryption_state()
                 );
 
                 if event.sender == my_user_id {
@@ -1029,43 +1426,76 @@ impl Channel for MatrixChannel {
                     return;
                 }
 
-                // Helper: extract mxc:// download URL and filename for media types
-                let media_info = |source: &MediaSource, name: &str| -> Option<(String, String)> {
-                    match source {
-                        MediaSource::Plain(mxc) => {
-                            let rest = mxc.as_str().strip_prefix("mxc://")?;
-                            let url =
-                                format!("{}/_matrix/client/v1/media/download/{}", homeserver, rest);
-                            Some((url, name.to_string()))
-                        }
-                        MediaSource::Encrypted(_) => None,
+                // Mention gate: in group rooms, require @-mention when mention_only is enabled.
+                // DMs (rooms with ≤2 joined members) bypass this gate.
+                if mention_only
+                    && !MatrixChannel::is_dm_room(room.joined_members_count())
+                {
+                    let bot_id_str = my_user_id.as_str();
+                    let body_text = match &event.content.msgtype {
+                        MessageType::Text(c) => c.body.as_str(),
+                        MessageType::Notice(c) => c.body.as_str(),
+                        _ => "",
+                    };
+                    if !MatrixChannel::body_contains_mention(body_text, bot_id_str) {
+                        tracing::debug!(
+                            "Matrix: ignoring message (mention_only enabled, no mention of {})",
+                            bot_id_str
+                        );
+                        return;
                     }
-                };
+                }
 
+                // Extract filename, MediaSource, and MIME for media types.
+                // The MediaSource is passed to the SDK's media API which
+                // handles both plain and encrypted media transparently.
+
+                // Extract body text, media source, and MIME type from the message.
+                // Media types share the same source/info/body pattern.
                 let (body, media_download) = match &event.content.msgtype {
                     MessageType::Text(content) => (content.body.clone(), None),
                     MessageType::Notice(content) => (content.body.clone(), None),
                     MessageType::Image(content) => {
-                        let dl = media_info(&content.source, &content.body);
-                        (format!("[IMAGE:{}]", content.body), dl)
+                        let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[IMAGE:{}]", content.body), Some(dl))
                     }
                     MessageType::File(content) => {
-                        let dl = media_info(&content.source, &content.body);
-                        (format!("[file: {}]", content.body), dl)
+                        let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[file: {}]", content.body), Some(dl))
                     }
                     MessageType::Audio(content) => {
-                        let dl = media_info(&content.source, &content.body);
-                        (format!("[audio: {}]", content.body), dl)
+                        let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[audio: {}]", content.body), Some(dl))
                     }
                     MessageType::Video(content) => {
-                        let dl = media_info(&content.source, &content.body);
-                        (format!("[video: {}]", content.body), dl)
+                        let mime = content.info.as_ref().and_then(|i| i.mimetype.as_deref());
+                        let dl = extract_media_metadata(&content.source, &content.body, mime);
+                        (format!("[video: {}]", content.body), Some(dl))
                     }
                     _ => return,
                 };
 
-                // Download media to workspace if present
-                let body = if let Some((url, filename)) = media_download {
+                // Strip bot mention from body when mention_only is active
+                let body = if mention_only {
+                    MatrixChannel::strip_mention(&body, my_user_id.as_str())
+                } else {
+                    body
+                };
+
+                if body.is_empty() {
+                    tracing::debug!("Matrix: ignoring empty message after mention stripping");
+                    return;
+                }
+
+                // Download media to workspace if present, and collect as
+                // MediaAttachment for the media pipeline (#4861).
+                // Uses the Matrix SDK media API which handles both plain
+                // and encrypted (E2EE) media transparently.
+                let mut attachments: Vec<super::media_pipeline::MediaAttachment> = Vec::new();
+                let body = if let Some((filename, media_source, mime_type)) = media_download {
                     let workspace = std::path::PathBuf::from(
                         shellexpand::tilde(
                             &std::env::var("ZEROCLAW_WORKSPACE")
@@ -1075,27 +1505,33 @@ impl Channel for MatrixChannel {
                     );
                     let _ = tokio::fs::create_dir_all(&workspace).await;
                     let dest = workspace.join(&filename);
-                    let client = reqwest::Client::new();
-                    match client
-                        .get(&url)
-                        .header("Authorization", format!("Bearer {}", access_token))
-                        .send()
-                        .await
-                    {
-                        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                            Ok(bytes) => match tokio::fs::write(&dest, &bytes).await {
-                                Ok(()) => {
-                                    if body.starts_with("[IMAGE:") {
-                                        format!("[IMAGE:{}]", dest.display())
-                                    } else {
-                                        format!("{} — saved to {}", body, dest.display())
-                                    }
+                    let request = matrix_sdk::media::MediaRequestParameters {
+                        source: media_source,
+                        format: matrix_sdk::media::MediaFormat::File,
+                    };
+                    match room.client().media().get_media_content(&request, true).await {
+                        Ok(bytes) => match tokio::fs::write(&dest, &bytes).await {
+                            Ok(()) => {
+                                attachments.push(super::media_pipeline::MediaAttachment {
+                                    file_name: filename.clone(),
+                                    data: bytes,
+                                    mime_type: mime_type.clone(),
+                                });
+                                if body.starts_with("[IMAGE:") {
+                                    format!("[IMAGE:{}]", dest.display())
+                                } else {
+                                    format!("{} — saved to {}", body, dest.display())
                                 }
-                                Err(_) => format!("{} — failed to write to disk", body),
-                            },
-                            Err(_) => format!("{} — download failed", body),
+                            }
+                            Err(error) => {
+                                tracing::warn!("Matrix: failed to write media to disk: {error}");
+                                format!("{} — failed to write to disk", body)
+                            }
                         },
-                        _ => format!("{} — download failed (auth error?)", body),
+                        Err(error) => {
+                            tracing::warn!("Matrix: media download failed: {error}");
+                            format!("{} — media download failed", body)
+                        }
                     }
                 } else {
                     body
@@ -1171,10 +1607,22 @@ impl Channel for MatrixChannel {
                     tracing::warn!("Matrix failed to start typing notification: {error}");
                 }
 
+                // Always root a thread at the incoming message. Without this,
+                // the first exchange uses thread_ts=None (room-level session key)
+                // but Matrix implicitly creates a thread, so the follow-up arrives
+                // with a different thread_ts (the bot's response event ID), causing
+                // a session key mismatch and loss of context. See #4804.
                 let thread_ts = match &event.content.relates_to {
                     Some(Relation::Thread(thread)) => Some(thread.event_id.to_string()),
-                    _ => None,
+                    _ => Some(event_id.clone()),
                 };
+
+                tracing::debug!(
+                    thread_ts = ?thread_ts,
+                    event_id = %event_id,
+                    "Matrix message thread context"
+                );
+
                 let msg = ChannelMessage {
                     id: event_id,
                     sender: sender.clone(),
@@ -1187,51 +1635,126 @@ impl Channel for MatrixChannel {
                         .as_secs(),
                     thread_ts: thread_ts.clone(),
                     interruption_scope_id: thread_ts,
-                    attachments: vec![],
+                    attachments,
                 };
 
                 let _ = tx.send(msg).await;
             }
-        });
+        }));
+
+        // UTD handler: log everything, download room keys, notify sender.
+        let _utd_handler_guard = client.event_handler_drop_guard(client.add_event_handler(move |event: OriginalSyncRoomEncryptedEvent, room: Room, client: MatrixSdkClient| {
+            async move {
+                let room_id = room.room_id();
+                tracing::warn!(
+                    "Matrix UTD: event_id={}, room={}, sender={}, content={:?}",
+                    event.event_id, room_id, event.sender, event.content
+                );
+
+                // Log sender's devices as we see them
+                if let Ok(sender_uid) = event.sender.to_string().parse::<OwnedUserId>() {
+                    match client.encryption().get_user_devices(&sender_uid).await {
+                        Ok(devices) => {
+                            for device in devices.devices() {
+                                tracing::info!(
+                                    "Matrix UTD: sender device {} — verified={}, curve25519={:?}",
+                                    device.device_id(),
+                                    device.is_verified(),
+                                    device.curve25519_key().map(|k| k.to_base64()),
+                                );
+                            }
+                        }
+                        Err(error) => tracing::warn!("Matrix UTD: can't query sender devices: {error}"),
+                    }
+                }
+
+                // Log our own device for cross-reference
+                if let Ok(Some(own)) = client.encryption().get_own_device().await {
+                    tracing::info!(
+                        "Matrix UTD: our device {} — curve25519={:?}",
+                        own.device_id(),
+                        own.curve25519_key().map(|k| k.to_base64()),
+                    );
+                }
+
+                // Extract session_id from the encrypted content if megolm
+                let session_id = match &event.content.scheme {
+                    matrix_sdk::ruma::events::room::encrypted::EncryptedEventScheme::MegolmV1AesSha2(c) => {
+                        Some(c.session_id.clone())
+                    }
+                    _ => None,
+                };
+
+                // Try downloading the SPECIFIC session key from backup
+                let backup_enabled = client.encryption().backups().are_enabled().await;
+                tracing::info!("Matrix UTD: backup enabled={}, looking for session_id={:?}", backup_enabled, session_id);
+
+                if let Some(ref sid) = session_id {
+                    match client.encryption().backups().download_room_key(room_id, sid).await {
+                        Ok(true) => tracing::info!("Matrix UTD: downloaded session key {} for {}", sid, room_id),
+                        Ok(false) => tracing::warn!("Matrix UTD: session key {} NOT FOUND in backup for {}", sid, room_id),
+                        Err(error) => tracing::warn!("Matrix UTD: session key download FAILED for {}: {error}", room_id),
+                    }
+                } else {
+                    match client.encryption().backups().download_room_keys_for_room(room_id).await {
+                        Ok(()) => tracing::info!("Matrix UTD: downloaded room keys for {}", room_id),
+                        Err(error) => tracing::warn!("Matrix UTD: room key download FAILED for {}: {error}", room_id),
+                    }
+                }
+
+                let notice = RoomMessageEventContent::notice_plain(
+                    "I couldn't decrypt your message — downloading room keys from backup. \
+                     Please try sending again."
+                );
+                if let Err(error) = room.send(notice).await {
+                    tracing::debug!("Matrix UTD: failed to send notice: {error}");
+                }
+            }
+        }));
 
         // Invite handler: auto-accept invites for allowed rooms, auto-reject others
         let allowed_rooms_for_invite = self.allowed_rooms.clone();
-        client.add_event_handler(move |event: StrippedRoomMemberEvent, room: Room| {
-            let allowed_rooms = allowed_rooms_for_invite.clone();
-            async move {
-                // Only process invite events targeting us
-                if event.content.membership
-                    != matrix_sdk::ruma::events::room::member::MembershipState::Invite
-                {
-                    return;
-                }
-
-                let room_id_str = room.room_id().to_string();
-
-                if MatrixChannel::is_room_allowed_static(&allowed_rooms, &room_id_str) {
-                    // Room is allowed (or no allowlist configured): auto-accept
-                    tracing::info!(
-                        "Matrix: auto-accepting invite for allowed room {}",
-                        room_id_str
-                    );
-                    if let Err(error) = room.join().await {
-                        tracing::warn!("Matrix: failed to auto-join room {}: {error}", room_id_str);
+        let _invite_handler_guard = client.event_handler_drop_guard(client.add_event_handler(
+            move |event: StrippedRoomMemberEvent, room: Room| {
+                let allowed_rooms = allowed_rooms_for_invite.clone();
+                async move {
+                    // Only process invite events targeting us
+                    if event.content.membership
+                        != matrix_sdk::ruma::events::room::member::MembershipState::Invite
+                    {
+                        return;
                     }
-                } else {
-                    // Room is NOT in allowlist: auto-reject
-                    tracing::info!(
-                        "Matrix: auto-rejecting invite for room {} (not in allowed_rooms)",
-                        room_id_str
-                    );
-                    if let Err(error) = room.leave().await {
-                        tracing::warn!(
-                            "Matrix: failed to reject invite for room {}: {error}",
+
+                    let room_id_str = room.room_id().to_string();
+
+                    if MatrixChannel::is_room_allowed_static(&allowed_rooms, &room_id_str) {
+                        // Room is allowed (or no allowlist configured): auto-accept
+                        tracing::info!(
+                            "Matrix: auto-accepting invite for allowed room {}",
                             room_id_str
                         );
+                        if let Err(error) = room.join().await {
+                            tracing::warn!(
+                                "Matrix: failed to auto-join room {}: {error}",
+                                room_id_str
+                            );
+                        }
+                    } else {
+                        // Room is NOT in allowlist: auto-reject
+                        tracing::info!(
+                            "Matrix: auto-rejecting invite for room {} (not in allowed_rooms)",
+                            room_id_str
+                        );
+                        if let Err(error) = room.leave().await {
+                            tracing::warn!(
+                                "Matrix: failed to reject invite for room {}: {error}",
+                                room_id_str
+                            );
+                        }
                     }
                 }
-            }
-        });
+            },
+        ));
 
         let sync_settings = SyncSettings::new().timeout(std::time::Duration::from_secs(30));
         let otk_conflict_detected = Arc::clone(&self.otk_conflict_detected);
@@ -1551,6 +2074,7 @@ impl Channel for MatrixChannel {
                 // Capture thread context for paragraph delivery.
                 let room_id = Self::extract_room_id(&message.recipient, &self.room_id);
                 self.multi_message_sent_len.lock().await.clear();
+                self.multi_message_empty_consumed.lock().await.clear();
                 self.multi_message_thread_ts
                     .lock()
                     .await
@@ -1613,6 +2137,10 @@ impl Channel for MatrixChannel {
                 // DraftEvent::Clear reset the accumulator — reset our counter.
                 if text.len() < sent_so_far {
                     sent_map.insert(room_id.clone(), 0);
+                    self.multi_message_empty_consumed
+                        .lock()
+                        .await
+                        .insert(room_id.clone(), 0);
                     return Ok(());
                 }
                 if text.len() == sent_so_far {
@@ -1647,6 +2175,7 @@ impl Channel for MatrixChannel {
                         && bytes[scan_pos + 1] == b'\n'
                     {
                         let paragraph = new_text[..scan_pos].trim().to_string();
+                        let consumed = scan_pos + 2;
                         if !paragraph.is_empty() {
                             let msg = SendMessage::new(&paragraph, recipient)
                                 .in_thread(thread_ts.clone());
@@ -1659,9 +2188,17 @@ impl Channel for MatrixChannel {
                                 ))
                                 .await;
                             }
+                        } else {
+                            // Empty paragraph (leading \n\n whitespace) — track
+                            // consumed bytes so finalize_draft can adjust its offset.
+                            *self
+                                .multi_message_empty_consumed
+                                .lock()
+                                .await
+                                .entry(room_id.clone())
+                                .or_insert(0) += scan_pos + 2;
                         }
                         // Advance past the \n\n and update tracking.
-                        let consumed = scan_pos + 2;
                         *sent_map.entry(room_id.clone()).or_insert(0) += consumed;
                         // Recurse on remaining text by slicing.
                         let remaining = &new_text[consumed..];
@@ -1716,9 +2253,19 @@ impl Channel for MatrixChannel {
                 // Flush any remaining buffered text that didn't hit a \n\n boundary.
                 let mut sent_map = self.multi_message_sent_len.lock().await;
                 let sent_so_far = sent_map.get(&room_id).copied().unwrap_or(0);
+                // Adjust offset: empty paragraphs (leading \n\n) consume bytes in the
+                // raw accumulated text but are trimmed from the sanitized finalize text.
+                let empty_consumed = self
+                    .multi_message_empty_consumed
+                    .lock()
+                    .await
+                    .get(&room_id)
+                    .copied()
+                    .unwrap_or(0);
+                let adjusted_offset = sent_so_far.saturating_sub(empty_consumed);
 
-                if text.len() > sent_so_far {
-                    let remaining = text[sent_so_far..].trim().to_string();
+                if text.len() > adjusted_offset {
+                    let remaining = text[adjusted_offset..].trim().to_string();
                     if !remaining.is_empty() {
                         let thread_ts = self
                             .multi_message_thread_ts
@@ -1735,6 +2282,10 @@ impl Channel for MatrixChannel {
                 }
 
                 sent_map.remove(&room_id);
+                self.multi_message_empty_consumed
+                    .lock()
+                    .await
+                    .remove(&room_id);
                 self.multi_message_thread_ts.lock().await.remove(&room_id);
                 Ok(())
             }
@@ -1755,6 +2306,10 @@ impl Channel for MatrixChannel {
             StreamMode::MultiMessage => {
                 // Paragraphs already sent can't be unsent. Just clean up state.
                 self.multi_message_sent_len.lock().await.remove(&room_id);
+                self.multi_message_empty_consumed
+                    .lock()
+                    .await
+                    .remove(&room_id);
                 self.multi_message_thread_ts.lock().await.remove(&room_id);
                 Ok(())
             }
@@ -2316,5 +2871,312 @@ mod tests {
         let sanitized = MatrixChannel::sanitize_error_for_log(&"auth failed: sk-proj-abc123xyz");
         assert!(!sanitized.contains("sk-proj-abc123xyz"));
         assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn multi_message_offset_adjustment_leading_newlines() {
+        // accumulated was "\n\nHello world": sent_so_far=2 (empty para consumed),
+        // empty_consumed=2.  Sanitized text has leading \n\n stripped.
+        let sent_so_far: usize = 2;
+        let empty_consumed: usize = 2;
+        let adjusted = sent_so_far.saturating_sub(empty_consumed);
+        let text = "Hello world";
+        assert_eq!(text[adjusted..].trim(), "Hello world");
+    }
+
+    #[test]
+    fn multi_message_offset_adjustment_after_sent_paragraph() {
+        // accumulated "\n\nPara 1\n\nPara 2": empty \n\n consumed (2 bytes),
+        // then "Para 1\n\n" sent (8 bytes).  sent_so_far=10, empty_consumed=2.
+        // Sanitized = "Para 1\n\nPara 2", adjusted=8, text[8..] = "Para 2".
+        let sent_so_far: usize = 10;
+        let empty_consumed: usize = 2;
+        let adjusted = sent_so_far.saturating_sub(empty_consumed);
+        let text = "Para 1\n\nPara 2";
+        assert_eq!(text[adjusted..].trim(), "Para 2");
+    }
+
+    #[test]
+    fn multi_message_offset_adjustment_no_empty_paragraphs() {
+        // No leading \n\n: sent_so_far=7 ("Hello\n\n"), empty_consumed=0.
+        let sent_so_far: usize = 7;
+        let empty_consumed: usize = 0;
+        let adjusted = sent_so_far.saturating_sub(empty_consumed);
+        let text = "Hello\n\nWorld";
+        assert_eq!(text[adjusted..].trim(), "World");
+    }
+
+    #[test]
+    fn multi_message_offset_adjustment_with_appended_receipts() {
+        // accumulated "\n\nResponse\n\nMore": sent "Response", empty_consumed=2.
+        // Sanitized + receipts = "Response\n\nMore\n\n---\nTool receipts:\n  r1".
+        let sent_so_far: usize = 12; // 2 + 10 ("Response\n\n")
+        let empty_consumed: usize = 2;
+        let adjusted = sent_so_far.saturating_sub(empty_consumed);
+        let text = "Response\n\nMore\n\n---\nTool receipts:\n  r1";
+        assert_eq!(text[adjusted..].trim(), "More\n\n---\nTool receipts:\n  r1");
+    }
+
+    #[test]
+    fn multi_message_offset_adjustment_nothing_sent() {
+        // sent_so_far=0, empty_consumed=0: flush everything.
+        let adjusted: usize = 0;
+        let text = "Hello world";
+        assert_eq!(text[adjusted..].trim(), "Hello world");
+    }
+
+    // ── mention_only tests ──
+
+    #[test]
+    fn mention_detected_with_full_user_id() {
+        assert!(MatrixChannel::body_contains_mention(
+            "@bot:matrix.org hello there",
+            "@bot:matrix.org"
+        ));
+    }
+
+    #[test]
+    fn mention_detected_mid_message() {
+        assert!(MatrixChannel::body_contains_mention(
+            "hey @bot:matrix.org what do you think?",
+            "@bot:matrix.org"
+        ));
+    }
+
+    #[test]
+    fn mention_not_detected_when_absent() {
+        assert!(!MatrixChannel::body_contains_mention(
+            "hello there",
+            "@bot:matrix.org"
+        ));
+    }
+
+    #[test]
+    fn mention_not_detected_partial_match() {
+        assert!(!MatrixChannel::body_contains_mention(
+            "@bot:other.org hello",
+            "@bot:matrix.org"
+        ));
+    }
+
+    #[test]
+    fn strip_mention_from_start() {
+        let result =
+            MatrixChannel::strip_mention("@bot:matrix.org what is rust?", "@bot:matrix.org");
+        assert_eq!(result, "what is rust?");
+    }
+
+    #[test]
+    fn strip_mention_from_middle() {
+        let result =
+            MatrixChannel::strip_mention("hey @bot:matrix.org explain this", "@bot:matrix.org");
+        assert_eq!(result, "hey  explain this");
+    }
+
+    #[test]
+    fn strip_mention_only_mention_yields_empty() {
+        let result = MatrixChannel::strip_mention("@bot:matrix.org", "@bot:matrix.org");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn strip_mention_no_mention_unchanged() {
+        let result = MatrixChannel::strip_mention("hello world", "@bot:matrix.org");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn is_dm_room_two_members() {
+        assert!(MatrixChannel::is_dm_room(2));
+    }
+
+    #[test]
+    fn is_dm_room_one_member() {
+        assert!(MatrixChannel::is_dm_room(1));
+    }
+
+    #[test]
+    fn is_dm_room_group() {
+        assert!(!MatrixChannel::is_dm_room(3));
+        assert!(!MatrixChannel::is_dm_room(50));
+    }
+
+    // ── media marker tests ──
+
+    #[test]
+    fn extract_image_marker() {
+        let (cleaned, markers) =
+            extract_media_markers("Here is the chart [IMAGE:/tmp/chart.png] for you");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].path, "/tmp/chart.png");
+        assert_eq!(markers[0].msgtype, "m.image");
+        assert_eq!(cleaned, "Here is the chart  for you");
+    }
+
+    #[test]
+    fn extract_file_marker() {
+        let (_, markers) = extract_media_markers("[FILE:/tmp/report.pdf]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].path, "/tmp/report.pdf");
+        assert_eq!(markers[0].msgtype, "m.file");
+    }
+
+    #[test]
+    fn extract_document_marker_alias() {
+        let (_, markers) = extract_media_markers("[DOCUMENT:/tmp/doc.txt]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.file");
+    }
+
+    #[test]
+    fn extract_audio_marker() {
+        let (_, markers) = extract_media_markers("[AUDIO:/tmp/clip.mp3]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.audio");
+    }
+
+    #[test]
+    fn extract_voice_marker_alias() {
+        let (_, markers) = extract_media_markers("[VOICE:/tmp/voice.ogg]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.audio");
+    }
+
+    #[test]
+    fn extract_video_marker() {
+        let (_, markers) = extract_media_markers("[VIDEO:/tmp/clip.mp4]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.video");
+    }
+
+    #[test]
+    fn extract_multiple_markers() {
+        let (cleaned, markers) =
+            extract_media_markers("See [IMAGE:/a.png] and [FILE:/b.pdf] attached");
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].msgtype, "m.image");
+        assert_eq!(markers[1].msgtype, "m.file");
+        assert_eq!(cleaned, "See  and  attached");
+    }
+
+    #[test]
+    fn extract_no_markers() {
+        let (cleaned, markers) = extract_media_markers("Just a regular message");
+        assert!(markers.is_empty());
+        assert_eq!(cleaned, "Just a regular message");
+    }
+
+    #[test]
+    fn extract_unknown_marker_preserved() {
+        let (cleaned, markers) = extract_media_markers("Check [UNKNOWN:data] out");
+        assert!(markers.is_empty());
+        assert_eq!(cleaned, "Check [UNKNOWN:data] out");
+    }
+
+    #[test]
+    fn extract_empty_target_skipped() {
+        let (cleaned, markers) = extract_media_markers("[IMAGE:] nothing");
+        assert!(markers.is_empty());
+        assert_eq!(cleaned, "[IMAGE:] nothing");
+    }
+
+    #[test]
+    fn extract_case_insensitive() {
+        let (_, markers) = extract_media_markers("[image:/tmp/pic.jpg]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.image");
+    }
+
+    #[test]
+    fn extract_photo_alias() {
+        let (_, markers) = extract_media_markers("[PHOTO:/tmp/pic.jpg]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].msgtype, "m.image");
+    }
+
+    // ── Media metadata extraction (plain vs encrypted) ───────────────
+
+    fn make_plain_source() -> MediaSource {
+        use matrix_sdk::ruma::mxc_uri;
+        MediaSource::Plain(mxc_uri!("mxc://matrix.org/abc123").to_owned())
+    }
+
+    fn make_encrypted_source() -> MediaSource {
+        use matrix_sdk::ruma::{
+            events::room::{EncryptedFileInit, JsonWebKeyInit},
+            mxc_uri,
+            serde::Base64,
+        };
+
+        let encrypted_file = EncryptedFileInit {
+            url: mxc_uri!("mxc://matrix.org/enc456").to_owned(),
+            key: JsonWebKeyInit {
+                kty: "oct".to_owned(),
+                key_ops: vec!["encrypt".to_owned(), "decrypt".to_owned()],
+                alg: "A256CTR".to_owned(),
+                k: Base64::new(vec![0u8; 32]),
+                ext: true,
+            }
+            .into(),
+            iv: Base64::new(vec![0u8; 16]),
+            hashes: [("sha256".to_owned(), Base64::new(vec![0u8; 32]))]
+                .into_iter()
+                .collect(),
+            v: "v2".to_owned(),
+        };
+        MediaSource::Encrypted(Box::new(encrypted_file.into()))
+    }
+
+    #[test]
+    fn extract_media_metadata_returns_metadata_for_plain_source() {
+        let source = make_plain_source();
+        let (filename, returned_source, mime) =
+            extract_media_metadata(&source, "photo.jpg", Some("image/jpeg"));
+
+        assert_eq!(filename, "photo.jpg");
+        assert_eq!(mime, Some("image/jpeg".to_string()));
+        assert!(matches!(returned_source, MediaSource::Plain(_)));
+    }
+
+    #[test]
+    fn extract_media_metadata_returns_metadata_for_encrypted_source() {
+        // This test would FAIL with the old media_info closure which
+        // returned None for MediaSource::Encrypted, causing the bot to
+        // skip encrypted media entirely.
+        let source = make_encrypted_source();
+        let (filename, returned_source, mime) =
+            extract_media_metadata(&source, "secret.png", Some("image/png"));
+
+        assert_eq!(filename, "secret.png");
+        assert_eq!(mime, Some("image/png".to_string()));
+        assert!(matches!(returned_source, MediaSource::Encrypted(_)));
+    }
+
+    #[test]
+    fn extract_media_metadata_preserves_none_mime() {
+        let source = make_plain_source();
+        let (_, _, mime) = extract_media_metadata(&source, "file.bin", None);
+        assert!(mime.is_none());
+    }
+
+    #[test]
+    fn encrypted_media_produces_download_intent() {
+        // Simulates the message type match for an encrypted image.
+        // Old code: media_info returned None → media_download was None →
+        //   body stayed as "[IMAGE:photo.jpg]" (relative filename) → API error
+        // New code: extract_media_metadata always returns metadata →
+        //   media_download is Some → SDK downloads + decrypts → body gets full path
+        let source = make_encrypted_source();
+        let media_download = {
+            let dl = extract_media_metadata(&source, "photo.jpg", Some("image/jpeg"));
+            Some(dl)
+        };
+
+        assert!(
+            media_download.is_some(),
+            "encrypted media must produce a download intent, not be skipped"
+        );
+        let (filename, _, _) = media_download.unwrap();
+        assert_eq!(filename, "photo.jpg");
     }
 }
