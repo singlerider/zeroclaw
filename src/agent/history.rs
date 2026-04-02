@@ -1,3 +1,4 @@
+use crate::agent::history_pruner::remove_orphaned_tool_messages;
 use crate::providers::ChatMessage;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -98,6 +99,8 @@ pub(crate) fn fast_trim_tool_results(
 }
 
 /// Emergency: drop oldest non-system, non-recent messages from history.
+/// Tool groups (assistant + consecutive tool messages) are dropped
+/// atomically to preserve tool_use/tool_result pairing. See #4810.
 /// Returns number of messages dropped.
 pub(crate) fn emergency_history_trim(
     history: &mut Vec<crate::providers::ChatMessage>,
@@ -109,11 +112,24 @@ pub(crate) fn emergency_history_trim(
     while dropped < target_drop && i < history.len().saturating_sub(keep_recent) {
         if history[i].role == "system" {
             i += 1;
+        } else if history[i].role == "assistant" {
+            // Count following tool messages — drop as atomic group
+            let mut tool_count = 0;
+            while i + 1 + tool_count < history.len().saturating_sub(keep_recent)
+                && history[i + 1 + tool_count].role == "tool"
+            {
+                tool_count += 1;
+            }
+            for _ in 0..=tool_count {
+                history.remove(i);
+                dropped += 1;
+            }
         } else {
             history.remove(i);
             dropped += 1;
         }
     }
+    dropped += remove_orphaned_tool_messages(history);
     dropped
 }
 
@@ -147,6 +163,7 @@ pub(crate) fn trim_history(history: &mut Vec<ChatMessage>, max_history: usize) {
     let start = if has_system { 1 } else { 0 };
     let to_remove = non_system_count - max_history;
     history.drain(start..start + to_remove);
+    remove_orphaned_tool_messages(history);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

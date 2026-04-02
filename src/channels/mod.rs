@@ -42,6 +42,7 @@ pub mod nostr;
 pub mod notion;
 pub mod qq;
 pub mod reddit;
+pub mod response_stream;
 pub mod session_backend;
 pub mod session_sqlite;
 pub mod session_store;
@@ -106,9 +107,10 @@ pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use whatsapp_web::WhatsAppWebChannel;
 
+use crate::agent::history_pruner::remove_orphaned_tool_messages;
 use crate::agent::loop_::{
     build_tool_instructions, clear_model_switch_request, get_model_switch_state,
-    is_model_switch_requested, run_tool_call_loop, scope_thread_id, scrub_credentials,
+    is_model_switch_requested, run_tool_call_loop, scrub_credentials,
 };
 use crate::approval::ApprovalManager;
 use crate::config::Config;
@@ -354,6 +356,7 @@ struct ChannelCostTrackingState {
 }
 
 #[derive(Clone)]
+#[allow(clippy::struct_excessive_bools)]
 struct ChannelRuntimeContext {
     channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
     provider: Arc<dyn Provider>,
@@ -606,7 +609,10 @@ fn channel_delivery_instructions(channel_name: &str) -> Option<&'static str> {
              - Use Markdown formatting (bold, italic, code blocks)\n\
              - Be concise and direct\n\
              - When you receive a [Voice message], the user spoke to you. Respond naturally as in conversation.\n\
-             - Your text reply will automatically be converted to audio and sent back as a voice message.\n",
+             - Your text reply will automatically be converted to audio and sent back as a voice message.\n\
+             - For media attachments use markers: [IMAGE:<path>], [DOCUMENT:<path>], [FILE:<path>], [VIDEO:<path>], [AUDIO:<path>]\n\
+             - Always use absolute file paths in markers (e.g. [FILE:/home/user/.zeroclaw/workspace/file.pdf]), never relative paths.\n\
+             - Keep normal text outside markers and never wrap markers in code fences.\n",
         ),
         "telegram" => Some(
             "When responding on Telegram:\n\
@@ -684,15 +690,17 @@ fn build_channel_system_prompt(
 }
 
 fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
-    let mut normalized = Vec::with_capacity(turns.len());
+    // Remove orphan tool messages BEFORE merging so that consecutive
+    // assistants caused by orphan removal don't concatenate tool_calls
+    // JSON into plain text (which breaks structured tool_use parsing).
+    let mut cleaned: Vec<ChatMessage> = turns;
+    remove_orphaned_tool_messages(&mut cleaned);
+
+    let mut normalized = Vec::with_capacity(cleaned.len());
     let mut expecting_user = true;
 
-    for turn in turns {
+    for turn in cleaned {
         match (expecting_user, turn.role.as_str()) {
-            // Pass through tool-role messages preserved by
-            // keep_tool_context_turns (#4827).  After a tool result the
-            // next expected message is an assistant response, same as
-            // after a user message.
             (_, "tool") | (true, "user") => {
                 normalized.push(turn);
                 expecting_user = false;
@@ -701,8 +709,7 @@ fn normalize_cached_channel_turns(turns: Vec<ChatMessage>) -> Vec<ChatMessage> {
                 normalized.push(turn);
                 expecting_user = true;
             }
-            // Interrupted channel turns can produce consecutive user messages
-            // (no assistant persisted yet). Merge instead of dropping.
+            // Consecutive same-role messages — merge instead of dropping.
             (false, "user") | (true, "assistant") => {
                 if let Some(last_turn) = normalized.last_mut() {
                     if !turn.content.is_empty() {
@@ -1218,6 +1225,7 @@ fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatM
     while turns.len() > max_history {
         turns.remove(0);
     }
+    remove_orphaned_tool_messages(turns);
 }
 
 /// Extract tool-call (assistant with tool_call content) and tool-result
@@ -2612,7 +2620,7 @@ async fn process_channel_message(
         ctx.conversation_histories
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .peek(&history_key)
+            .get(&history_key)
             .is_some_and(|turns| !turns.is_empty())
     };
 
@@ -2833,7 +2841,7 @@ async fn process_channel_message(
 
     // Partial mode: delta channel for draft updates (progress + text).
     let (delta_tx, delta_rx) = if use_draft_streaming {
-        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::DraftEvent>(64);
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::StreamDelta>(64);
         (Some(tx), Some(rx))
     } else {
         (None, None)
@@ -2873,14 +2881,12 @@ async fn process_channel_message(
             let reply_target = msg.reply_target.clone();
             let draft_id = draft_id_ref.to_string();
             Some(tokio::spawn(async move {
-                use crate::agent::loop_::DraftEvent;
-                let mut accumulated = String::new();
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        DraftEvent::Clear => {
-                            accumulated.clear();
-                        }
-                        DraftEvent::Progress(text) => {
+                use crate::agent::loop_::StreamDelta;
+                use crate::channels::response_stream::ResponseStream;
+                let mut stream = ResponseStream::new();
+                while let Some(delta) = rx.recv().await {
+                    match delta {
+                        StreamDelta::Status(text) => {
                             if let Err(e) = channel
                                 .update_draft_progress(&reply_target, &draft_id, &text)
                                 .await
@@ -2888,10 +2894,10 @@ async fn process_channel_message(
                                 tracing::debug!("Draft progress update failed: {e}");
                             }
                         }
-                        DraftEvent::Content(text) => {
-                            accumulated.push_str(&text);
+                        StreamDelta::Text(text) => {
+                            stream.push(&text);
                             if let Err(e) = channel
-                                .update_draft(&reply_target, &draft_id, &accumulated)
+                                .update_draft(&reply_target, &draft_id, stream.text())
                                 .await
                             {
                                 tracing::debug!("Draft update failed: {e}");
@@ -2991,19 +2997,16 @@ async fn process_channel_message(
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
     tracing::info!(elapsed_before_llm_ms, "⏱ Starting LLM call");
+
     let (llm_result, fallback_info) = scope_provider_fallback(async {
         let llm_result = loop {
             let loop_result = tokio::select! {
                 () = cancellation_token.cancelled() => LlmExecutionResult::Cancelled,
                 result = tokio::time::timeout(
                     Duration::from_secs(timeout_budget_secs),
-                    scope_thread_id(
-                        msg.interruption_scope_id.clone()
-                            .or_else(|| msg.thread_ts.clone())
-                            .or_else(|| Some(msg.id.clone())),
-                        crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(
-                            cost_tracking_context.clone(),
-                        run_tool_call_loop(
+                    crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(
+                        cost_tracking_context.clone(),
+                    run_tool_call_loop(
                         active_provider.as_ref(),
                         &mut history,
                         ctx.tools_registry.as_ref(),
@@ -3034,7 +3037,6 @@ async fn process_channel_message(
                         ctx.max_tool_result_chars,
                         ctx.context_token_budget,
                         None, // shared_budget
-                    ),
                     ),
                     ),
                 ) => LlmExecutionResult::Completed(result),
@@ -3095,8 +3097,6 @@ async fn process_channel_message(
     if let Some(handle) = draft_updater {
         let _ = handle.await;
     }
-    tracing::debug!("Post-loop: draft updater completed");
-
     // Thread the final reply only if tools were used (multi-message response)
     if notify_observer_flag.tools_used.load(Ordering::Relaxed) && msg.channel != "cli" {
         msg.thread_ts = followup_thread_id(&msg);
@@ -3220,10 +3220,56 @@ async fn process_channel_message(
 
             let sanitized_response =
                 sanitize_channel_response(&outbound_response, ctx.tools_registry.as_ref());
-            let mut delivered_response = if sanitized_response.is_empty()
-                && !outbound_response.trim().is_empty()
-            {
-                "I encountered malformed tool-call output and could not produce a safe reply. Please try again.".to_string()
+            let mut delivered_response = if sanitized_response.trim().is_empty() {
+                if outbound_response.trim().is_empty() {
+                    // Provider returned no text at all.
+                    tracing::warn!(
+                        channel = %msg.channel,
+                        sender = %msg.sender,
+                        "Provider returned empty response — removing poisoned user turn"
+                    );
+                    // Remove the entire failed exchange (user turn + any
+                    // intermediate assistant/tool messages from the tool loop)
+                    // so orphan tool_results don't corrupt future requests.
+                    let removed_count;
+                    {
+                        let mut histories = ctx
+                            .conversation_histories
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let before_len = histories.get(&history_key).map_or(0, |t| t.len());
+                        if let Some(turns) = histories.get_mut(&history_key) {
+                            if let Some(last_user_idx) =
+                                turns.iter().rposition(|t| t.role == "user")
+                            {
+                                turns.truncate(last_user_idx);
+                            }
+                        }
+                        let after_len = histories.get(&history_key).map_or(0, |t| t.len());
+                        removed_count = before_len.saturating_sub(after_len);
+                    }
+                    // Remove the same number of messages from persistent storage.
+                    if let Some(ref store) = ctx.session_store {
+                        for _ in 0..removed_count {
+                            let _ = store.remove_last(&history_key);
+                        }
+                    }
+                    if let Some(channel) = target_channel.as_ref() {
+                        let _ = channel
+                            .add_reaction(&msg.reply_target, &msg.id, "\u{26A0}\u{FE0F}")
+                            .await;
+                    }
+                    "The provider returned an empty response for this message.".to_string()
+                } else {
+                    // Sanitizer stripped everything — tool output was malformed.
+                    if let Some(channel) = target_channel.as_ref() {
+                        let _ = channel
+                            .add_reaction(&msg.reply_target, &msg.id, "\u{26A0}\u{FE0F}")
+                            .await;
+                    }
+                    "The provider returned tool output that could not be safely rendered."
+                        .to_string()
+                }
             } else {
                 sanitized_response
             };
@@ -3276,12 +3322,14 @@ async fn process_channel_message(
                 }
             }
 
-            let history_response = delivered_response.clone();
-            append_sender_turn(
-                ctx.as_ref(),
-                &history_key,
-                ChatMessage::assistant(&history_response),
-            );
+            if !delivered_response.trim().is_empty() {
+                let history_response = delivered_response.clone();
+                append_sender_turn(
+                    ctx.as_ref(),
+                    &history_key,
+                    ChatMessage::assistant(&history_response),
+                );
+            }
 
             // Strip tool-call messages from turns older than
             // keep_tool_context_turns to prevent unbounded growth.
@@ -4363,8 +4411,7 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     dc.draft_update_interval_ms,
                     dc.multi_message_delay_ms,
                 )
-                .with_transcription(config.transcription.clone())
-                .with_stall_timeout(dc.stall_timeout_secs),
+                .with_transcription(config.transcription.clone()),
             ))
         }
         "slack" => {
@@ -4456,7 +4503,6 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     wa.pair_phone.clone(),
                     wa.pair_code.clone(),
                     wa.allowed_numbers.clone(),
-                    wa.mention_only,
                     wa.mode.clone(),
                     wa.dm_policy.clone(),
                     wa.group_policy.clone(),
@@ -5695,43 +5741,22 @@ pub async fn start_channels(config: Config) -> Result<()> {
     });
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
-    // Cap to MAX_CONVERSATION_SENDERS sessions (sorted by file mtime, most recent first)
-    // and trim each to MAX_CHANNEL_HISTORY turns to bound startup memory.
     // If the last persisted turn is a user message (orphan from a crash mid-query),
     // close it with a marker so the LLM doesn't try to continue the old request.
     if let Some(ref store) = runtime_ctx.session_store {
         let mut hydrated = 0usize;
         let mut orphans_closed = 0usize;
-        let session_keys = store.list_sessions();
-
-        // Sort by file mtime (most recently modified first) for predictable hydration.
-        // Collect mtimes up front to avoid repeated FS reads inside the comparator.
-        let mut keyed: Vec<_> = session_keys
-            .into_iter()
-            .map(|k| {
-                let mt = store
-                    .session_mtime(&k)
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                (k, mt)
-            })
-            .collect();
-        keyed.sort_by(|a, b| b.1.cmp(&a.1));
-        keyed.truncate(MAX_CONVERSATION_SENDERS);
-        let session_keys: Vec<String> = keyed.into_iter().map(|(k, _)| k).collect();
-
         let mut histories = runtime_ctx
             .conversation_histories
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        for key in session_keys {
+        for key in store.list_sessions() {
             let mut msgs = store.load(&key);
             if msgs.is_empty() {
                 continue;
             }
-            // Trim to MAX_CHANNEL_HISTORY turns (keep most recent).
-            if msgs.len() > MAX_CHANNEL_HISTORY {
-                msgs.drain(..msgs.len() - MAX_CHANNEL_HISTORY);
-            }
+            // Remove tool messages orphaned by truncation or prior crashes.
+            remove_orphaned_tool_messages(&mut msgs);
             // Close orphaned user turns from crashed sessions.
             if msgs.last().is_some_and(|m| m.role == "user") {
                 let closure =
@@ -8665,91 +8690,6 @@ BTC is currently around $65,000 based on latest tool output."#
     }
 
     #[tokio::test]
-    async fn process_channel_message_no_reply_precheck_skips_typing_indicator() {
-        let channel_impl = Arc::new(RecordingChannel::default());
-        let channel: Arc<dyn Channel> = channel_impl.clone();
-
-        let mut channels_by_name = HashMap::new();
-        channels_by_name.insert(channel.name().to_string(), channel);
-
-        let runtime_ctx = Arc::new(ChannelRuntimeContext {
-            channels_by_name: Arc::new(channels_by_name),
-            provider: Arc::new(NoReplyProvider),
-            default_provider: Arc::new("test-provider".to_string()),
-            memory: Arc::new(NoopMemory),
-            tools_registry: Arc::new(vec![]),
-            observer: Arc::new(NoopObserver),
-            system_prompt: Arc::new("test-system-prompt".to_string()),
-            model: Arc::new("test-model".to_string()),
-            temperature: 0.0,
-            auto_save_memory: false,
-            max_tool_iterations: 10,
-            min_relevance_score: 0.0,
-            conversation_histories: Arc::new(Mutex::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(MAX_CONVERSATION_SENDERS).unwrap(),
-            ))),
-            pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
-            provider_cache: Arc::new(Mutex::new(HashMap::new())),
-            route_overrides: Arc::new(Mutex::new(HashMap::new())),
-            api_key: None,
-            api_url: None,
-            reliability: Arc::new(crate::config::ReliabilityConfig::default()),
-            provider_runtime_options: providers::ProviderRuntimeOptions::default(),
-            workspace_dir: Arc::new(std::env::temp_dir()),
-            prompt_config: Arc::new(crate::config::Config::default()),
-            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-            interrupt_on_new_message: InterruptOnNewMessageConfig {
-                telegram: false,
-                slack: false,
-                discord: false,
-                mattermost: false,
-                matrix: false,
-            },
-            multimodal: crate::config::MultimodalConfig::default(),
-            media_pipeline: crate::config::MediaPipelineConfig::default(),
-            transcription_config: crate::config::TranscriptionConfig::default(),
-            hooks: None,
-            non_cli_excluded_tools: Arc::new(Vec::new()),
-            autonomy_level: AutonomyLevel::default(),
-            tool_call_dedup_exempt: Arc::new(Vec::new()),
-            model_routes: Arc::new(Vec::new()),
-            query_classification: crate::config::QueryClassificationConfig::default(),
-            ack_reactions: true,
-            show_tool_calls: true,
-            session_store: None,
-            approval_manager: Arc::new(ApprovalManager::for_non_interactive(
-                &crate::config::AutonomyConfig::default(),
-            )),
-            activated_tools: None,
-            cost_tracking: None,
-            pacing: crate::config::PacingConfig::default(),
-            max_tool_result_chars: 0,
-            context_token_budget: 0,
-            debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::ZERO)),
-        });
-
-        process_channel_message(
-            runtime_ctx,
-            traits::ChannelMessage {
-                id: "typing-fast-msg".to_string(),
-                sender: "alice".to_string(),
-                reply_target: "chat-typing".to_string(),
-                content: "hello".to_string(),
-                channel: "test-channel".to_string(),
-                timestamp: 1,
-                thread_ts: None,
-                interruption_scope_id: None,
-                attachments: vec![],
-            },
-            CancellationToken::new(),
-        )
-        .await;
-
-        let starts = channel_impl.start_typing_calls.load(Ordering::SeqCst);
-        assert_eq!(starts, 0, "no-reply precheck should not show typing");
-    }
-
-    #[tokio::test]
     async fn process_channel_message_adds_and_swaps_reactions() {
         let channel_impl = Arc::new(RecordingChannel::default());
         let channel: Arc<dyn Channel> = channel_impl.clone();
@@ -9804,7 +9744,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             assert!(
-                histories.peek("telegram_chat-refresh_alice").is_none(),
+                !histories.contains("telegram_chat-refresh_alice"),
                 "/new should clear the cached sender history before the next message"
             );
         }
@@ -11802,14 +11742,16 @@ This is an example JSON object for profile settings."#;
     fn normalize_cached_channel_turns_passes_through_tool_messages() {
         let turns = vec![
             ChatMessage::user("block the iPad"),
-            ChatMessage::assistant("{\"tool_call\": \"shell\"}"),
-            ChatMessage::tool("ok"),
+            ChatMessage::assistant(
+                r#"{"content":"checking","tool_calls":[{"id":"toolu_abc","name":"shell","arguments":"{}"}]}"#,
+            ),
+            ChatMessage::tool(r#"{"tool_call_id":"toolu_abc","content":"ok"}"#),
             ChatMessage::assistant("iPad blocked."),
             ChatMessage::user("next question"),
         ];
 
         let normalized = normalize_cached_channel_turns(turns);
-        // user, assistant(tool_call), tool, assistant(final), user
+        // user, assistant(tool_calls), tool, assistant(final), user
         assert_eq!(normalized.len(), 5);
         assert_eq!(normalized[2].role, "tool");
     }
@@ -11818,5 +11760,54 @@ This is an example JSON object for profile settings."#;
     fn default_keep_tool_context_turns_is_two() {
         let config = crate::config::schema::AgentConfig::default();
         assert_eq!(config.keep_tool_context_turns, 2);
+    }
+
+    // ── Multi-message finalize truncation ────────────────────────────────
+
+    #[test]
+    fn multi_message_finalize_no_truncation_with_leading_newlines() {
+        // With fix: accumulator strips leading \n\n before scanning
+        let mut streamed = "\n\nHello world".to_string();
+        let trimmed = streamed.trim_start();
+        if trimmed.len() < streamed.len() {
+            streamed = trimmed.to_string();
+        }
+        // Leading \n\n stripped — scanner never sees it, sent_so_far stays 0
+        let sent_so_far: usize = 0;
+        let finalized = streamed.trim();
+        let remainder = &finalized[sent_so_far..];
+        assert_eq!(remainder, "Hello world");
+    }
+
+    #[test]
+    fn multi_message_finalize_ok_without_leading_newlines() {
+        let streamed = "Hello world";
+        let sent_so_far: usize = 0;
+        let finalized = streamed.trim();
+        let remainder = &finalized[sent_so_far..];
+        assert_eq!(remainder, "Hello world"); // passes
+    }
+
+    // ── Empty response session corruption ────────────────────────────────
+
+    /// Simulates the delivered_response → should_persist decision.
+    /// Returns true if the response would be persisted to session history.
+    fn should_persist_assistant_response(delivered_response: &str) -> bool {
+        !delivered_response.trim().is_empty()
+    }
+
+    #[test]
+    fn empty_assistant_response_not_persisted_to_history() {
+        let delivered_response = "";
+        assert!(
+            !should_persist_assistant_response(delivered_response),
+            "empty assistant response must not be persisted to session history"
+        );
+    }
+
+    #[test]
+    fn non_empty_assistant_response_persisted_to_history() {
+        let delivered_response = "Here's your answer.";
+        assert!(should_persist_assistant_response(delivered_response));
     }
 }

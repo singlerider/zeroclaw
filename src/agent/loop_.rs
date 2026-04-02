@@ -262,18 +262,18 @@ pub(crate) fn scrub_credentials(input: &str) -> String {
 /// Minimum interval between progress sends to avoid flooding the draft channel.
 pub(crate) const PROGRESS_MIN_INTERVAL_MS: u64 = 500;
 
-/// Structured event sent through the draft channel so channels can
-/// differentiate between status/progress updates and actual response content.
+/// Delta sent from the agent loop to the channel's draft updater.
+/// Append-only — no clear/reset variant exists by design.
 #[derive(Debug, Clone)]
-pub enum DraftEvent {
-    /// Clear accumulated draft content (e.g. before streaming a new response).
-    Clear,
-    /// Progress / status text — channels can show this in a status bar
-    /// rather than in the message body (e.g. "🤔 Thinking...", "⏳ shell_command").
-    Progress(String),
-    /// Actual response content delta to append to the draft message.
-    Content(String),
+pub enum StreamDelta {
+    /// Response text to append to the message buffer.
+    Text(String),
+    /// Ephemeral tool progress (not part of the response body).
+    Status(String),
 }
+
+/// Backwards-compatible alias while callers are migrated.
+pub type DraftEvent = StreamDelta;
 
 tokio::task_local! {
     pub(crate) static TOOL_CHOICE_OVERRIDE: Option<String>;
@@ -2047,12 +2047,6 @@ async fn consume_provider_streaming_response(
             StreamEvent::ToolCall(tool_call) => {
                 outcome.tool_calls.push(tool_call);
                 suppress_forwarding = true;
-                if outcome.forwarded_live_deltas {
-                    if let Some(tx) = delta_sender {
-                        let _ = tx.send(DraftEvent::Clear).await;
-                    }
-                    outcome.forwarded_live_deltas = false;
-                }
             }
             StreamEvent::PreExecutedToolCall { .. } | StreamEvent::PreExecutedToolResult { .. } => {
                 // Pre-executed tool events are for observability only.
@@ -2083,12 +2077,6 @@ async fn consume_provider_streaming_response(
                         || lowered.contains("\"tool_calls\"")
                 } {
                     suppress_forwarding = true;
-                    if outcome.forwarded_live_deltas {
-                        if let Some(tx) = delta_sender {
-                            let _ = tx.send(DraftEvent::Clear).await;
-                        }
-                        outcome.forwarded_live_deltas = false;
-                    }
                 }
 
                 if suppress_forwarding {
@@ -2096,11 +2084,8 @@ async fn consume_provider_streaming_response(
                 }
 
                 if let Some(tx) = delta_sender {
-                    if !outcome.forwarded_live_deltas {
-                        let _ = tx.send(DraftEvent::Clear).await;
-                        outcome.forwarded_live_deltas = true;
-                    }
-                    if tx.send(DraftEvent::Content(chunk.delta)).await.is_err() {
+                    outcome.forwarded_live_deltas = true;
+                    if tx.send(StreamDelta::Text(chunk.delta)).await.is_err() {
                         delta_sender = None;
                     }
                 }
@@ -2322,6 +2307,9 @@ pub(crate) async fn run_tool_call_loop(
         },
     );
 
+    // Accumulated display text across all tool-loop calls.
+    let mut accumulated_display_text = String::new();
+
     for iteration in 0..max_iterations {
         let mut seen_tool_signatures: HashSet<(String, String)> = HashSet::new();
 
@@ -2475,7 +2463,7 @@ pub(crate) async fn run_tool_call_loop(
             } else {
                 format!("\u{1f914} Thinking (round {})...\n", iteration + 1)
             };
-            let _ = tx.send(DraftEvent::Progress(phase)).await;
+            let _ = tx.send(StreamDelta::Status(phase)).await;
         }
 
         observer.record_event(&ObserverEvent::LlmRequest {
@@ -2579,9 +2567,6 @@ pub(crate) async fn run_tool_call_loop(
                             "error": scrub_credentials(&stream_err.to_string()),
                         }),
                     );
-                    if let Some(ref tx) = on_delta {
-                        let _ = tx.send(DraftEvent::Clear).await;
-                    }
                     {
                         let chat_future = active_provider.chat(
                             ChatRequest {
@@ -2842,13 +2827,12 @@ pub(crate) async fn run_tool_call_loop(
         } else {
             parsed_text
         };
-
         // ── Progress: LLM responded ─────────────────────────────
         if let Some(ref tx) = on_delta {
             let llm_secs = llm_started_at.elapsed().as_secs();
             if !tool_calls.is_empty() {
                 let _ = tx
-                    .send(DraftEvent::Progress(format!(
+                    .send(StreamDelta::Status(format!(
                         "\u{1f4ac} Got {} tool call(s) ({llm_secs}s)\n",
                         tool_calls.len()
                     )))
@@ -2871,44 +2855,42 @@ pub(crate) async fn run_tool_call_loop(
                 }),
             );
             // No tool calls — this is the final response.
-            // If a streaming sender is provided, relay the text in small chunks
-            // so the channel can progressively update the draft message.
+            accumulated_display_text.push_str(&display_text);
+
+            // If text wasn't streamed live, send it now via post-hoc chunking.
+            // When streamed live, the text is already in the ResponseStream.
             if let Some(ref tx) = on_delta {
-                let should_emit_post_hoc_chunks =
-                    !response_streamed_live || display_text != response_text;
-                if !should_emit_post_hoc_chunks {
-                    history.push(ChatMessage::assistant(response_text.clone()));
-                    return Ok(display_text);
-                }
-                // Clear accumulated progress lines before streaming the final answer.
-                let _ = tx.send(DraftEvent::Clear).await;
-                // Split on whitespace boundaries, accumulating chunks of at least
-                // STREAM_CHUNK_MIN_CHARS characters for progressive draft updates.
-                let mut chunk = String::new();
-                for word in display_text.split_inclusive(char::is_whitespace) {
-                    if cancellation_token
-                        .as_ref()
-                        .is_some_and(CancellationToken::is_cancelled)
-                    {
-                        return Err(ToolLoopCancelled.into());
+                if !response_streamed_live {
+                    let mut chunk = String::new();
+                    for word in display_text.split_inclusive(char::is_whitespace) {
+                        if cancellation_token
+                            .as_ref()
+                            .is_some_and(CancellationToken::is_cancelled)
+                        {
+                            return Err(ToolLoopCancelled.into());
+                        }
+                        chunk.push_str(word);
+                        if chunk.len() >= STREAM_CHUNK_MIN_CHARS
+                            && tx
+                                .send(StreamDelta::Text(std::mem::take(&mut chunk)))
+                                .await
+                                .is_err()
+                        {
+                            break;
+                        }
                     }
-                    chunk.push_str(word);
-                    if chunk.len() >= STREAM_CHUNK_MIN_CHARS
-                        && tx
-                            .send(DraftEvent::Content(std::mem::take(&mut chunk)))
-                            .await
-                            .is_err()
-                    {
-                        break; // receiver dropped
+                    if !chunk.is_empty() {
+                        let _ = tx.send(StreamDelta::Text(chunk)).await;
                     }
-                }
-                if !chunk.is_empty() {
-                    let _ = tx.send(DraftEvent::Content(chunk)).await;
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
-            return Ok(display_text);
+            return Ok(accumulated_display_text);
         }
+
+        // Native tool-call providers can return assistant text separately from
+        // Accumulate text from this iteration (tool calls present, loop continues).
+        accumulated_display_text.push_str(&display_text);
 
         // Native tool-call providers can return assistant text separately from
         // the structured call payload; relay it to draft-capable channels.
@@ -2919,7 +2901,7 @@ pub(crate) async fn run_tool_call_loop(
                     if !narration.ends_with('\n') {
                         narration.push('\n');
                     }
-                    let _ = tx.send(DraftEvent::Content(narration)).await;
+                    let _ = tx.send(StreamDelta::Text(narration)).await;
                 }
             }
             if !silent {
@@ -2969,7 +2951,7 @@ pub(crate) async fn run_tool_call_loop(
                         );
                         if let Some(ref tx) = on_delta {
                             let _ = tx
-                                .send(DraftEvent::Progress(format!(
+                                .send(StreamDelta::Status(format!(
                                     "\u{274c} {}: {}\n",
                                     call.name,
                                     truncate_with_ellipsis(&scrub_credentials(&cancelled), 200)
@@ -3039,7 +3021,7 @@ pub(crate) async fn run_tool_call_loop(
                         );
                         if let Some(ref tx) = on_delta {
                             let _ = tx
-                                .send(DraftEvent::Progress(format!(
+                                .send(StreamDelta::Status(format!(
                                     "\u{274c} {}: {}\n",
                                     tool_name, denied
                                 )))
@@ -3088,7 +3070,7 @@ pub(crate) async fn run_tool_call_loop(
                 );
                 if let Some(ref tx) = on_delta {
                     let _ = tx
-                        .send(DraftEvent::Progress(format!(
+                        .send(StreamDelta::Status(format!(
                             "\u{274c} {}: {}\n",
                             tool_name, duplicate
                         )))
@@ -3146,7 +3128,7 @@ pub(crate) async fn run_tool_call_loop(
                     format!("\u{23f3} {}: {hint}\n", tool_name)
                 };
                 tracing::debug!(tool = %tool_name, "Sending progress start to draft");
-                let _ = tx.send(DraftEvent::Progress(progress)).await;
+                let _ = tx.send(StreamDelta::Status(progress)).await;
             }
 
             executable_indices.push(idx);
@@ -3225,7 +3207,7 @@ pub(crate) async fn run_tool_call_loop(
                     format!("\u{274c} {} ({secs}s)\n", call.name)
                 };
                 tracing::debug!(tool = %call.name, secs, "Sending progress complete to draft");
-                let _ = tx.send(DraftEvent::Progress(progress_msg)).await;
+                let _ = tx.send(StreamDelta::Status(progress_msg)).await;
             }
 
             ordered_results[*idx] = Some((call.name.clone(), call.tool_call_id.clone(), outcome));
@@ -3409,7 +3391,8 @@ pub(crate) async fn run_tool_call_loop(
             if text.is_empty() {
                 anyhow::bail!("Agent exceeded maximum tool iterations ({max_iterations})")
             }
-            Ok(text)
+            accumulated_display_text.push_str(&text);
+            Ok(accumulated_display_text)
         }
         Err(e) => {
             tracing::warn!(error = %e, "Final summary LLM call failed, bailing");
@@ -4242,10 +4225,7 @@ pub async fn run(
                 use std::io::Write;
                 while let Some(event) = delta_rx.recv().await {
                     match event {
-                        DraftEvent::Clear => {
-                            let _ = writeln!(std::io::stderr());
-                        }
-                        DraftEvent::Progress(text) => {
+                        StreamDelta::Status(text) => {
                             if is_tty {
                                 let _ = write!(std::io::stderr(), "\x1b[2m{text}\x1b[0m");
                             } else {
@@ -4253,7 +4233,7 @@ pub async fn run(
                             }
                             let _ = std::io::stderr().flush();
                         }
-                        DraftEvent::Content(text) => {
+                        StreamDelta::Text(text) => {
                             content_streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                             print!("{text}");
                             let _ = std::io::stdout().flush();
@@ -6414,7 +6394,10 @@ mod tests {
         .await
         .expect("parallel execution should complete");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         assert!(
             max_active.load(Ordering::SeqCst) >= 1,
             "tools should execute successfully"
@@ -6488,7 +6471,10 @@ mod tests {
         .await
         .expect("cron_add delivery defaults should be injected");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
 
         let recorded = recorded_args
             .lock()
@@ -6554,7 +6540,10 @@ mod tests {
         .await
         .expect("explicit delivery mode should be preserved");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
 
         let recorded = recorded_args
             .lock()
@@ -6615,7 +6604,10 @@ mod tests {
         .await
         .expect("loop should finish after deduplicating repeated calls");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         assert_eq!(
             invocations.load(Ordering::SeqCst),
             1,
@@ -6688,7 +6680,10 @@ mod tests {
         .await
         .expect("non-interactive shell should succeed for low-risk command");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
 
         let tool_results = history
             .iter()
@@ -6752,7 +6747,10 @@ mod tests {
         .await
         .expect("loop should finish with exempt tool executing twice");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         assert_eq!(
             invocations.load(Ordering::SeqCst),
             2,
@@ -6897,7 +6895,10 @@ mod tests {
         .await
         .expect("native fallback id flow should complete");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
         assert!(
             history.iter().any(|msg| {
@@ -6987,26 +6988,22 @@ mod tests {
             deltas.push(delta);
         }
 
-        let explanation_idx = deltas
-            .iter()
-            .position(|delta| matches!(delta, DraftEvent::Content(t) if t == "Task started. Waiting 30 seconds before checking status.\n"))
-            .expect("native assistant text should be relayed to on_delta");
-        let clear_idx = deltas
-            .iter()
-            .position(|delta| matches!(delta, DraftEvent::Clear))
-            .expect("final answer streaming should clear prior draft state");
-
         assert!(
             deltas
                 .iter()
-                .any(|delta| matches!(delta, DraftEvent::Progress(t) if t.starts_with("\u{1f4ac} Got 1 tool call(s)"))),
+                .any(|delta| matches!(delta, StreamDelta::Text(t) if t == "Task started. Waiting 30 seconds before checking status.\n")),
+            "native assistant text should be relayed to on_delta"
+        );
+        assert!(
+            deltas
+                .iter()
+                .any(|delta| matches!(delta, StreamDelta::Status(t) if t.starts_with("\u{1f4ac} Got 1 tool call(s)"))),
             "tool-call progress line should still be relayed"
         );
         assert!(
-            explanation_idx < clear_idx,
-            "native assistant text should arrive before final-answer draft clearing"
+            result.ends_with("Final answer"),
+            "accumulated result should end with final answer, got: {result}"
         );
-        assert_eq!(result, "Final answer");
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
     }
 
@@ -7054,11 +7051,8 @@ mod tests {
         let mut visible_deltas = String::new();
         while let Some(delta) = rx.recv().await {
             match delta {
-                DraftEvent::Clear => {
-                    visible_deltas.clear();
-                }
-                DraftEvent::Progress(_) => {}
-                DraftEvent::Content(text) => {
+                StreamDelta::Status(_) => {}
+                StreamDelta::Text(text) => {
                     visible_deltas.push_str(&text);
                 }
             }
@@ -7125,17 +7119,17 @@ mod tests {
         let mut visible_deltas = String::new();
         while let Some(delta) = rx.recv().await {
             match delta {
-                DraftEvent::Clear => {
-                    visible_deltas.clear();
-                }
-                DraftEvent::Progress(_) => {}
-                DraftEvent::Content(text) => {
+                StreamDelta::Status(_) => {}
+                StreamDelta::Text(text) => {
                     visible_deltas.push_str(&text);
                 }
             }
         }
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
         assert_eq!(provider.chat_calls.load(Ordering::SeqCst), 0);
@@ -7200,17 +7194,17 @@ mod tests {
         let mut visible_deltas = String::new();
         while let Some(delta) = rx.recv().await {
             match delta {
-                DraftEvent::Clear => {
-                    visible_deltas.clear();
-                }
-                DraftEvent::Progress(_) => {}
-                DraftEvent::Content(text) => {
+                StreamDelta::Status(_) => {}
+                StreamDelta::Text(text) => {
                     visible_deltas.push_str(&text);
                 }
             }
         }
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         assert_eq!(invocations.load(Ordering::SeqCst), 1);
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
         assert_eq!(provider.stream_tool_requests.load(Ordering::SeqCst), 2);
@@ -7284,11 +7278,8 @@ mod tests {
         let mut visible_deltas = String::new();
         while let Some(delta) = rx.recv().await {
             match delta {
-                DraftEvent::Clear => {
-                    visible_deltas.clear();
-                }
-                DraftEvent::Progress(_) => {}
-                DraftEvent::Content(text) => {
+                StreamDelta::Status(_) => {}
+                StreamDelta::Text(text) => {
                     visible_deltas.push_str(&text);
                 }
             }
@@ -7367,7 +7358,10 @@ mod tests {
             .await
             .expect("wrapper path should execute activated tools");
 
-            assert_eq!(result, "done");
+            assert!(
+                result.ends_with("done"),
+                "result should end with 'done', got: {result}"
+            );
             assert_eq!(invocations.load(Ordering::SeqCst), 1);
         });
     }
@@ -9302,9 +9296,8 @@ Let me check the result."#;
 
         let all_deltas: String = deltas
             .iter()
-            .filter_map(|d| match d {
-                DraftEvent::Progress(t) | DraftEvent::Content(t) => Some(t.as_str()),
-                DraftEvent::Clear => None,
+            .map(|d| match d {
+                StreamDelta::Status(t) | StreamDelta::Text(t) => t.as_str(),
             })
             .collect();
 
@@ -9320,7 +9313,10 @@ Let me check the result."#;
             "on_delta messages should include ❌ for failed tool calls, got: {all_deltas}"
         );
 
-        assert_eq!(result, "I could not execute that command.");
+        assert!(
+            result.ends_with("I could not execute that command."),
+            "result should end with error message, got: {result}"
+        );
     }
 
     // ── filter_by_allowed_tools tests ─────────────────────────────────────
@@ -9452,7 +9448,10 @@ Let me check the result."#;
             .await
             .expect("tool loop should succeed");
 
-        assert_eq!(result, "done");
+        assert!(
+            result.ends_with("done"),
+            "result should end with 'done', got: {result}"
+        );
         let summary = tracker.get_summary().unwrap();
         assert_eq!(summary.request_count, 1);
         assert_eq!(summary.total_tokens, 1_200);
