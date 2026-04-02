@@ -602,20 +602,27 @@ fn contains_unquoted_char(command: &str, target: char) -> bool {
 /// Returns true if `command` contains an unquoted `>` that is NOT a safe
 /// stderr form (`2>/dev/null`, `2>&1`).
 fn contains_unsafe_output_redirect(command: &str) -> bool {
-    // Strip safe redirect-to-null and fd-merge patterns, then check for remaining `>`.
+    // Strip safe redirect-to-dev and fd-merge patterns, then check for remaining `>`.
+    // Order matters: longer patterns first to avoid partial matches.
     let safe = command
-        .replace("2>/dev/null", "")
+        .replace(">/dev/stdout", "")
+        .replace(">/dev/stderr", "")
         .replace(">/dev/null", "")
-        .replace("1>/dev/null", "")
+        .replace(">/dev/zero", "")
         .replace("2>&1", "")
         .replace("1>&2", "");
     contains_unquoted_char(&safe, '>')
 }
 
-/// Returns true if `command` contains an unquoted `<` that is NOT a heredoc (`<<`).
+/// Returns true if `command` contains an unquoted `<` that is NOT a heredoc (`<<`)
+/// or a safe input redirect from `/dev/*`.
 fn contains_unquoted_input_redirect(command: &str) -> bool {
-    // Strip here-strings (`<<<`) first, then heredocs (`<<`), then check for remaining `<`.
-    let safe = command.replace("<<<", "").replace("<<", "");
+    // Strip here-strings (`<<<`) first, then heredocs (`<<`), then safe /dev/* sources.
+    let safe = command
+        .replace("<<<", "")
+        .replace("<<", "")
+        .replace("</dev/null", "")
+        .replace("</dev/zero", "");
     contains_unquoted_char(&safe, '<')
 }
 
@@ -2385,21 +2392,51 @@ mod tests {
     }
 
     #[test]
-    fn heredoc_and_stderr_redirects_allowed() {
+    fn safe_redirect_to_dev_null_allowed() {
         let p = default_policy();
-        // Heredoc marker on a single line — << should not trigger < blocker
+        assert!(p.is_command_allowed("echo secret > /dev/null"));
+        assert!(p.is_command_allowed("ls 2> /dev/null"));
+        assert!(p.is_command_allowed("find . 2>&1 > /dev/null"));
+        assert!(p.is_command_allowed("cat</dev/null"));
+    }
+
+    #[test]
+    fn safe_redirect_to_dev_stdout_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("echo hello > /dev/stdout"));
+        assert!(p.is_command_allowed("cat /dev/zero > /dev/stdout"));
+    }
+
+    #[test]
+    fn safe_redirect_to_dev_stderr_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("echo error > /dev/stderr"));
+        assert!(p.is_command_allowed("ls 1> /dev/stderr"));
+    }
+
+    #[test]
+    fn safe_redirect_to_dev_zero_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("cat /dev/zero > /dev/null"));
+    }
+
+    #[test]
+    fn safe_file_descriptor_redirect_allowed() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("find . 2>&1"));
+        assert!(p.is_command_allowed("echo hello 1>&2"));
+        assert!(p.is_command_allowed("ls 2>&1 > /dev/null"));
+    }
+
+    #[test]
+    fn heredoc_and_herestring_allowed() {
+        let p = default_policy();
         assert!(p.is_command_allowed("cat << 'EOF'"));
         assert!(p.is_command_allowed("cat <<EOF"));
         assert!(p.is_command_allowed("cat <<< 'hello'"));
-        // Stderr suppression
-        assert!(p.is_command_allowed("python3 script.py 2>/dev/null"));
-        assert!(p.is_command_allowed("ls 2>&1"));
-        assert!(p.is_command_allowed("grep foo bar 2>/dev/null"));
-        assert!(p.is_command_allowed("ls >/dev/null"));
-        assert!(p.is_command_allowed("ls 1>/dev/null"));
-        assert!(p.is_command_allowed("ls 1>&2"));
-        // Actual file redirects still blocked
+        // Input redirects from files still blocked
         assert!(!p.is_command_allowed("cat < /etc/passwd"));
+        // Output redirects to files still blocked
         assert!(!p.is_command_allowed("echo secret > output.txt"));
     }
 
@@ -2409,11 +2446,15 @@ mod tests {
         assert!(!contains_unquoted_input_redirect("cat <<< 'hello'"));
         assert!(contains_unquoted_input_redirect("cat < /etc/passwd"));
         assert!(!contains_unquoted_input_redirect("echo 'a<b'"));
+        assert!(!contains_unquoted_input_redirect("cat</dev/null"));
         assert!(!contains_unsafe_output_redirect("cmd 2>/dev/null"));
         assert!(!contains_unsafe_output_redirect("cmd >/dev/null"));
         assert!(!contains_unsafe_output_redirect("cmd 1>/dev/null"));
         assert!(!contains_unsafe_output_redirect("cmd 2>&1"));
         assert!(!contains_unsafe_output_redirect("cmd 1>&2"));
+        assert!(!contains_unsafe_output_redirect("echo > /dev/stdout"));
+        assert!(!contains_unsafe_output_redirect("echo > /dev/stderr"));
+        assert!(!contains_unsafe_output_redirect("echo > /dev/zero"));
         assert!(contains_unsafe_output_redirect("echo hi > file.txt"));
         assert!(!contains_unsafe_output_redirect("echo 'a>b'"));
     }
