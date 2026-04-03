@@ -1433,6 +1433,18 @@ fn default_local_whisper_timeout_secs() -> u64 {
     300
 }
 
+/// HMAC tool execution receipt configuration (`[agent.tool_receipts]`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ToolReceiptsConfig {
+    /// Enable HMAC receipt generation for tool executions. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// When true, append tool receipts to the user-visible response message.
+    /// When false (default), receipts are only in internal history and debug logs.
+    #[serde(default)]
+    pub show_in_response: bool,
+}
+
 /// Agent orchestration configuration (`[agent]` section).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Configurable)]
 #[prefix = "agent"]
@@ -1516,6 +1528,10 @@ pub struct AgentConfig {
     /// behavior). Default: `2`.
     #[serde(default = "default_keep_tool_context_turns")]
     pub keep_tool_context_turns: usize,
+
+    /// HMAC tool execution receipt configuration.
+    #[serde(default)]
+    pub tool_receipts: ToolReceiptsConfig,
 }
 
 fn default_max_tool_result_chars() -> usize {
@@ -1567,6 +1583,7 @@ impl Default for AgentConfig {
                 crate::agent::context_compressor::ContextCompressionConfig::default(),
             max_tool_result_chars: default_max_tool_result_chars(),
             keep_tool_context_turns: default_keep_tool_context_turns(),
+            tool_receipts: ToolReceiptsConfig::default(),
         }
     }
 }
