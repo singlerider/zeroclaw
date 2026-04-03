@@ -16140,7 +16140,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         assert_eq!(enabled.type_hint, "bool");
         assert_eq!(enabled.display_value, "true");
         assert!(!enabled.is_secret);
-        assert!(!enabled.is_enum);
+        assert!(!enabled.is_enum());
 
         // String field
         let homeserver = by_name["channels.matrix.homeserver"];
@@ -16163,7 +16163,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
 
         // Enum field
         let stream = by_name["channels.matrix.stream-mode"];
-        assert!(stream.is_enum);
+        assert!(stream.is_enum());
         assert!(stream.enum_variants.is_some());
 
         // Secret field — masked
@@ -16425,7 +16425,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
 
             // set_prop: round-trip the display value back through set_prop.
             // Skip secrets (masked), enums (need valid variant), and <unset> Options.
-            if field.is_secret || field.is_enum || field.display_value == "<unset>" {
+            if field.is_secret || field.is_enum() || field.display_value == "<unset>" {
                 continue;
             }
 
@@ -16456,7 +16456,7 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
         config.init_defaults(None);
 
         for field in config.prop_fields() {
-            if !field.is_enum {
+            if !field.is_enum() {
                 continue;
             }
             let get_variants = field.enum_variants.unwrap_or_else(|| {

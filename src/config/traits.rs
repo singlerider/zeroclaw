@@ -9,6 +9,28 @@ pub struct SecretFieldInfo {
     pub is_set: bool,
 }
 
+/// Runtime type classification for config property values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropKind {
+    String,
+    Bool,
+    Integer,
+    Float,
+    /// An enum or other serde-serializable type (parsed as TOML string).
+    Enum,
+}
+
+impl PropKind {
+    /// Display-friendly type name for CLI output.
+    pub fn display_name(self, raw_type: &str) -> &str {
+        match self {
+            Self::String => "String",
+            Self::Bool => "bool",
+            Self::Integer | Self::Float | Self::Enum => raw_type,
+        }
+    }
+}
+
 /// Describes a single property field discovered via `#[derive(Configurable)]`.
 #[derive(Clone)]
 pub struct PropFieldInfo {
@@ -18,21 +40,27 @@ pub struct PropFieldInfo {
     pub category: &'static str,
     /// Current value formatted for display (secrets show `"****"`)
     pub display_value: String,
-    /// Type hint string (e.g. `"bool"`, `"u64"`, `"Option<String>"`, `"StreamMode"`)
+    /// Raw Rust type string for display (e.g. `"bool"`, `"u64"`, `"Option<StreamMode>"`)
     pub type_hint: &'static str,
+    /// Runtime type classification
+    pub kind: PropKind,
     /// Whether this field is marked `#[secret]`
     pub is_secret: bool,
-    /// Whether this field is an enum type
-    pub is_enum: bool,
     /// Returns valid variant names for enum fields (None for non-enum fields)
     pub enum_variants: Option<fn() -> Vec<String>>,
+}
+
+impl PropFieldInfo {
+    pub fn is_enum(&self) -> bool {
+        self.enum_variants.is_some()
+    }
 }
 
 impl std::fmt::Debug for PropFieldInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PropFieldInfo")
             .field("name", &self.name)
-            .field("is_enum", &self.is_enum)
+            .field("kind", &self.kind)
             .field("is_secret", &self.is_secret)
             .finish_non_exhaustive()
     }

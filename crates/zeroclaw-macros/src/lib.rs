@@ -1,56 +1,8 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     Data, DeriveInput, Fields, GenericArgument, Lit, Meta, PathArguments, parse_macro_input,
 };
-
-// ── Field classification ──────────────────────────────────────────
-
-/// Base type of a config field (Option-ness tracked separately).
-#[derive(Debug, Clone)]
-enum FieldKind {
-    String,
-    Bool,
-    /// Concrete integer type ident (u8–u64, i8–i64, usize, isize).
-    Integer(syn::Ident),
-    Float,
-    /// An enum (or unknown struct) that implements Serialize + Deserialize.
-    Enum(TokenStream2),
-    /// Vec, HashMap, PathBuf, or other compound types we skip.
-    Skip,
-}
-
-/// Classify a `syn::Type` into a base `FieldKind`.
-/// Option<T> is unwrapped — use `is_option_type()` to check wrapping.
-fn classify_field_type(ty: &syn::Type) -> FieldKind {
-    let syn::Type::Path(type_path) = ty else {
-        return FieldKind::Skip;
-    };
-    let Some(segment) = type_path.path.segments.last() else {
-        return FieldKind::Skip;
-    };
-    let ident_str = segment.ident.to_string();
-    match ident_str.as_str() {
-        "String" => FieldKind::String,
-        "bool" => FieldKind::Bool,
-        "u8" | "u16" | "u32" | "u64" | "usize" | "i8" | "i16" | "i32" | "i64" | "isize" => {
-            FieldKind::Integer(segment.ident.clone())
-        }
-        "f64" => FieldKind::Float,
-        "Vec" | "HashMap" | "PathBuf" => FieldKind::Skip,
-        "Option" => {
-            let Some(inner) = extract_option_inner(ty) else {
-                return FieldKind::Skip;
-            };
-            classify_field_type(inner)
-        }
-        _ => {
-            let tokens = quote! { #ty };
-            FieldKind::Enum(tokens)
-        }
-    }
-}
 
 /// Check if any `#[serde(...)]` attribute on the field contains `skip`.
 fn has_serde_skip(field: &syn::Field) -> bool {
@@ -69,23 +21,6 @@ fn has_serde_skip(field: &syn::Field) -> bool {
         }
     }
     false
-}
-
-/// Return the type hint string for display purposes.
-fn type_hint_str(kind: &FieldKind, is_option: bool) -> String {
-    let inner = match kind {
-        FieldKind::String => "String".to_string(),
-        FieldKind::Bool => "bool".to_string(),
-        FieldKind::Integer(ident) => ident.to_string(),
-        FieldKind::Float => "f64".to_string(),
-        FieldKind::Enum(tokens) => tokens.to_string().replace(' ', ""),
-        FieldKind::Skip => "skip".to_string(),
-    };
-    if is_option {
-        format!("Option<{inner}>")
-    } else {
-        inner
-    }
 }
 
 /// Derive macro that generates secret and property methods for config structs.
@@ -137,10 +72,11 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
     let mut nested_encrypt = Vec::new();
     let mut nested_decrypt = Vec::new();
 
-    // ── Property codegen accumulators (new) ──
+    // ── Property codegen accumulators ──
     let mut prop_field_entries = Vec::new();
-    let mut get_prop_arms = Vec::new();
-    let mut set_prop_arms = Vec::new();
+    let mut prop_names: Vec<String> = Vec::new();
+    let mut prop_kind_tokens = Vec::new();
+    let mut prop_is_option_flags = Vec::new();
     let mut prop_is_secret_arms = Vec::new();
     let mut nested_prop_fields = Vec::new();
     let mut nested_get_prop = Vec::new();
@@ -165,7 +101,7 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
 
             let is_option = is_option_type(&field.ty);
             let is_vec_string = extract_vec_inner(&field.ty)
-                .map(|inner| matches!(classify_field_type(inner), FieldKind::String))
+                .map(|inner| inner.to_token_stream().to_string() == "String")
                 .unwrap_or(false);
             let full_name_lit = &full_name;
             let category_lit = &category;
@@ -417,97 +353,75 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        let kind = classify_field_type(&field.ty);
-        if matches!(kind, FieldKind::Skip) {
+        let type_str = field.ty.to_token_stream().to_string().replace(' ', "");
+
+        // Skip compound types (Vec, HashMap, PathBuf) — not addressable as scalar props
+        if type_str.contains("Vec<")
+            || type_str.contains("HashMap<")
+            || type_str.contains("PathBuf")
+        {
             continue;
         }
 
         let field_name_kebab = snake_to_kebab(&field_ident.to_string());
+        let serde_name = field_ident.to_string();
         let full_name = if prefix.is_empty() {
             field_name_kebab.clone()
         } else {
             format!("{}.{}", prefix, field_name_kebab)
         };
         let full_name_lit = &full_name;
+        let serde_name_lit = &serde_name;
         let category_lit = &category;
-        let is_option = is_option_type(&field.ty);
-        let type_hint = type_hint_str(&kind, is_option);
-        let type_hint_lit = &type_hint;
-        let is_enum = matches!(kind, FieldKind::Enum(_));
+        let type_hint_lit = &type_str;
 
-        // prop_is_secret arm
+        // Classify the inner type (unwrapping Option) into PropKind
+        let inner_type_str = type_str
+            .strip_prefix("Option<")
+            .and_then(|s: &str| s.strip_suffix('>'))
+            .unwrap_or(&type_str);
+        let is_option = type_str.starts_with("Option<");
+
+        let (kind_token, enum_variants_expr) = match inner_type_str {
+            "bool" => (quote! { crate::config::PropKind::Bool }, quote! { None }),
+            "String" => (quote! { crate::config::PropKind::String }, quote! { None }),
+            "f64" => (quote! { crate::config::PropKind::Float }, quote! { None }),
+            "u8" | "u16" | "u32" | "u64" | "usize" | "i8" | "i16" | "i32" | "i64" | "isize" => {
+                (quote! { crate::config::PropKind::Integer }, quote! { None })
+            }
+            _ => {
+                let inner_ty = extract_option_inner(&field.ty).unwrap_or(&field.ty);
+                let variants = quote! {
+                    Some(|| {
+                        crate::config::enum_variants::<#inner_ty>()
+                            .split(", ")
+                            .map(|s| s.to_string())
+                            .collect()
+                    })
+                };
+                (quote! { crate::config::PropKind::Enum }, variants)
+            }
+        };
+
         if is_secret {
-            prop_is_secret_arms.push(quote! {
-                #full_name_lit => true,
-            });
+            prop_is_secret_arms.push(quote! { #full_name_lit => true, });
         }
 
-        // prop_fields entry
-        let display_value_expr = if is_secret {
-            if is_option_type(&field.ty) {
-                quote! {
-                    if self.#field_ident.as_ref().is_some_and(|v| !v.is_empty()) {
-                        "****".to_string()
-                    } else {
-                        "<unset>".to_string()
-                    }
-                }
-            } else {
-                quote! {
-                    if self.#field_ident.is_empty() {
-                        "<unset>".to_string()
-                    } else {
-                        "****".to_string()
-                    }
-                }
-            }
-        } else {
-            gen_value_to_string(field_ident, &kind, is_option)
-        };
-
-        let enum_variants_expr = if let FieldKind::Enum(ref ty_tokens) = kind {
-            quote! {
-                Some(|| {
-                    crate::config::enum_variants::<#ty_tokens>()
-                        .split(", ")
-                        .map(|s| s.to_string())
-                        .collect()
-                })
-            }
-        } else {
-            quote! { None }
-        };
+        prop_names.push(full_name.clone());
+        prop_kind_tokens.push(kind_token.clone());
+        prop_is_option_flags.push(is_option);
 
         prop_field_entries.push(quote! {
-            {
-                let display_value = { #display_value_expr };
-                crate::config::PropFieldInfo {
-                    name: #full_name_lit,
-                    category: #category_lit,
-                    display_value,
-                    type_hint: #type_hint_lit,
-                    is_secret: #is_secret,
-                    is_enum: #is_enum,
-                    enum_variants: #enum_variants_expr,
-                }
-            }
-        });
-
-        // get_prop arm
-        let get_expr = if is_secret {
-            quote! { Ok("**** (encrypted)".to_string()) }
-        } else {
-            let val = gen_value_to_string(field_ident, &kind, is_option);
-            quote! { Ok(#val) }
-        };
-        get_prop_arms.push(quote! {
-            #full_name_lit => { #get_expr }
-        });
-
-        // set_prop arm
-        let set_expr = gen_set_prop_expr(field_ident, &kind, is_option);
-        set_prop_arms.push(quote! {
-            #full_name_lit => { #set_expr }
+            crate::config::make_prop_field(
+                __table.as_ref(),
+                #full_name_lit,
+                #serde_name_lit,
+                #category_lit,
+                #type_hint_lit,
+                #kind_token,
+                #is_secret,
+                #enum_variants_expr,
+            )
         });
     }
 
@@ -558,6 +472,9 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
 
             /// Returns metadata about all property fields on this struct and nested children.
             pub fn prop_fields(&self) -> Vec<crate::config::PropFieldInfo> {
+                let __table = toml::Value::try_from(self)
+                    .ok()
+                    .and_then(|v| match v { toml::Value::Table(t) => Some(t), _ => None });
                 let mut fields = vec![#(#prop_field_entries),*];
                 #(#nested_prop_fields)*
                 fields
@@ -565,24 +482,23 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
 
             /// Get a property value by its full dotted name, returning it as a display string.
             pub fn get_prop(&self, name: &str) -> anyhow::Result<String> {
-                match name {
-                    #(#get_prop_arms,)*
-                    _ => {
-                        #(#nested_get_prop)*
-                        anyhow::bail!("Unknown property '{}'", name)
-                    }
+                #(#nested_get_prop)*
+                const KNOWN: &[&str] = &[#(#prop_names),*];
+                if !KNOWN.contains(&name) {
+                    anyhow::bail!("Unknown property '{}'", name);
                 }
+                crate::config::serde_get_prop(self, Self::configurable_prefix(), name, Self::prop_is_secret(name))
             }
 
             /// Set a property value by its full dotted name, parsing from string.
             pub fn set_prop(&mut self, name: &str, value_str: &str) -> anyhow::Result<()> {
-                match name {
-                    #(#set_prop_arms,)*
-                    _ => {
-                        #(#nested_set_prop)*
-                        anyhow::bail!("Unknown property '{}'", name)
-                    }
-                }
+                #(#nested_set_prop)*
+                const KNOWN: &[&str] = &[#(#prop_names),*];
+                const KINDS: &[crate::config::PropKind] = &[#(#prop_kind_tokens),*];
+                const IS_OPTION: &[bool] = &[#(#prop_is_option_flags),*];
+                let idx = KNOWN.iter().position(|&n| n == name)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown property '{}'", name))?;
+                crate::config::serde_set_prop(self, Self::configurable_prefix(), name, value_str, KINDS[idx], IS_OPTION[idx])
             }
 
             /// Check if a property name refers to a secret field (static, no instance needed).
@@ -607,93 +523,6 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
-}
-
-/// Generate expression to convert a field value to a display string.
-/// Used by both `prop_fields` (display_value) and `get_prop`.
-fn gen_value_to_string(
-    field_ident: &syn::Ident,
-    kind: &FieldKind,
-    is_option: bool,
-) -> TokenStream2 {
-    // Inner conversion: T → String
-    let inner_expr = match kind {
-        FieldKind::String => quote! { self.#field_ident.clone() },
-        FieldKind::Bool | FieldKind::Integer(_) | FieldKind::Float => {
-            quote! { self.#field_ident.to_string() }
-        }
-        FieldKind::Enum(_) => quote! {
-            serde_json::to_string(&self.#field_ident).unwrap_or_default().trim_matches('"').to_string()
-        },
-        FieldKind::Skip => unreachable!(),
-    };
-
-    if !is_option {
-        return inner_expr;
-    }
-
-    // Option<T> → unwrap or "<unset>"
-    match kind {
-        FieldKind::String => quote! {
-            self.#field_ident.clone().unwrap_or_else(|| "<unset>".to_string())
-        },
-        FieldKind::Enum(_) => quote! {
-            match &self.#field_ident {
-                Some(v) => serde_json::to_string(v).unwrap_or_default().trim_matches('"').to_string(),
-                None => "<unset>".to_string(),
-            }
-        },
-        _ => quote! {
-            self.#field_ident.map_or_else(|| "<unset>".to_string(), |v| v.to_string())
-        },
-    }
-}
-
-/// Generate the set_prop expression for a field.
-fn gen_set_prop_expr(field_ident: &syn::Ident, kind: &FieldKind, is_option: bool) -> TokenStream2 {
-    // Inner parse: &str → T (or error)
-    let parse_expr = match kind {
-        FieldKind::String => quote! { value_str.to_string() },
-        FieldKind::Bool => quote! {
-            value_str.parse::<bool>()
-                .map_err(|_| anyhow::anyhow!("Invalid bool value '{}' — expected 'true' or 'false'", value_str))?
-        },
-        FieldKind::Integer(ident) => quote! {
-            value_str.parse::<#ident>()
-                .map_err(|_| anyhow::anyhow!("Invalid {} value '{}'", stringify!(#ident), value_str))?
-        },
-        FieldKind::Float => quote! {
-            value_str.parse::<f64>()
-                .map_err(|_| anyhow::anyhow!("Invalid f64 value '{}'", value_str))?
-        },
-        FieldKind::Enum(ty_tokens) => quote! {
-            serde_json::from_value::<#ty_tokens>(serde_json::Value::String(value_str.to_string()))
-                .or_else(|_| serde_json::from_str::<#ty_tokens>(value_str))
-                .map_err(|_| anyhow::anyhow!(
-                    "Invalid value '{}' — expected one of: {}",
-                    value_str,
-                    crate::config::enum_variants::<#ty_tokens>()
-                ))?
-        },
-        FieldKind::Skip => unreachable!(),
-    };
-
-    if !is_option {
-        return quote! {
-            self.#field_ident = #parse_expr;
-            Ok(())
-        };
-    }
-
-    // Option<T>: empty → None, otherwise Some(parse)
-    quote! {
-        if value_str.is_empty() {
-            self.#field_ident = None;
-        } else {
-            self.#field_ident = Some(#parse_expr);
-        }
-        Ok(())
-    }
 }
 
 fn derive_category(prefix: &str) -> String {
@@ -814,75 +643,6 @@ mod tests {
         assert_eq!(derive_category("transcription"), "Transcription");
         assert_eq!(derive_category("transcription.openai"), "Transcription");
         assert_eq!(derive_category(""), "Core");
-    }
-
-    #[test]
-    fn classify_string_types() {
-        let ty: syn::Type = parse_quote! { String };
-        assert!(matches!(classify_field_type(&ty), FieldKind::String));
-
-        let ty: syn::Type = parse_quote! { Option<String> };
-        assert!(matches!(classify_field_type(&ty), FieldKind::String));
-        assert!(is_option_type(&ty));
-    }
-
-    #[test]
-    fn classify_bool_types() {
-        let ty: syn::Type = parse_quote! { bool };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Bool));
-
-        let ty: syn::Type = parse_quote! { Option<bool> };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Bool));
-        assert!(is_option_type(&ty));
-    }
-
-    #[test]
-    fn classify_integer_types() {
-        for type_name in &[
-            "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize",
-        ] {
-            let ty: syn::Type = syn::parse_str(type_name).unwrap();
-            match classify_field_type(&ty) {
-                FieldKind::Integer(ident) => assert_eq!(ident.to_string(), *type_name),
-                other => panic!("Expected Integer for {}, got {:?}", type_name, other),
-            }
-        }
-
-        let ty: syn::Type = parse_quote! { Option<u64> };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Integer(_)));
-        assert!(is_option_type(&ty));
-    }
-
-    #[test]
-    fn classify_float_types() {
-        let ty: syn::Type = parse_quote! { f64 };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Float));
-
-        let ty: syn::Type = parse_quote! { Option<f64> };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Float));
-        assert!(is_option_type(&ty));
-    }
-
-    #[test]
-    fn classify_skip_types() {
-        let ty: syn::Type = parse_quote! { Vec<String> };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Skip));
-
-        let ty: syn::Type = parse_quote! { HashMap<String, String> };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Skip));
-
-        let ty: syn::Type = parse_quote! { PathBuf };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Skip));
-    }
-
-    #[test]
-    fn classify_enum_types() {
-        let ty: syn::Type = parse_quote! { StreamMode };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Enum(_)));
-
-        // Unknown struct/enum types go to Enum
-        let ty: syn::Type = parse_quote! { SomeCustomType };
-        assert!(matches!(classify_field_type(&ty), FieldKind::Enum(_)));
     }
 
     #[test]
