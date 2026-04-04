@@ -23,9 +23,11 @@ pub mod tls;
 pub mod ws;
 
 use crate::channels::{
-    Channel, GmailPushChannel, LinqChannel, NextcloudTalkChannel, SendMessage, WatiChannel,
+    Channel, LinqChannel, NextcloudTalkChannel, SendMessage, WatiChannel,
     WhatsAppChannel, session_backend::SessionBackend, session_sqlite::SqliteSessionBackend,
 };
+#[cfg(feature = "channel-email")]
+use crate::channels::GmailPushChannel;
 use crate::config::Config;
 use crate::cost::CostTracker;
 use crate::memory::{self, Memory, MemoryCategory};
@@ -345,6 +347,7 @@ pub struct AppState {
     pub nextcloud_talk_webhook_secret: Option<Arc<str>>,
     pub wati: Option<Arc<WatiChannel>>,
     /// Gmail Pub/Sub push notification channel
+    #[cfg(feature = "channel-email")]
     pub gmail_push: Option<Arc<GmailPushChannel>>,
     /// Observability backend for metrics scraping
     pub observer: Arc<dyn crate::observability::Observer>,
@@ -673,6 +676,7 @@ pub async fn run_gateway(
             .map(Arc::from);
 
     // Gmail Push channel (if configured and enabled)
+    #[cfg(feature = "channel-email")]
     let gmail_push_channel: Option<Arc<GmailPushChannel>> = config
         .channels_config
         .gmail_push
@@ -853,6 +857,7 @@ pub async fn run_gateway(
         nextcloud_talk: nextcloud_talk_channel,
         nextcloud_talk_webhook_secret,
         wati: wati_channel,
+        #[cfg(feature = "channel-email")]
         gmail_push: gmail_push_channel,
         observer: broadcast_observer,
         tools_registry,
@@ -915,8 +920,12 @@ pub async fn run_gateway(
         .route("/linq", post(handle_linq_webhook))
         .route("/wati", get(handle_wati_verify))
         .route("/wati", post(handle_wati_webhook))
-        .route("/nextcloud-talk", post(handle_nextcloud_talk_webhook))
-        .route("/webhook/gmail", post(handle_gmail_push_webhook))
+        .route("/nextcloud-talk", post(handle_nextcloud_talk_webhook));
+
+    #[cfg(feature = "channel-email")]
+    let inner = inner.route("/webhook/gmail", post(handle_gmail_push_webhook));
+
+    let inner = inner
         // ── Claude Code runner hooks ──
         .route("/hooks/claude-code", post(api::handle_claude_code_hook))
         // ── Web Dashboard API routes ──
@@ -2061,9 +2070,11 @@ async fn handle_nextcloud_talk_webhook(
 
 /// Maximum request body size for the Gmail webhook endpoint (1 MB).
 /// Google Pub/Sub messages are typically under 10 KB.
+#[cfg(feature = "channel-email")]
 const GMAIL_WEBHOOK_MAX_BODY: usize = 1024 * 1024;
 
 /// POST /webhook/gmail — incoming Gmail Pub/Sub push notification
+#[cfg(feature = "channel-email")]
 async fn handle_gmail_push_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2344,6 +2355,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -2415,6 +2427,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer,
             tools_registry: Arc::new(Vec::new()),
@@ -2810,6 +2823,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -2889,6 +2903,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -2980,6 +2995,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -3043,6 +3059,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -3111,6 +3128,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -3184,6 +3202,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -3254,6 +3273,7 @@ mod tests {
             nextcloud_talk: Some(channel),
             nextcloud_talk_webhook_secret: Some(Arc::from(secret)),
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),

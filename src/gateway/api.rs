@@ -1638,6 +1638,7 @@ mod tests {
             nextcloud_talk: None,
             nextcloud_talk_webhook_secret: None,
             wati: None,
+            #[cfg(feature = "channel-email")]
             gmail_push: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
@@ -1696,7 +1697,7 @@ mod tests {
             port: None,
             proxy_url: None,
         });
-        cfg.channels_config.email = Some(crate::channels::email_channel::EmailConfig {
+        cfg.channels_config.email = Some(crate::config::schema::EmailConfig {
             imap_host: "imap.example.com".to_string(),
             imap_port: 993,
             imap_folder: "INBOX".to_string(),
@@ -1833,7 +1834,7 @@ mod tests {
             port: None,
             proxy_url: None,
         });
-        current.channels_config.email = Some(crate::channels::email_channel::EmailConfig {
+        current.channels_config.email = Some(crate::config::schema::EmailConfig {
             imap_host: "imap.example.com".to_string(),
             imap_port: 993,
             imap_folder: "INBOX".to_string(),

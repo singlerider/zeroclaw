@@ -6125,9 +6125,9 @@ pub struct ChannelsConfig {
     /// Nextcloud Talk bot channel configuration.
     pub nextcloud_talk: Option<NextcloudTalkConfig>,
     /// Email channel configuration.
-    pub email: Option<crate::channels::email_channel::EmailConfig>,
+    pub email: Option<EmailConfig>,
     /// Gmail Pub/Sub push notification channel configuration.
-    pub gmail_push: Option<crate::channels::gmail_push::GmailPushConfig>,
+    pub gmail_push: Option<GmailPushConfig>,
     /// IRC channel configuration.
     pub irc: Option<IrcConfig>,
     /// Lark channel configuration.
@@ -7097,6 +7097,141 @@ fn default_mqtt_qos() -> u8 {
 
 fn default_mqtt_keep_alive_secs() -> u64 {
     30
+}
+
+/// Email channel configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EmailConfig {
+    /// IMAP server hostname
+    pub imap_host: String,
+    /// IMAP server port (default: 993 for TLS)
+    #[serde(default = "default_imap_port")]
+    pub imap_port: u16,
+    /// IMAP folder to poll (default: INBOX)
+    #[serde(default = "default_imap_folder")]
+    pub imap_folder: String,
+    /// SMTP server hostname
+    pub smtp_host: String,
+    /// SMTP server port (default: 465 for TLS)
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    /// Use TLS for SMTP (default: true)
+    #[serde(default = "default_email_tls")]
+    pub smtp_tls: bool,
+    /// Email username for authentication
+    pub username: String,
+    /// Email password for authentication
+    pub password: String,
+    /// From address for outgoing emails
+    pub from_address: String,
+    /// IDLE timeout in seconds before re-establishing connection (default: 1740 = 29 minutes)
+    /// RFC 2177 recommends clients restart IDLE every 29 minutes
+    #[serde(default = "default_idle_timeout", alias = "poll_interval_secs")]
+    pub idle_timeout_secs: u64,
+    /// Allowed sender addresses/domains (empty = deny all, ["*"] = allow all)
+    #[serde(default)]
+    pub allowed_senders: Vec<String>,
+    /// Default subject line for outgoing emails (default: "ZeroClaw Message")
+    #[serde(default = "default_email_subject")]
+    pub default_subject: String,
+    /// Maximum total attachment size in bytes (default: 25 MB).
+    /// Attachments exceeding this limit are dropped with a warning.
+    #[serde(default = "default_max_attachment_bytes")]
+    pub max_attachment_bytes: usize,
+}
+
+impl ChannelConfig for EmailConfig {
+    fn name() -> &'static str {
+        "Email"
+    }
+    fn desc() -> &'static str {
+        "Email over IMAP/SMTP"
+    }
+}
+
+impl Default for EmailConfig {
+    fn default() -> Self {
+        Self {
+            imap_host: String::new(),
+            imap_port: default_imap_port(),
+            imap_folder: default_imap_folder(),
+            smtp_host: String::new(),
+            smtp_port: default_smtp_port(),
+            smtp_tls: true,
+            username: String::new(),
+            password: String::new(),
+            from_address: String::new(),
+            idle_timeout_secs: default_idle_timeout(),
+            allowed_senders: Vec::new(),
+            default_subject: default_email_subject(),
+            max_attachment_bytes: default_max_attachment_bytes(),
+        }
+    }
+}
+
+fn default_imap_port() -> u16 {
+    993
+}
+fn default_smtp_port() -> u16 {
+    465
+}
+fn default_imap_folder() -> String {
+    "INBOX".into()
+}
+fn default_idle_timeout() -> u64 {
+    1740 // 29 minutes per RFC 2177
+}
+fn default_email_tls() -> bool {
+    true
+}
+fn default_email_subject() -> String {
+    "ZeroClaw Message".into()
+}
+fn default_max_attachment_bytes() -> usize {
+    25 * 1024 * 1024
+}
+
+/// Gmail Pub/Sub push notification channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GmailPushConfig {
+    /// Enable the Gmail push channel. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Google Cloud Pub/Sub topic in the form `projects/<project>/topics/<topic>`.
+    pub topic: String,
+    /// Gmail labels to watch. Default: `["INBOX"]`.
+    #[serde(default = "default_gmail_label_filter")]
+    pub label_filter: Vec<String>,
+    /// OAuth2 access token for the Gmail API.
+    /// Falls back to `GMAIL_PUSH_OAUTH_TOKEN` env var.
+    #[serde(default)]
+    pub oauth_token: String,
+    /// Allowed sender addresses/domains. Empty = deny all, `["*"]` = allow all.
+    #[serde(default)]
+    pub allowed_senders: Vec<String>,
+    /// Webhook URL that Google Pub/Sub should POST to.
+    /// Usually `https://<your-domain>/webhook/gmail`.
+    /// If empty, watch registration is skipped (useful when using external subscription management).
+    #[serde(default)]
+    pub webhook_url: String,
+    /// Shared secret for webhook authentication. If set, incoming webhook
+    /// requests must include `Authorization: Bearer <secret>`.
+    /// Falls back to `GMAIL_PUSH_WEBHOOK_SECRET` env var.
+    #[serde(default)]
+    pub webhook_secret: String,
+}
+
+impl ChannelConfig for GmailPushConfig {
+    fn name() -> &'static str {
+        "Gmail Push"
+    }
+    fn desc() -> &'static str {
+        "Gmail Pub/Sub push notifications"
+    }
+}
+
+fn default_gmail_label_filter() -> Vec<String> {
+    vec!["INBOX".into()]
 }
 
 /// IRC channel configuration.

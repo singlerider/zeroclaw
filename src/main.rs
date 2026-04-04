@@ -110,6 +110,7 @@ mod skills;
 mod sop;
 mod tools;
 mod trust;
+#[cfg(feature = "tui-onboarding")]
 mod tui;
 mod tunnel;
 mod util;
@@ -956,8 +957,15 @@ async fn main() -> Result<()> {
 
         // TUI onboarding mode (ratatui-based)
         if use_tui {
-            Box::pin(tui::run_tui_onboarding()).await?;
-            return Ok(());
+            #[cfg(feature = "tui-onboarding")]
+            {
+                Box::pin(tui::run_tui_onboarding()).await?;
+                return Ok(());
+            }
+            #[cfg(not(feature = "tui-onboarding"))]
+            {
+                anyhow::bail!("TUI onboarding requires the `tui-onboarding` feature. Rebuild with: cargo build --features tui-onboarding");
+            }
         }
 
         let config = if channels_only {

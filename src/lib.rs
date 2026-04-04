@@ -75,6 +75,7 @@ pub(crate) mod skills;
 pub mod sop;
 pub mod tools;
 pub(crate) mod trust;
+#[cfg(feature = "tui-onboarding")]
 pub mod tui;
 pub(crate) mod tunnel;
 pub(crate) mod util;

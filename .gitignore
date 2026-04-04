@@ -58,3 +58,6 @@ playground/
 
 # Temporary rustc output
 rust_out
+
+# Tauri auto-generated schemas
+apps/tauri/gen/

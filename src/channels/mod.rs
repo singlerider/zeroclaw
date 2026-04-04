@@ -22,7 +22,9 @@ pub mod debounce;
 pub mod dingtalk;
 pub mod discord;
 pub mod discord_history;
+#[cfg(feature = "channel-email")]
 pub mod email_channel;
+#[cfg(feature = "channel-email")]
 pub mod gmail_push;
 pub mod imessage;
 pub mod irc;
@@ -35,6 +37,7 @@ pub mod matrix;
 pub mod mattermost;
 pub mod media_pipeline;
 pub mod mochat;
+#[cfg(feature = "channel-mqtt")]
 pub mod mqtt;
 pub mod nextcloud_talk;
 #[cfg(feature = "channel-nostr")]
@@ -48,6 +51,7 @@ pub mod session_store;
 pub mod signal;
 pub mod slack;
 pub mod stall_watchdog;
+#[cfg(feature = "channel-telegram")]
 pub mod telegram;
 pub mod traits;
 pub mod transcription;
@@ -71,7 +75,9 @@ pub use cli::CliChannel;
 pub use dingtalk::DingTalkChannel;
 pub use discord::DiscordChannel;
 pub use discord_history::DiscordHistoryChannel;
+#[cfg(feature = "channel-email")]
 pub use email_channel::EmailChannel;
+#[cfg(feature = "channel-email")]
 pub use gmail_push::GmailPushChannel;
 pub use imessage::IMessageChannel;
 pub use irc::IrcChannel;
@@ -90,6 +96,7 @@ pub use qq::QQChannel;
 pub use reddit::RedditChannel;
 pub use signal::SignalChannel;
 pub use slack::SlackChannel;
+#[cfg(feature = "channel-telegram")]
 pub use telegram::TelegramChannel;
 pub use traits::{Channel, SendMessage};
 #[allow(unused_imports)]
@@ -4310,26 +4317,33 @@ pub(crate) async fn handle_command(command: crate::ChannelCommands, config: &Con
 fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Channel>> {
     match channel_id {
         "telegram" => {
-            let tg = config
-                .channels_config
-                .telegram
-                .as_ref()
-                .context("Telegram channel is not configured")?;
-            let ack = tg
-                .ack_reactions
-                .unwrap_or(config.channels_config.ack_reactions);
-            Ok(Arc::new(
-                TelegramChannel::new(
-                    tg.bot_token.clone(),
-                    tg.allowed_users.clone(),
-                    tg.mention_only,
-                )
-                .with_ack_reactions(ack)
-                .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
-                .with_transcription(config.transcription.clone())
-                .with_tts(config.tts.clone())
-                .with_workspace_dir(config.workspace_dir.clone()),
-            ))
+            #[cfg(feature = "channel-telegram")]
+            {
+                let tg = config
+                    .channels_config
+                    .telegram
+                    .as_ref()
+                    .context("Telegram channel is not configured")?;
+                let ack = tg
+                    .ack_reactions
+                    .unwrap_or(config.channels_config.ack_reactions);
+                Ok(Arc::new(
+                    TelegramChannel::new(
+                        tg.bot_token.clone(),
+                        tg.allowed_users.clone(),
+                        tg.mention_only,
+                    )
+                    .with_ack_reactions(ack)
+                    .with_streaming(tg.stream_mode, tg.draft_update_interval_ms)
+                    .with_transcription(config.transcription.clone())
+                    .with_tts(config.tts.clone())
+                    .with_workspace_dir(config.workspace_dir.clone()),
+                ))
+            }
+            #[cfg(not(feature = "channel-telegram"))]
+            {
+                anyhow::bail!("Telegram channel requires the `channel-telegram` feature");
+            }
         }
         "discord" => {
             let dc = config
@@ -4519,6 +4533,7 @@ fn collect_configured_channels(
     let _ = matrix_skip_context;
     let mut channels = Vec::new();
 
+    #[cfg(feature = "channel-telegram")]
     if let Some(ref tg) = config.channels_config.telegram {
         let ack = tg
             .ack_reactions
@@ -4539,6 +4554,13 @@ fn collect_configured_channels(
                 .with_proxy_url(tg.proxy_url.clone()),
             ),
         });
+    }
+
+    #[cfg(not(feature = "channel-telegram"))]
+    if config.channels_config.telegram.is_some() {
+        tracing::warn!(
+            "Telegram channel is configured but this build was compiled without `channel-telegram`; skipping."
+        );
     }
 
     if let Some(ref dc) = config.channels_config.discord {
@@ -4805,6 +4827,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-email")]
     if let Some(ref email_cfg) = config.channels_config.email {
         channels.push(ConfiguredChannel {
             display_name: "Email",
@@ -4812,6 +4835,14 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(not(feature = "channel-email"))]
+    if config.channels_config.email.is_some() {
+        tracing::warn!(
+            "Email channel is configured but this build was compiled without `channel-email`; skipping."
+        );
+    }
+
+    #[cfg(feature = "channel-email")]
     if let Some(ref gp_cfg) = config.channels_config.gmail_push {
         if gp_cfg.enabled {
             channels.push(ConfiguredChannel {
@@ -4819,6 +4850,13 @@ fn collect_configured_channels(
                 channel: Arc::new(GmailPushChannel::new(gp_cfg.clone())),
             });
         }
+    }
+
+    #[cfg(not(feature = "channel-email"))]
+    if config.channels_config.gmail_push.as_ref().is_some_and(|gp| gp.enabled) {
+        tracing::warn!(
+            "Gmail Push channel is configured but this build was compiled without `channel-email`; skipping."
+        );
     }
 
     if let Some(ref irc) = config.channels_config.irc {
@@ -11349,6 +11387,7 @@ This is an example JSON object for profile settings."#;
     }
 
     #[test]
+    #[cfg(feature = "channel-telegram")]
     fn build_channel_by_id_unconfigured_telegram_returns_error() {
         let config = Config::default();
         match build_channel_by_id(&config, "telegram") {
@@ -11364,6 +11403,7 @@ This is an example JSON object for profile settings."#;
     }
 
     #[test]
+    #[cfg(feature = "channel-telegram")]
     fn build_channel_by_id_configured_telegram_succeeds() {
         let mut config = Config::default();
         config.channels_config.telegram = Some(crate::config::schema::TelegramConfig {

@@ -4,8 +4,10 @@ use crate::channels::MatrixChannel;
 use crate::channels::WhatsAppWebChannel;
 use crate::channels::{
     Channel, DiscordChannel, MattermostChannel, QQChannel, SendMessage, SignalChannel,
-    SlackChannel, TelegramChannel,
+    SlackChannel,
 };
+#[cfg(feature = "channel-telegram")]
+use crate::channels::TelegramChannel;
 use crate::config::Config;
 use crate::config::schema::{CronJobDecl, CronScheduleDecl};
 use crate::cron::{
@@ -499,19 +501,26 @@ pub(crate) async fn deliver_announcement(
 
     match channel.to_ascii_lowercase().as_str() {
         "telegram" => {
-            let tg = config
-                .channels_config
-                .telegram
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("telegram channel not configured"))?;
-            let channel = TelegramChannel::new(
-                tg.bot_token.clone(),
-                tg.allowed_users.clone(),
-                tg.mention_only,
-            );
-            channel
-                .send(&SendMessage::new(safe_output.as_str(), target))
-                .await?;
+            #[cfg(feature = "channel-telegram")]
+            {
+                let tg = config
+                    .channels_config
+                    .telegram
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("telegram channel not configured"))?;
+                let channel = TelegramChannel::new(
+                    tg.bot_token.clone(),
+                    tg.allowed_users.clone(),
+                    tg.mention_only,
+                );
+                channel
+                    .send(&SendMessage::new(safe_output.as_str(), target))
+                    .await?;
+            }
+            #[cfg(not(feature = "channel-telegram"))]
+            {
+                anyhow::bail!("Telegram channel requires the `channel-telegram` feature");
+            }
         }
         "discord" => {
             let dc = config

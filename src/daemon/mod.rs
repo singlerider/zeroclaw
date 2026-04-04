@@ -104,6 +104,7 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
     }
 
     // Wire up MQTT SOP listener if configured
+    #[cfg(feature = "channel-mqtt")]
     if let Some(ref mqtt_config) = config.channels_config.mqtt {
         let mqtt_cfg = mqtt_config.clone();
         handles.push(spawn_component_supervisor(
@@ -116,6 +117,16 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
             },
         ));
     } else {
+        crate::health::mark_component_ok("mqtt");
+    }
+
+    #[cfg(not(feature = "channel-mqtt"))]
+    {
+        if config.channels_config.mqtt.is_some() {
+            tracing::warn!(
+                "MQTT is configured but this build was compiled without `channel-mqtt`; skipping."
+            );
+        }
         crate::health::mark_component_ok("mqtt");
     }
 
@@ -890,6 +901,7 @@ fn has_supervised_channels(config: &Config) -> bool {
         .any(|(_, ok)| *ok)
 }
 
+#[cfg(feature = "channel-mqtt")]
 async fn run_mqtt_sop_listener(config: &crate::config::MqttConfig) -> Result<()> {
     use crate::config::SopConfig;
     use crate::memory::NoneMemory;
