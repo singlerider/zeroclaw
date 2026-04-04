@@ -240,11 +240,45 @@ landlock = { version = "0.4", optional = true }
 libc = "0.2"
 
 [features]
-default = ["observability-prometheus", "skill-creation", "channel-email", "channel-mqtt", "channel-telegram", "tui-onboarding"]
-# Channels (optional)
+default = [
+    "observability-prometheus", "skill-creation", "tui-onboarding",
+    # Channels included by default
+    "channel-email", "channel-mqtt", "channel-telegram",
+    "channel-discord", "channel-slack", "channel-signal",
+    "channel-mattermost", "channel-irc", "channel-imessage",
+    "channel-dingtalk", "channel-qq", "channel-bluesky",
+    "channel-twitter", "channel-reddit", "channel-notion",
+    "channel-linq", "channel-wati", "channel-nextcloud",
+    "channel-mochat", "channel-wecom", "channel-clawdtalk",
+    "channel-webhook", "channel-acp-server", "channel-whatsapp-cloud",
+    "channel-voice-call",
+]
+# Channels (optional — each can be disabled independently)
 channel-email = ["dep:lettre", "dep:mail-parser", "dep:async-imap"]
 channel-mqtt = ["dep:rumqttc"]
 channel-telegram = ["dep:image"]
+channel-discord = []
+channel-slack = []
+channel-signal = []
+channel-mattermost = []
+channel-irc = []
+channel-imessage = []
+channel-dingtalk = []
+channel-qq = []
+channel-bluesky = []
+channel-twitter = []
+channel-reddit = []
+channel-notion = []
+channel-linq = []
+channel-wati = []
+channel-nextcloud = []
+channel-mochat = []
+channel-wecom = []
+channel-clawdtalk = []
+channel-webhook = []
+channel-acp-server = []
+channel-whatsapp-cloud = []
+channel-voice-call = []
 channel-nostr = ["dep:nostr-sdk"]
 hardware = ["nusb", "tokio-serial"]
 channel-matrix = ["dep:matrix-sdk"]
@@ -286,6 +320,28 @@ ci-all = [
     "channel-email",
     "channel-mqtt",
     "channel-telegram",
+    "channel-discord",
+    "channel-slack",
+    "channel-signal",
+    "channel-mattermost",
+    "channel-irc",
+    "channel-imessage",
+    "channel-dingtalk",
+    "channel-qq",
+    "channel-bluesky",
+    "channel-twitter",
+    "channel-reddit",
+    "channel-notion",
+    "channel-linq",
+    "channel-wati",
+    "channel-nextcloud",
+    "channel-mochat",
+    "channel-wecom",
+    "channel-clawdtalk",
+    "channel-webhook",
+    "channel-acp-server",
+    "channel-whatsapp-cloud",
+    "channel-voice-call",
     "channel-nostr",
     "hardware",
     "channel-matrix",

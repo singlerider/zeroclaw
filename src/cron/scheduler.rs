@@ -2,10 +2,17 @@
 use crate::channels::MatrixChannel;
 #[cfg(feature = "whatsapp-web")]
 use crate::channels::WhatsAppWebChannel;
-use crate::channels::{
-    Channel, DiscordChannel, MattermostChannel, QQChannel, SendMessage, SignalChannel,
-    SlackChannel,
-};
+use crate::channels::{Channel, SendMessage};
+#[cfg(feature = "channel-discord")]
+use crate::channels::DiscordChannel;
+#[cfg(feature = "channel-mattermost")]
+use crate::channels::MattermostChannel;
+#[cfg(feature = "channel-qq")]
+use crate::channels::QQChannel;
+#[cfg(feature = "channel-signal")]
+use crate::channels::SignalChannel;
+#[cfg(feature = "channel-slack")]
+use crate::channels::SlackChannel;
 #[cfg(feature = "channel-telegram")]
 use crate::channels::TelegramChannel;
 use crate::config::Config;
@@ -523,75 +530,95 @@ pub(crate) async fn deliver_announcement(
             }
         }
         "discord" => {
-            let dc = config
-                .channels_config
-                .discord
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("discord channel not configured"))?;
-            let channel = DiscordChannel::new(
-                dc.bot_token.clone(),
-                dc.guild_id.clone(),
-                dc.allowed_users.clone(),
-                dc.listen_to_bots,
-                dc.mention_only,
-            );
-            channel
-                .send(&SendMessage::new(safe_output.as_str(), target))
-                .await?;
+            #[cfg(feature = "channel-discord")]
+            {
+                let dc = config
+                    .channels_config
+                    .discord
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("discord channel not configured"))?;
+                let channel = DiscordChannel::new(
+                    dc.bot_token.clone(),
+                    dc.guild_id.clone(),
+                    dc.allowed_users.clone(),
+                    dc.listen_to_bots,
+                    dc.mention_only,
+                );
+                channel
+                    .send(&SendMessage::new(safe_output.as_str(), target))
+                    .await?;
+            }
+            #[cfg(not(feature = "channel-discord"))]
+            anyhow::bail!("Discord delivery requires the `channel-discord` feature");
         }
         "slack" => {
-            let sl = config
-                .channels_config
-                .slack
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("slack channel not configured"))?;
-            let channel = SlackChannel::new(
-                sl.bot_token.clone(),
-                sl.app_token.clone(),
-                sl.channel_id.clone(),
-                Vec::new(),
-                sl.allowed_users.clone(),
-            )
-            .with_workspace_dir(config.workspace_dir.clone());
-            channel
-                .send(&SendMessage::new(safe_output.as_str(), target))
-                .await?;
+            #[cfg(feature = "channel-slack")]
+            {
+                let sl = config
+                    .channels_config
+                    .slack
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("slack channel not configured"))?;
+                let channel = SlackChannel::new(
+                    sl.bot_token.clone(),
+                    sl.app_token.clone(),
+                    sl.channel_id.clone(),
+                    Vec::new(),
+                    sl.allowed_users.clone(),
+                )
+                .with_workspace_dir(config.workspace_dir.clone());
+                channel
+                    .send(&SendMessage::new(safe_output.as_str(), target))
+                    .await?;
+            }
+            #[cfg(not(feature = "channel-slack"))]
+            anyhow::bail!("Slack delivery requires the `channel-slack` feature");
         }
         "mattermost" => {
-            let mm = config
-                .channels_config
-                .mattermost
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("mattermost channel not configured"))?;
-            let channel = MattermostChannel::new(
-                mm.url.clone(),
-                mm.bot_token.clone(),
-                mm.channel_id.clone(),
-                mm.allowed_users.clone(),
-                mm.thread_replies.unwrap_or(true),
-                mm.mention_only.unwrap_or(false),
-            );
-            channel
-                .send(&SendMessage::new(safe_output.as_str(), target))
-                .await?;
+            #[cfg(feature = "channel-mattermost")]
+            {
+                let mm = config
+                    .channels_config
+                    .mattermost
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("mattermost channel not configured"))?;
+                let channel = MattermostChannel::new(
+                    mm.url.clone(),
+                    mm.bot_token.clone(),
+                    mm.channel_id.clone(),
+                    mm.allowed_users.clone(),
+                    mm.thread_replies.unwrap_or(true),
+                    mm.mention_only.unwrap_or(false),
+                );
+                channel
+                    .send(&SendMessage::new(safe_output.as_str(), target))
+                    .await?;
+            }
+            #[cfg(not(feature = "channel-mattermost"))]
+            anyhow::bail!("Mattermost delivery requires the `channel-mattermost` feature");
         }
         "signal" => {
-            let sg = config
-                .channels_config
-                .signal
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("signal channel not configured"))?;
-            let channel = SignalChannel::new(
-                sg.http_url.clone(),
-                sg.account.clone(),
-                sg.group_id.clone(),
-                sg.allowed_from.clone(),
-                sg.ignore_attachments,
-                sg.ignore_stories,
-            );
-            channel
-                .send(&SendMessage::new(safe_output.as_str(), target))
-                .await?;
+            #[cfg(feature = "channel-signal")]
+            {
+                let sg = config
+                    .channels_config
+                    .signal
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("signal channel not configured"))?;
+                let channel = SignalChannel::new(
+                    sg.http_url.clone(),
+                    sg.account.clone(),
+                    sg.group_id.clone(),
+                    sg.allowed_from.clone(),
+                    sg.ignore_attachments,
+                    sg.ignore_stories,
+                );
+                channel
+                    .send(&SendMessage::new(safe_output.as_str(), target))
+                    .await?;
+            }
+            #[cfg(not(feature = "channel-signal"))]
+            anyhow::bail!("Signal delivery requires the `channel-signal` feature");
         }
         "matrix" => {
             #[cfg(feature = "channel-matrix")]
@@ -654,19 +681,24 @@ pub(crate) async fn deliver_announcement(
             }
         }
         "qq" => {
-            let qq = config
-                .channels_config
-                .qq
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("qq channel not configured"))?;
-            let channel = QQChannel::new(
-                qq.app_id.clone(),
-                qq.app_secret.clone(),
-                qq.allowed_users.clone(),
-            );
-            channel
-                .send(&SendMessage::new(safe_output.as_str(), target))
-                .await?;
+            #[cfg(feature = "channel-qq")]
+            {
+                let qq = config
+                    .channels_config
+                    .qq
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("qq channel not configured"))?;
+                let channel = QQChannel::new(
+                    qq.app_id.clone(),
+                    qq.app_secret.clone(),
+                    qq.allowed_users.clone(),
+                );
+                channel
+                    .send(&SendMessage::new(safe_output.as_str(), target))
+                    .await?;
+            }
+            #[cfg(not(feature = "channel-qq"))]
+            anyhow::bail!("QQ delivery requires the `channel-qq` feature");
         }
         other => anyhow::bail!("unsupported delivery channel: {other}"),
     }

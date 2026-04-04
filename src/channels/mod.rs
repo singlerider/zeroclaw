@@ -14,100 +14,152 @@
 //! To add a new channel, implement [`Channel`] in a new submodule and wire it into
 //! [`start_channels`]. See `AGENTS.md` §7.2 for the full change playbook.
 
-pub mod acp_server;
-pub mod bluesky;
-pub mod clawdtalk;
+// Always-compiled infrastructure
 pub mod cli;
 pub mod debounce;
+pub mod link_enricher;
+pub mod media_pipeline;
+pub mod session_backend;
+pub mod session_sqlite;
+pub mod session_store;
+pub mod stall_watchdog;
+pub mod traits;
+pub mod transcription;
+pub mod tts;
+
+// Feature-gated channels
+#[cfg(feature = "channel-acp-server")]
+pub mod acp_server;
+#[cfg(feature = "channel-bluesky")]
+pub mod bluesky;
+#[cfg(feature = "channel-clawdtalk")]
+pub mod clawdtalk;
+#[cfg(feature = "channel-dingtalk")]
 pub mod dingtalk;
+#[cfg(feature = "channel-discord")]
 pub mod discord;
+#[cfg(feature = "channel-discord")]
 pub mod discord_history;
 #[cfg(feature = "channel-email")]
 pub mod email_channel;
 #[cfg(feature = "channel-email")]
 pub mod gmail_push;
+#[cfg(feature = "channel-imessage")]
 pub mod imessage;
+#[cfg(feature = "channel-irc")]
 pub mod irc;
 #[cfg(feature = "channel-lark")]
 pub mod lark;
-pub mod link_enricher;
+#[cfg(feature = "channel-linq")]
 pub mod linq;
 #[cfg(feature = "channel-matrix")]
 pub mod matrix;
+#[cfg(feature = "channel-mattermost")]
 pub mod mattermost;
-pub mod media_pipeline;
+#[cfg(feature = "channel-mochat")]
 pub mod mochat;
 #[cfg(feature = "channel-mqtt")]
 pub mod mqtt;
+#[cfg(feature = "channel-nextcloud")]
 pub mod nextcloud_talk;
 #[cfg(feature = "channel-nostr")]
 pub mod nostr;
+#[cfg(feature = "channel-notion")]
 pub mod notion;
+#[cfg(feature = "channel-qq")]
 pub mod qq;
+#[cfg(feature = "channel-reddit")]
 pub mod reddit;
-pub mod session_backend;
-pub mod session_sqlite;
-pub mod session_store;
+#[cfg(feature = "channel-signal")]
 pub mod signal;
+#[cfg(feature = "channel-slack")]
 pub mod slack;
-pub mod stall_watchdog;
 #[cfg(feature = "channel-telegram")]
 pub mod telegram;
-pub mod traits;
-pub mod transcription;
-pub mod tts;
+#[cfg(feature = "channel-twitter")]
 pub mod twitter;
+#[cfg(feature = "channel-voice-call")]
 pub mod voice_call;
 #[cfg(feature = "voice-wake")]
 pub mod voice_wake;
+#[cfg(feature = "channel-wati")]
 pub mod wati;
+#[cfg(feature = "channel-webhook")]
 pub mod webhook;
+#[cfg(feature = "channel-wecom")]
 pub mod wecom;
+#[cfg(feature = "channel-whatsapp-cloud")]
 pub mod whatsapp;
 #[cfg(feature = "whatsapp-web")]
 pub mod whatsapp_storage;
 #[cfg(feature = "whatsapp-web")]
 pub mod whatsapp_web;
 
-pub use bluesky::BlueskyChannel;
-pub use clawdtalk::{ClawdTalkChannel, ClawdTalkConfig};
+// Always-compiled re-exports
 pub use cli::CliChannel;
+pub use traits::{Channel, SendMessage};
+#[allow(unused_imports)]
+pub use tts::{TtsManager, TtsProvider};
+
+// Feature-gated re-exports
+#[cfg(feature = "channel-acp-server")]
+pub use acp_server::AcpServerChannel;
+#[cfg(feature = "channel-bluesky")]
+pub use bluesky::BlueskyChannel;
+#[cfg(feature = "channel-clawdtalk")]
+pub use clawdtalk::{ClawdTalkChannel, ClawdTalkConfig};
+#[cfg(feature = "channel-dingtalk")]
 pub use dingtalk::DingTalkChannel;
+#[cfg(feature = "channel-discord")]
 pub use discord::DiscordChannel;
+#[cfg(feature = "channel-discord")]
 pub use discord_history::DiscordHistoryChannel;
 #[cfg(feature = "channel-email")]
 pub use email_channel::EmailChannel;
 #[cfg(feature = "channel-email")]
 pub use gmail_push::GmailPushChannel;
+#[cfg(feature = "channel-imessage")]
 pub use imessage::IMessageChannel;
+#[cfg(feature = "channel-irc")]
 pub use irc::IrcChannel;
 #[cfg(feature = "channel-lark")]
 pub use lark::LarkChannel;
+#[cfg(feature = "channel-linq")]
 pub use linq::LinqChannel;
 #[cfg(feature = "channel-matrix")]
 pub use matrix::MatrixChannel;
+#[cfg(feature = "channel-mattermost")]
 pub use mattermost::MattermostChannel;
+#[cfg(feature = "channel-mochat")]
 pub use mochat::MochatChannel;
+#[cfg(feature = "channel-nextcloud")]
 pub use nextcloud_talk::NextcloudTalkChannel;
 #[cfg(feature = "channel-nostr")]
 pub use nostr::NostrChannel;
+#[cfg(feature = "channel-notion")]
 pub use notion::NotionChannel;
+#[cfg(feature = "channel-qq")]
 pub use qq::QQChannel;
+#[cfg(feature = "channel-reddit")]
 pub use reddit::RedditChannel;
+#[cfg(feature = "channel-signal")]
 pub use signal::SignalChannel;
+#[cfg(feature = "channel-slack")]
 pub use slack::SlackChannel;
 #[cfg(feature = "channel-telegram")]
 pub use telegram::TelegramChannel;
-pub use traits::{Channel, SendMessage};
-#[allow(unused_imports)]
-pub use tts::{TtsManager, TtsProvider};
+#[cfg(feature = "channel-twitter")]
 pub use twitter::TwitterChannel;
-#[allow(unused_imports)]
+#[cfg(feature = "channel-voice-call")]
 pub use voice_call::{VoiceCallChannel, VoiceCallConfig};
 #[cfg(feature = "voice-wake")]
 pub use voice_wake::VoiceWakeChannel;
+#[cfg(feature = "channel-wati")]
 pub use wati::WatiChannel;
+#[cfg(feature = "channel-webhook")]
 pub use webhook::WebhookChannel;
+#[cfg(feature = "channel-whatsapp-cloud")]
+pub use whatsapp::WhatsAppChannel;
 pub use wecom::WeComChannel;
 pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
@@ -4346,78 +4398,98 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
             }
         }
         "discord" => {
-            let dc = config
-                .channels_config
-                .discord
-                .as_ref()
-                .context("Discord channel is not configured")?;
-            Ok(Arc::new(
-                DiscordChannel::new(
-                    dc.bot_token.clone(),
-                    dc.guild_id.clone(),
-                    dc.allowed_users.clone(),
-                    dc.listen_to_bots,
-                    dc.mention_only,
-                )
-                .with_streaming(
-                    dc.stream_mode,
-                    dc.draft_update_interval_ms,
-                    dc.multi_message_delay_ms,
-                )
-                .with_transcription(config.transcription.clone())
-                .with_stall_timeout(dc.stall_timeout_secs),
-            ))
+            #[cfg(feature = "channel-discord")]
+            {
+                let dc = config
+                    .channels_config
+                    .discord
+                    .as_ref()
+                    .context("Discord channel is not configured")?;
+                Ok(Arc::new(
+                    DiscordChannel::new(
+                        dc.bot_token.clone(),
+                        dc.guild_id.clone(),
+                        dc.allowed_users.clone(),
+                        dc.listen_to_bots,
+                        dc.mention_only,
+                    )
+                    .with_streaming(
+                        dc.stream_mode,
+                        dc.draft_update_interval_ms,
+                        dc.multi_message_delay_ms,
+                    )
+                    .with_transcription(config.transcription.clone())
+                    .with_stall_timeout(dc.stall_timeout_secs),
+                ))
+            }
+            #[cfg(not(feature = "channel-discord"))]
+            anyhow::bail!("Discord channel requires the `channel-discord` feature")
         }
         "slack" => {
-            let sl = config
-                .channels_config
-                .slack
-                .as_ref()
-                .context("Slack channel is not configured")?;
-            Ok(Arc::new(
-                SlackChannel::new(
-                    sl.bot_token.clone(),
-                    sl.app_token.clone(),
-                    sl.channel_id.clone(),
-                    sl.channel_ids.clone(),
-                    sl.allowed_users.clone(),
-                )
-                .with_workspace_dir(config.workspace_dir.clone())
-                .with_markdown_blocks(sl.use_markdown_blocks)
-                .with_transcription(config.transcription.clone())
-                .with_streaming(sl.stream_drafts, sl.draft_update_interval_ms)
-                .with_cancel_reaction(sl.cancel_reaction.clone()),
-            ))
+            #[cfg(feature = "channel-slack")]
+            {
+                let sl = config
+                    .channels_config
+                    .slack
+                    .as_ref()
+                    .context("Slack channel is not configured")?;
+                Ok(Arc::new(
+                    SlackChannel::new(
+                        sl.bot_token.clone(),
+                        sl.app_token.clone(),
+                        sl.channel_id.clone(),
+                        sl.channel_ids.clone(),
+                        sl.allowed_users.clone(),
+                    )
+                    .with_workspace_dir(config.workspace_dir.clone())
+                    .with_markdown_blocks(sl.use_markdown_blocks)
+                    .with_transcription(config.transcription.clone())
+                    .with_streaming(sl.stream_drafts, sl.draft_update_interval_ms)
+                    .with_cancel_reaction(sl.cancel_reaction.clone()),
+                ))
+            }
+            #[cfg(not(feature = "channel-slack"))]
+            anyhow::bail!("Slack channel requires the `channel-slack` feature")
         }
         "mattermost" => {
-            let mm = config
-                .channels_config
-                .mattermost
-                .as_ref()
-                .context("Mattermost channel is not configured")?;
-            Ok(Arc::new(MattermostChannel::new(
-                mm.url.clone(),
-                mm.bot_token.clone(),
-                mm.channel_id.clone(),
-                mm.allowed_users.clone(),
-                mm.thread_replies.unwrap_or(true),
-                mm.mention_only.unwrap_or(false),
-            )))
+            #[cfg(feature = "channel-mattermost")]
+            {
+                let mm = config
+                    .channels_config
+                    .mattermost
+                    .as_ref()
+                    .context("Mattermost channel is not configured")?;
+                Ok(Arc::new(MattermostChannel::new(
+                    mm.url.clone(),
+                    mm.bot_token.clone(),
+                    mm.channel_id.clone(),
+                    mm.allowed_users.clone(),
+                    mm.thread_replies.unwrap_or(true),
+                    mm.mention_only.unwrap_or(false),
+                )))
+            }
+            #[cfg(not(feature = "channel-mattermost"))]
+            anyhow::bail!("Mattermost channel requires the `channel-mattermost` feature")
         }
         "signal" => {
-            let sg = config
-                .channels_config
-                .signal
-                .as_ref()
-                .context("Signal channel is not configured")?;
-            Ok(Arc::new(SignalChannel::new(
-                sg.http_url.clone(),
-                sg.account.clone(),
-                sg.group_id.clone(),
-                sg.allowed_from.clone(),
-                sg.ignore_attachments,
-                sg.ignore_stories,
-            )))
+            #[cfg(feature = "channel-signal")]
+            {
+                let sg = config
+                    .channels_config
+                    .signal
+                    .as_ref()
+                    .context("Signal channel is not configured")?;
+                Ok(Arc::new(SignalChannel::new(
+                    sg.http_url.clone(),
+                    sg.account.clone(),
+                    sg.group_id.clone(),
+                    sg.allowed_from.clone(),
+                    sg.ignore_attachments,
+                    sg.ignore_stories,
+                )))
+            }
+            #[cfg(not(feature = "channel-signal"))]
+            anyhow::bail!("Signal channel requires the `channel-signal` feature")
         }
         "matrix" => {
             #[cfg(feature = "channel-matrix")]
@@ -4470,16 +4542,21 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
             }
         }
         "qq" => {
-            let qq = config
-                .channels_config
-                .qq
-                .as_ref()
-                .context("QQ channel is not configured")?;
-            Ok(Arc::new(QQChannel::new(
-                qq.app_id.clone(),
-                qq.app_secret.clone(),
-                qq.allowed_users.clone(),
-            )))
+            #[cfg(feature = "channel-qq")]
+            {
+                let qq = config
+                    .channels_config
+                    .qq
+                    .as_ref()
+                    .context("QQ channel is not configured")?;
+                Ok(Arc::new(QQChannel::new(
+                    qq.app_id.clone(),
+                    qq.app_secret.clone(),
+                    qq.allowed_users.clone(),
+                )))
+            }
+            #[cfg(not(feature = "channel-qq"))]
+            anyhow::bail!("QQ channel requires the `channel-qq` feature")
         }
         other => anyhow::bail!(
             "Unknown channel '{other}'. Supported: telegram, discord, slack, mattermost, signal, matrix, whatsapp, qq"
@@ -4563,6 +4640,7 @@ fn collect_configured_channels(
         );
     }
 
+    #[cfg(feature = "channel-discord")]
     if let Some(ref dc) = config.channels_config.discord {
         channels.push(ConfiguredChannel {
             display_name: "Discord",
@@ -4586,6 +4664,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-discord")]
     if let Some(ref dh) = config.channels_config.discord_history {
         match crate::memory::SqliteMemory::new_named(&config.workspace_dir, "discord") {
             Ok(discord_mem) => {
@@ -4611,6 +4690,7 @@ fn collect_configured_channels(
         }
     }
 
+    #[cfg(feature = "channel-slack")]
     if let Some(ref sl) = config.channels_config.slack {
         channels.push(ConfiguredChannel {
             display_name: "Slack",
@@ -4634,6 +4714,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-mattermost")]
     if let Some(ref mm) = config.channels_config.mattermost {
         channels.push(ConfiguredChannel {
             display_name: "Mattermost",
@@ -4652,6 +4733,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-imessage")]
     if let Some(ref im) = config.channels_config.imessage {
         channels.push(ConfiguredChannel {
             display_name: "iMessage",
@@ -4693,6 +4775,7 @@ fn collect_configured_channels(
         );
     }
 
+    #[cfg(feature = "channel-signal")]
     if let Some(ref sig) = config.channels_config.signal {
         channels.push(ConfiguredChannel {
             display_name: "Signal",
@@ -4710,6 +4793,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-whatsapp-cloud")]
     if let Some(ref wa) = config.channels_config.whatsapp {
         if wa.is_ambiguous_config() {
             tracing::warn!(
@@ -4787,6 +4871,7 @@ fn collect_configured_channels(
         }
     }
 
+    #[cfg(feature = "channel-linq")]
     if let Some(ref lq) = config.channels_config.linq {
         channels.push(ConfiguredChannel {
             display_name: "Linq",
@@ -4798,6 +4883,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-wati")]
     if let Some(ref wati_cfg) = config.channels_config.wati {
         let wati_channel = WatiChannel::new_with_proxy(
             wati_cfg.api_token.clone(),
@@ -4814,6 +4900,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-nextcloud")]
     if let Some(ref nc) = config.channels_config.nextcloud_talk {
         channels.push(ConfiguredChannel {
             display_name: "Nextcloud Talk",
@@ -4859,6 +4946,7 @@ fn collect_configured_channels(
         );
     }
 
+    #[cfg(feature = "channel-irc")]
     if let Some(ref irc) = config.channels_config.irc {
         channels.push(ConfiguredChannel {
             display_name: "IRC",
@@ -4925,6 +5013,7 @@ fn collect_configured_channels(
         );
     }
 
+    #[cfg(feature = "channel-dingtalk")]
     if let Some(ref dt) = config.channels_config.dingtalk {
         channels.push(ConfiguredChannel {
             display_name: "DingTalk",
@@ -4939,6 +5028,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-qq")]
     if let Some(ref qq) = config.channels_config.qq {
         channels.push(ConfiguredChannel {
             display_name: "QQ",
@@ -4954,6 +5044,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-twitter")]
     if let Some(ref tw) = config.channels_config.twitter {
         channels.push(ConfiguredChannel {
             display_name: "X/Twitter",
@@ -4964,6 +5055,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-mochat")]
     if let Some(ref mc) = config.channels_config.mochat {
         channels.push(ConfiguredChannel {
             display_name: "Mochat",
@@ -4976,6 +5068,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-wecom")]
     if let Some(ref wc) = config.channels_config.wecom {
         channels.push(ConfiguredChannel {
             display_name: "WeCom",
@@ -4986,6 +5079,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-clawdtalk")]
     if let Some(ref ct) = config.channels_config.clawdtalk {
         channels.push(ConfiguredChannel {
             display_name: "ClawdTalk",
@@ -4994,6 +5088,7 @@ fn collect_configured_channels(
     }
 
     // Notion database poller channel
+    #[cfg(feature = "channel-notion")]
     if config.notion.enabled && !config.notion.database_id.trim().is_empty() {
         let notion_api_key = if config.notion.api_key.trim().is_empty() {
             std::env::var("NOTION_API_KEY").unwrap_or_default()
@@ -5021,6 +5116,7 @@ fn collect_configured_channels(
         }
     }
 
+    #[cfg(feature = "channel-reddit")]
     if let Some(ref rd) = config.channels_config.reddit {
         channels.push(ConfiguredChannel {
             display_name: "Reddit",
@@ -5034,6 +5130,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-bluesky")]
     if let Some(ref bs) = config.channels_config.bluesky {
         channels.push(ConfiguredChannel {
             display_name: "Bluesky",
@@ -5055,6 +5152,7 @@ fn collect_configured_channels(
         });
     }
 
+    #[cfg(feature = "channel-webhook")]
     if let Some(ref wh) = config.channels_config.webhook {
         channels.push(ConfiguredChannel {
             display_name: "Webhook",
