@@ -3041,7 +3041,6 @@ async fn process_channel_message(
                         None, // shared_budget
                         ctx.receipt_generator.as_ref(),
                         Some(&tool_receipts_collector),
-                        ctx.prompt_config.agent.tool_dispatcher == "xml", // force_xml_tools
                     ),
                     ),
                     ),

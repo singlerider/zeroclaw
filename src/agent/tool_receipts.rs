@@ -81,9 +81,18 @@ impl ReceiptGenerator {
         let Some((timestamp, provided_hash)) = parse_receipt(receipt) else {
             return false;
         };
-        let expected_digest = self.compute_hmac(tool_name, args, result, timestamp);
-        let expected_hash = URL_SAFE_NO_PAD.encode(expected_digest);
-        expected_hash == provided_hash
+        let Ok(provided_bytes) = URL_SAFE_NO_PAD.decode(provided_hash) else {
+            return false;
+        };
+        let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
+        mac.update(tool_name.as_bytes());
+        mac.update(b"|");
+        mac.update(args.to_string().as_bytes());
+        mac.update(b"|");
+        mac.update(result.as_bytes());
+        mac.update(b"|");
+        mac.update(timestamp.to_string().as_bytes());
+        mac.verify_slice(&provided_bytes).is_ok()
     }
 
     fn compute_hmac(
@@ -108,7 +117,7 @@ impl ReceiptGenerator {
 /// Parse a receipt string into (timestamp, hash).
 /// Expected format: `zc-receipt-{timestamp}-{base64url_hash}`
 fn parse_receipt(receipt: &str) -> Option<(u64, &str)> {
-    let rest = receipt.strip_prefix(&format!("{RECEIPT_PREFIX}-"))?;
+    let rest = receipt.strip_prefix("zc-receipt-")?;
     let dash_pos = rest.find('-')?;
     let timestamp: u64 = rest[..dash_pos].parse().ok()?;
     let hash = &rest[dash_pos + 1..];
