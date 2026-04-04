@@ -1434,7 +1434,8 @@ fn default_local_whisper_timeout_secs() -> u64 {
 }
 
 /// HMAC tool execution receipt configuration (`[agent.tool_receipts]`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, Configurable)]
+#[prefix = "agent.tool-receipts"]
 pub struct ToolReceiptsConfig {
     /// Enable HMAC receipt generation for tool executions. Default: `false`.
     #[serde(default)]
@@ -1530,6 +1531,7 @@ pub struct AgentConfig {
     pub keep_tool_context_turns: usize,
 
     /// HMAC tool execution receipt configuration.
+    #[nested]
     #[serde(default)]
     pub tool_receipts: ToolReceiptsConfig,
 }
