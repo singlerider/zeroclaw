@@ -1620,12 +1620,19 @@ async fn main() -> Result<()> {
 
         Commands::Config { config_command } => match config_command {
             ConfigCommands::Schema => {
-                let schema = schemars::schema_for!(config::Config);
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&schema).expect("failed to serialize JSON Schema")
-                );
-                Ok(())
+                #[cfg(feature = "schema-export")]
+                {
+                    let schema = schemars::schema_for!(config::Config);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&schema).expect("failed to serialize JSON Schema")
+                    );
+                    Ok(())
+                }
+                #[cfg(not(feature = "schema-export"))]
+                {
+                    anyhow::bail!("Schema export requires the `schema-export` feature. Rebuild with: cargo build --features schema-export");
+                }
             }
         },
 

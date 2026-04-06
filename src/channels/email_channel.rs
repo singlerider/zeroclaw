@@ -21,8 +21,6 @@ use lettre::{Message, SmtpTransport, Transport};
 use mail_parser::{MessageParser, MimeHeaders};
 use rustls::{ClientConfig, RootCertStore};
 use rustls_pki_types::DnsName;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

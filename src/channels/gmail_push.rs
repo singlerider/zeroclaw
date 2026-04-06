@@ -21,7 +21,6 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Client;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::sync::Arc;

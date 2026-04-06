@@ -8477,6 +8477,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive 1.2.1",
@@ -12934,6 +12935,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chacha20poly1305",
+ "chrono",
+ "chrono-tz",
+ "cron",
+ "directories",
+ "hostname",
+ "rand 0.10.0",
+ "regex",
+ "reqwest 0.12.28",
+ "rustls 0.23.37",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tokio-socks",
+ "tokio-tungstenite 0.29.0",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+ "url",
+ "uuid",
+ "webpki-roots 1.0.6",
+ "zeroclaw-types",
+]
+
+[[package]]
 name = "zeroclaw-desktop"
 version = "0.1.0"
 dependencies = [
@@ -12950,6 +12985,73 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
  "tokio",
+]
+
+[[package]]
+name = "zeroclaw-infra"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "parking_lot",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "zeroclaw-types",
+]
+
+[[package]]
+name = "zeroclaw-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "parking_lot",
+ "regex",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "uuid",
+ "zeroclaw-config",
+ "zeroclaw-types",
+]
+
+[[package]]
+name = "zeroclaw-providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "chrono",
+ "directories",
+ "futures-util",
+ "hex",
+ "hmac",
+ "parking_lot",
+ "rand 0.10.0",
+ "regex",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "zeroclaw-config",
+ "zeroclaw-types",
 ]
 
 [[package]]
@@ -12972,6 +13074,18 @@ dependencies = [
  "tokio-test",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
+]
+
+[[package]]
+name = "zeroclaw-types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -13075,6 +13189,11 @@ dependencies = [
  "webpki-roots 1.0.6",
  "which",
  "wiremock",
+ "zeroclaw-config",
+ "zeroclaw-infra",
+ "zeroclaw-memory",
+ "zeroclaw-providers",
+ "zeroclaw-types",
  "zip",
 ]
 

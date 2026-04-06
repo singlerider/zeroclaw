@@ -473,8 +473,9 @@ async fn process_chat_message(
                 let user_msg = content.to_string();
                 let assistant_resp = response.clone();
                 tokio::spawn(async move {
+                    let summarizer = crate::memory::ProviderSummarizer(provider.as_ref());
                     if let Err(e) = crate::memory::consolidation::consolidate_turn(
-                        provider.as_ref(),
+                        &summarizer,
                         &model,
                         mem.as_ref(),
                         &user_msg,

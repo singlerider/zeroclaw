@@ -104,6 +104,7 @@ fn wati_memory_key(msg: &crate::channels::traits::ChannelMessage) -> String {
     format!("wati_{}_{}", msg.sender, msg.id)
 }
 
+#[cfg(feature = "channel-nextcloud")]
 fn nextcloud_talk_memory_key(msg: &crate::channels::traits::ChannelMessage) -> String {
     format!("nextcloud_talk_{}_{}", msg.sender, msg.id)
 }
@@ -1598,6 +1599,7 @@ pub struct WhatsAppVerifyQuery {
 }
 
 /// GET /whatsapp — Meta webhook verification
+#[cfg(feature = "channel-whatsapp-cloud")]
 async fn handle_whatsapp_verify(
     State(state): State<AppState>,
     Query(params): Query<WhatsAppVerifyQuery>,
@@ -1626,6 +1628,7 @@ async fn handle_whatsapp_verify(
 /// Verify `WhatsApp` webhook signature (`X-Hub-Signature-256`).
 /// Returns true if the signature is valid, false otherwise.
 /// See: <https://developers.facebook.com/docs/graph-api/webhooks/getting-started#verification-requests>
+#[cfg(feature = "channel-whatsapp-cloud")]
 pub fn verify_whatsapp_signature(app_secret: &str, body: &[u8], signature_header: &str) -> bool {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -1651,6 +1654,7 @@ pub fn verify_whatsapp_signature(app_secret: &str, body: &[u8], signature_header
 }
 
 /// POST /whatsapp — incoming message webhook
+#[cfg(feature = "channel-whatsapp-cloud")]
 async fn handle_whatsapp_message(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1758,6 +1762,7 @@ async fn handle_whatsapp_message(
 }
 
 /// POST /linq — incoming message webhook (iMessage/RCS/SMS via Linq)
+#[cfg(feature = "channel-linq")]
 async fn handle_linq_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1878,6 +1883,7 @@ async fn handle_linq_webhook(
 }
 
 /// GET /wati — WATI webhook verification (echoes hub.challenge)
+#[cfg(feature = "channel-wati")]
 async fn handle_wati_verify(
     State(state): State<AppState>,
     Query(params): Query<WatiVerifyQuery>,
@@ -1895,6 +1901,7 @@ async fn handle_wati_verify(
     (StatusCode::BAD_REQUEST, "Missing hub.challenge".to_string())
 }
 
+#[cfg(feature = "channel-wati")]
 #[derive(Debug, serde::Deserialize)]
 pub struct WatiVerifyQuery {
     #[serde(rename = "hub.challenge")]
@@ -1902,6 +1909,7 @@ pub struct WatiVerifyQuery {
 }
 
 /// POST /wati — incoming WATI WhatsApp message webhook
+#[cfg(feature = "channel-wati")]
 async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
     let Some(ref wati) = state.wati else {
         return (
@@ -1993,6 +2001,7 @@ async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl
 }
 
 /// POST /nextcloud-talk — incoming message webhook (Nextcloud Talk bot API)
+#[cfg(feature = "channel-nextcloud")]
 async fn handle_nextcloud_talk_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,

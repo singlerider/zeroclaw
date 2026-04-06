@@ -28,31 +28,8 @@ pub struct ClawdTalkChannel {
     webhook_secret: Option<String>,
 }
 
-/// Configuration for ClawdTalk channel from config.toml
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ClawdTalkConfig {
-    /// Telnyx API key
-    pub api_key: String,
-    /// Telnyx connection ID for SIP
-    pub connection_id: String,
-    /// Phone number to call from (E.164 format)
-    pub from_number: String,
-    /// Allowed destination numbers or patterns
-    #[serde(default)]
-    pub allowed_destinations: Vec<String>,
-    /// Webhook secret for signature verification
-    #[serde(default)]
-    pub webhook_secret: Option<String>,
-}
-
-impl ChannelConfig for ClawdTalkConfig {
-    fn name() -> &'static str {
-        "ClawdTalk"
-    }
-    fn desc() -> &'static str {
-        "ClawdTalk Channel"
-    }
-}
+// ClawdTalkConfig is defined in zeroclaw-config to break circular deps.
+pub use zeroclaw_config::ClawdTalkConfig;
 
 impl ClawdTalkChannel {
     /// Create a new ClawdTalk channel

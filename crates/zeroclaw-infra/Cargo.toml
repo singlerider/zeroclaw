@@ -1,0 +1,18 @@
+[package]
+name = "zeroclaw-infra"
+version = "0.1.0"
+edition = "2024"
+description = "Channel infrastructure utilities for ZeroClaw (debounce, watchdog, sessions)"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+
+[dependencies]
+zeroclaw-types = { path = "../zeroclaw-types" }
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+parking_lot = "0.12"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.50", default-features = false, features = ["sync", "time", "macros", "rt"] }
+tracing = { version = "0.1", default-features = false }
