@@ -1,4 +1,4 @@
-# Overnight Research TODO
+# Binary Size & Compile Time Research TODO
 
 ## Methodology verification — DONE
 - [x] Confirm all CSV columns are populated for existing measurements
@@ -52,12 +52,35 @@
 - [x] Created singlerider/zeroclaw#8 for schemars optimization
 - [x] Updated zeroclaw-labs/zeroclaw#5272 issue body with corrected baseline
 
-## Completed research summary
+## Implementation — DONE
 
-### Key findings
+### Feature gating — DONE
+- [x] 28 channel feature flags (all channels independently toggleable)
+- [x] 4 deps made optional (lettre, async-imap, rumqttc, ratatui, crossterm, image)
+- [x] schemars optional behind `schema-export` feature (181 derives converted)
+- [x] Gateway webhook handlers gated per channel feature
+- [x] VoiceCallConfig consolidated into zeroclaw-config
+
+### Workspace extraction — DONE
+- [x] zeroclaw-types (594 LOC) — traits + data types, wired
+- [x] zeroclaw-infra (1,847 LOC) — session/debounce/watchdog, wired
+- [x] zeroclaw-config (18,262 LOC) — full config schema + runtime, wired
+- [x] zeroclaw-memory (11,041 LOC) — memory subsystem, wired via re-exports
+- [x] zeroclaw-providers (30,859 LOC) — all LLM providers + auth + multimodal, wired
+- [x] channels/mod.rs split into 3 files (-1,166 lines)
+
+### Not extracted (documented)
+- [ ] Gateway (10,038 LOC) — AppState coupling
+- [ ] Channels (58,524 LOC) — agent loop dependency
+- [ ] Tools + Agent (~76,000 LOC) — circular tools ↔ agent dependency
+
+---
+
+## Research findings summary
+
 1. **objcopy .eh_frame removal: -2.0 MB (10.1%)** — zero code changes, post-build script
 2. **4 new feature gates combined: -1.31 MB (6.6%)** — when all disabled
-3. **schemars optional: ~457 KiB estimated** — medium effort (167 derive sites)
+3. **schemars optional: ~457 KiB** — implemented
 4. **channel-matrix is the heavyweight: +10.72 MB** — validates existing gate
 5. **whatsapp-web: +3.56 MB, channel-nostr: +1.97 MB** — also correctly gated
 6. **Linker choice (mold vs GNU ld): negligible** — codegen dominates, not linking
@@ -66,9 +89,11 @@
 9. **reqwest blocking/socks: cannot gate** — needed for CLI/onboarding + proxy
 10. **StageX: blocked** — ships Rust 1.82, project requires 1.85+
 
-### Theoretical minimum binary
-- Start: 19.80 MB (default)
-- objcopy .eh_frame: -2.0 MB → 17.80 MB
-- Disable all 4 new gates: -1.31 MB → 16.49 MB
-- Schemars optional: -0.45 MB → 16.04 MB
-- **Theoretical floor: ~16 MB** (without removing any always-compiled functionality)
+## Future work
+
+- [ ] Add `objcopy --remove-section=.eh_frame` to release build pipeline
+- [ ] Re-measure binary sizes after workspace extraction
+- [ ] Measure incremental compile time improvement from workspace split
+- [ ] Explore extracting tools + agent as `zeroclaw-runtime` (requires breaking delegate tool → agent cycle)
+- [ ] Explore gateway extraction via AppState trait abstraction
+- [ ] StageX: retry when they ship Rust 1.87+
