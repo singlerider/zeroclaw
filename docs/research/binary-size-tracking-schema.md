@@ -47,6 +47,7 @@
 | `test_id` | string | `{profile}-{touched_file_short}` |
 | `date` | `YYYY-MM-DD` | Date |
 | `commit` | string | Short git commit hash |
+| `extraction_state` | enum | `monolith` or `8-crate-workspace` |
 | `profile` | enum | `dev`, `release`, `ci` |
 | `touched_file` | string | Full path of file touched |
 | `crates_recompiled` | int | Count of `Compiling` lines in cargo output |
