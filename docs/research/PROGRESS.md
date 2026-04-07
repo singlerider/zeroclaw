@@ -110,8 +110,8 @@ Raw output: `cargo-bloat-crates.txt`, `cargo-bloat-functions.txt`
 - singlerider/zeroclaw#8: created for schemars optimization
 - CSV: 26 rows with complete data for all measured configurations
 
-### Research complete for this session
-All TODO items completed or conclusively investigated. No further builds needed.
+### Initial research complete
+Feature gating, .eh_frame, linker comparison, regex/reqwest audits, cargo-bloat analysis done. Workspace extraction and further measurement continued below.
 
 **Key actionable findings:**
 1. `objcopy --remove-section=.eh_frame` → **-2.0 MB** (zero effort, add to build pipeline)
@@ -264,7 +264,7 @@ Broke the config circular dependency by:
 
 ## Final state
 
-### Workspace crates (62,603 LOC extracted)
+### Workspace crates (186,047 LOC extracted)
 
 | Crate | LOC | Content | Wired |
 |---|---|---|---|
