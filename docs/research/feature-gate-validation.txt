@@ -1,0 +1,34 @@
+=== Feature Gate Validation v2 ===
+Date: 2026-04-08
+
+--- Extreme configs ---
+PASS: no-default-features
+PASS: no-default+schema (re-validated)
+PASS: ci-all (re-validated)
+
+--- Per-channel removal ---
+PASS: default minus channel-email
+PASS: default minus channel-mqtt
+PASS: default minus channel-telegram
+PASS: default minus channel-discord
+PASS: default minus channel-slack
+PASS: default minus channel-signal
+PASS: default minus channel-mattermost
+PASS: default minus channel-irc
+PASS: default minus channel-imessage
+PASS: default minus channel-dingtalk
+PASS: default minus channel-qq
+PASS: default minus channel-bluesky
+PASS: default minus channel-twitter
+PASS: default minus channel-reddit
+PASS: default minus channel-notion
+PASS: default minus channel-linq
+PASS: default minus channel-wati
+PASS: default minus channel-nextcloud
+PASS: default minus channel-mochat
+PASS: default minus channel-wecom
+PASS: default minus channel-clawdtalk
+PASS: default minus channel-webhook
+PASS: default minus channel-acp-server
+PASS: default minus channel-whatsapp-cloud
+PASS: default minus channel-voice-call

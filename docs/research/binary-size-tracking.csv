@@ -1,19 +1,55 @@
-date,branch,profile,features,linker,codegen_backend,binary_bytes,binary_mb,text_bytes,rodata_bytes,eh_frame_bytes,data_rel_ro_bytes,dep_tree_entries,duplicate_pairs,build_time_secs,notes
-2026-04-04,issue/compiled-size-improvements,release,default (prometheus+skill-creation+email+mqtt+telegram+tui),gnu-ld,llvm,20757416,19.80,11684584,3175077,1868868,1862488,846,46,323,baseline @ 369c97cf
-2026-04-04,issue/compiled-size-improvements,release,no email (prometheus+skill-creation+mqtt+telegram+tui),gnu-ld,llvm,20174952,19.24,11360616,3117733,1810956,1797528,768,40,280,-569 KB binary; -78 deps; -6 dupes
-2026-04-04,issue/compiled-size-improvements,release,no mqtt (prometheus+skill-creation+email+telegram+tui),gnu-ld,llvm,20399208,19.46,11440040,3154597,1822340,1847096,816,40,278,-346 KB binary; -30 deps; -6 dupes
-2026-04-04,issue/compiled-size-improvements,release,no tui (prometheus+skill-creation+email+mqtt+telegram),gnu-ld,llvm,20507240,19.56,11526440,3134117,1843964,1851832,747,44,284,-244 KB binary; -99 deps; -2 dupes
-2026-04-04,issue/compiled-size-improvements,release,no telegram (prometheus+skill-creation+email+mqtt+tui),gnu-ld,llvm,20596104,19.65,11577448,3166885,1853900,1850776,829,46,278,-158 KB binary; -17 deps; 0 dupes
-2026-04-04,issue/compiled-size-improvements,release,no email+mqtt+telegram+tui (prometheus+skill-creation only),gnu-ld,llvm,19388968,18.49,10846696,3043493,1723468,1760984,622,32,260,-1.34 MB binary; -224 deps; -14 dupes
-2026-04-04,issue/compiled-size-improvements,release,--no-default-features,gnu-ld,llvm,19283816,18.39,10766184,3039909,1709316,1756472,615,32,262,absolute minimum; -1.44 MB from baseline
-2026-04-06,issue/compiled-size-improvements,release,ci-all (everything),gnu-ld,llvm,45613224,43.50,25834561,9073317,4001728,2891352,2325,165,569,all optional features enabled
-2026-04-06,issue/compiled-size-improvements,release,default + channel-matrix,gnu-ld,llvm,31991368,30.51,20002049,3859109,3070268,2222136,1274,70,521,matrix-sdk adds 10.71 MB (+54%)
-2026-04-06,issue/compiled-size-improvements,release,default + channel-nostr,gnu-ld,llvm,22828040,21.77,12398017,4334245,1985880,1887608,926,51,298,nostr-sdk adds 1.97 MB (+10.0%)
-2026-04-06,issue/compiled-size-improvements,release,default + whatsapp-web,gnu-ld,llvm,24487688,23.35,14463272,3404453,2265924,1977208,1102,73,315,wa-rs adds 3.56 MB (+18.0%)
-2026-04-06,issue/compiled-size-improvements,release,default + channel-lark,gnu-ld,llvm,20910664,19.94,11786216,3183269,1882948,1872312,855,49,291,prost adds 0.15 MB (+0.8%)
-2026-04-06,issue/compiled-size-improvements,release,default + hardware,gnu-ld,llvm,20869160,19.90,11746408,3199653,1879564,1867672,876,52,293,nusb+tokio-serial adds 0.11 MB (+0.6%)
-2026-04-06,issue/compiled-size-improvements,release,default + plugins-wasm,gnu-ld,llvm,20856104,19.89,11763944,3179173,1869300,1866584,1276,85,303,extism adds 0.09 MB (+0.5%) but 430 dep entries
-2026-04-06,issue/compiled-size-improvements,release,default + probe,gnu-ld,llvm,20765192,19.80,11691688,3175077,1869868,1862136,1035,61,288,probe-rs adds ~0 KB binary but 189 dep entries
-2026-04-06,issue/compiled-size-improvements,release,default + rag-pdf,gnu-ld,llvm,22004968,20.99,12065768,3498661,1937180,2099032,893,42,290,pdf-extract adds 1.19 MB (+6.0%)
-2026-04-06,issue/compiled-size-improvements,release,default + browser-native,gnu-ld,llvm,21044616,20.07,11891112,3191461,1908508,1869368,930,72,288,fantoccini adds 0.27 MB (+1.4%)
-2026-04-06,issue/compiled-size-improvements,release,default + objcopy --remove-section=.eh_frame,gnu-ld,llvm,18656008,17.79,11684584,3175077,0,1862488,846,46,0,post-build strip; binary verified working
+test_id,date,commit,profile,linker,codegen_backend,features,binary_bytes,binary_mb,text_bytes,rodata_bytes,eh_frame_bytes,data_rel_ro_bytes,dep_tree_entries,duplicate_pairs,build_time_secs,notes
+release-gnuld-default,2026-04-06,13f25f7a,release,gnu-ld,llvm,default,21178664,20.20,12024808,3179173,1910668,1874040,935,46,415,primary baseline post-extraction
+release-gnuld-no-email,2026-04-06,13f25f7a,release,gnu-ld,llvm,default minus channel-email,20607240,19.65,11710760,3121829,1854412,1808920,857,40,330,
+release-gnuld-no-mqtt,2026-04-06,13f25f7a,release,gnu-ld,llvm,default minus channel-mqtt,20812936,19.85,11774312,3158693,1862868,1858488,905,40,404,
+release-gnuld-no-tui,2026-04-06,13f25f7a,release,gnu-ld,llvm,default minus tui-onboarding,20916680,19.95,11857512,3138213,1883220,1863288,836,44,376,
+release-gnuld-no-telegram,2026-04-06,13f25f7a,release,gnu-ld,llvm,default minus channel-telegram,21009064,20.04,11911464,3170981,1893884,1862168,918,46,435,
+release-gnuld-no-4gates,2026-04-06,13f25f7a,release,gnu-ld,llvm,prometheus+skill-creation+schema-export+22channels,19802472,18.89,11178856,3048101,1763940,1770680,711,32,348,
+release-gnuld-no-default,2026-04-06,13f25f7a,release,gnu-ld,llvm,--no-default-features,17898248,17.07,9881384,2892453,1538612,1693272,685,32,249,
+release-gnuld-no-default-schema,2026-04-06,13f25f7a,release,gnu-ld,llvm,--no-default-features + schema-export,18669704,17.80,10436968,2986661,1645756,1697688,704,32,247,
+release-gnuld-ciall,2026-04-06,13f25f7a,release,gnu-ld,llvm,ci-all,46022856,43.89,26161025,9077413,4044480,2904472,2414,165,875,
+release-gnuld-matrix,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + channel-matrix,32450024,30.95,20373121,3863205,3117524,2234360,1363,70,768,
+release-gnuld-nostr,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + channel-nostr,23259080,22.18,12743041,4338341,2027968,1899608,1015,51,456,
+release-gnuld-whatsapp-web,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + whatsapp-web,24876232,23.72,14770792,3408549,2307284,1989400,1191,73,440,
+release-gnuld-lark,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + channel-lark,21334024,20.35,12128168,3187365,1925044,1883864,944,49,440,
+release-gnuld-hardware,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + hardware,21289992,20.30,12085864,3203749,1921604,1879256,965,52,393,
+release-gnuld-wasm,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + plugins-wasm,21271048,20.29,12100008,3183269,1909108,1878040,1365,85,506,
+release-gnuld-probe,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + probe,21183400,20.20,12029672,3179173,1911028,1873528,1124,61,377,
+release-gnuld-rag-pdf,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + rag-pdf,22423304,21.38,12403752,3502757,1978372,2110488,982,42,439,
+release-gnuld-browser,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + browser-native,21463208,20.47,12230312,3195557,1948692,1881080,1019,72,369,
+release-mold-default,2026-04-07,13f25f7a,release,mold,llvm,default,21179560,20.20,12023537,2855589,1910476,1874040,935,46,502,
+release-lld-default,2026-04-07,13f25f7a,release,lld,llvm,default,21178584,20.20,12024808,3179173,1910668,1874040,935,46,417,
+release-fast-gnuld-default,2026-04-07,13f25f7a,release-fast,gnu-ld,llvm,default,21942184,20.93,12652456,3195557,1984900,1886872,935,46,410,
+ci-gnuld-default,2026-04-07,13f25f7a,ci,gnu-ld,llvm,default,27822984,26.53,14344744,3879589,3487120,2254520,935,46,292,
+dev-gnuld-default,2026-04-07,13f25f7a,dev,gnu-ld,llvm,default,539166456,514.19,63096197,3273440,6432948,2868888,935,46,262,
+dev-mold-default,2026-04-07,13f25f7a,dev,mold,llvm,default,557201232,531.39,63095089,2909032,6432804,2868888,935,46,141,
+dev-lld-default,2026-04-07,13f25f7a,dev,lld,llvm,default,539166376,514.19,63096197,3273440,6432948,2868888,935,46,140,
+release-gnuld-default-strip-eh,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + objcopy strip .eh_frame,19028104,18.15,12024808,3179173,0,1874040,935,46,0,post-build strip; binary verified working
+release-gnuld-no-4gates-strip-eh,2026-04-07,13f25f7a,release,gnu-ld,llvm,no-4gates + objcopy strip .eh_frame,17819848,16.99,11178856,3048101,0,1770680,711,32,0,post-build strip on minimal build
+release-gnuld-default-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default (post-final-extraction),23223304,22.15,13815272,3211941,2076660,1893112,1071,46,377,
+release-gnuld-no-email-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default minus channel-email (v2),22630984,21.58,13489384,3154597,2016396,1827064,990,40,301,
+release-gnuld-no-mqtt-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default minus channel-mqtt (v2),22857256,21.80,13564584,3191461,2028828,1877560,1041,40,233,
+release-gnuld-no-tui-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default minus tui (v2),22963112,21.90,13648168,3170981,2050468,1882808,1069,46,278,
+release-gnuld-no-telegram-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default minus channel-telegram (v2),23045352,21.98,13702504,3199653,2059508,1881080,1053,46,309,
+release-gnuld-no-4gates-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,no 4 gates (v2),21826120,20.82,12960360,3076773,1926732,1789240,940,34,295,
+release-gnuld-no-default-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,--no-default-features (v2),18363912,17.51,10256232,2904741,1572588,1710424,920,34,316,
+release-gnuld-no-default-schema-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,no-default + schema (v2),20544648,19.59,12109096,3015333,1786156,1710360,939,34,192,
+release-gnuld-ciall-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,ci-all (v2),47610568,45.40,27584577,9089701,4166616,2916568,2565,165,873,
+release-gnuld-matrix-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + matrix (v2),33004776,31.48,20816193,3879589,3180628,2245848,1499,70,671,
+release-gnuld-nostr-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + nostr (v2),25301704,24.13,14538177,4367013,2194896,1919288,1152,51,355,
+release-gnuld-whatsapp-web-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + whatsapp-web (v2),26786024,25.55,16437288,3437221,2467252,2008664,1336,73,417,
+release-gnuld-lark-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + lark (v2),23385352,22.30,13923368,3220133,2092332,1903480,1081,49,287,
+release-gnuld-hardware-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + hardware (v2),21854472,20.84,12538664,3220133,1984836,1890360,1103,52,374,
+release-gnuld-wasm-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + wasm (v2),23292104,22.21,13871976,3216037,2074900,1896536,1501,85,330,
+release-gnuld-probe-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + probe (v2),23228968,22.15,13820136,3211941,2077988,1892632,1260,61,323,
+release-gnuld-rag-pdf-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + rag-pdf (v2),22984008,21.92,12855912,3515045,2042564,2121592,1118,42,350,
+release-gnuld-browser-v2,2026-04-07,13f25f7a,release,gnu-ld,llvm,default + browser (v2),21742952,20.74,12477224,3195557,1974180,1884952,1155,72,283,
+release-mold-default-v2,2026-04-07,13f25f7a,release,mold,llvm,default (v2),23221544,22.15,13814001,2888357,2076468,1893144,1071,46,434,
+release-lld-default-v2,2026-04-07,13f25f7a,release,lld,llvm,default (v2),23223224,22.15,13815272,3211941,2076660,1893112,1071,46,362,
+release-fast-gnuld-default-v2,2026-04-07,13f25f7a,release-fast,gnu-ld,llvm,default (v2),22706632,21.65,13288296,3216037,2049780,1901592,1071,46,406,
+ci-gnuld-default-v2,2026-04-07,13f25f7a,ci,gnu-ld,llvm,default (v2),31635080,30.17,16805352,4145829,4033952,2337112,1071,46,244,
+dev-gnuld-default-v2,2026-04-07,13f25f7a,dev,gnu-ld,llvm,default (v2),564548992,538.40,72795157,3360568,7044828,2937408,1071,46,210,
+dev-mold-default-v2,2026-04-07,13f25f7a,dev,mold,llvm,default (v2),589413920,562.11,72794049,3000128,7044684,2937440,1071,46,120,
+dev-lld-default-v2,2026-04-07,13f25f7a,dev,lld,llvm,default (v2),564548912,538.40,72795157,3360568,7044828,2937408,1071,46,123,
+release-gnuld-default-strip-eh-v2,2026-04-08,13f25f7a,release,gnu-ld,llvm,default + strip .eh_frame (v2),20896616,19.93,13815272,3211941,0,1893112,1071,46,0,post-build strip
+release-gnuld-no-4gates-strip-eh-v2,2026-04-08,13f25f7a,release,gnu-ld,llvm,no-4gates + strip (v2),19667368,18.76,12960360,3076773,0,1789240,1071,46,0,post-build strip minimal

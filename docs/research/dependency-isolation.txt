@@ -1,0 +1,193 @@
+=== Dependency Isolation Report ===
+Date: 2026-04-07
+Commit: 13f25f7a
+
+=== zeroclaw-types (30 dep tree entries) ===
+zeroclaw-types v0.1.0 (/home/shane/git/zeroclaw/crates/zeroclaw-types)
+├── anyhow v1.0.102
+├── async-trait v0.1.89 (proc-macro)
+│   ├── proc-macro2 v1.0.106
+│   │   └── unicode-ident v1.0.24
+│   ├── quote v1.0.45
+│   │   └── proc-macro2 v1.0.106 (*)
+│   └── syn v2.0.117
+│       ├── proc-macro2 v1.0.106 (*)
+│       ├── quote v1.0.45 (*)
+│       └── unicode-ident v1.0.24
+├── serde v1.0.228
+│   ├── serde_core v1.0.228
+│   └── serde_derive v1.0.228 (proc-macro)
+│       ├── proc-macro2 v1.0.106 (*)
+│       ├── quote v1.0.45 (*)
+│       └── syn v2.0.117 (*)
+├── serde_json v1.0.149
+│   ├── itoa v1.0.18
+│   ├── memchr v2.8.0
+│   ├── serde_core v1.0.228
+│   └── zmij v1.0.21
+├── tokio v1.50.0
+│   └── pin-project-lite v0.2.17
+└── tokio-util v0.7.18
+...
+
+=== zeroclaw-infra (62 dep tree entries) ===
+zeroclaw-infra v0.1.0 (/home/shane/git/zeroclaw/crates/zeroclaw-infra)
+├── anyhow v1.0.102
+├── chrono v0.4.44
+│   ├── iana-time-zone v0.1.65
+│   ├── num-traits v0.2.19
+│   └── serde v1.0.228
+│       ├── serde_core v1.0.228
+│       └── serde_derive v1.0.228 (proc-macro)
+│           ├── proc-macro2 v1.0.106
+│           │   └── unicode-ident v1.0.24
+│           ├── quote v1.0.45
+│           │   └── proc-macro2 v1.0.106 (*)
+│           └── syn v2.0.117
+│               ├── proc-macro2 v1.0.106 (*)
+│               ├── quote v1.0.45 (*)
+│               └── unicode-ident v1.0.24
+├── parking_lot v0.12.5
+│   ├── lock_api v0.4.14
+│   │   └── scopeguard v1.2.0
+│   └── parking_lot_core v0.9.12
+│       ├── cfg-if v1.0.4
+│       ├── libc v0.2.184
+│       └── smallvec v1.15.1
+├── rusqlite v0.37.0
+│   ├── bitflags v2.11.0
+...
+
+=== zeroclaw-config (388 dep tree entries) ===
+zeroclaw-config v0.1.0 (/home/shane/git/zeroclaw/crates/zeroclaw-config)
+├── anyhow v1.0.102
+├── chacha20poly1305 v0.10.1
+│   ├── aead v0.5.2
+│   │   ├── crypto-common v0.1.7
+│   │   │   ├── generic-array v0.14.7
+│   │   │   │   └── typenum v1.19.0
+│   │   │   ├── rand_core v0.6.4
+│   │   │   │   └── getrandom v0.2.17
+│   │   │   │       ├── cfg-if v1.0.4
+│   │   │   │       └── libc v0.2.184
+│   │   │   └── typenum v1.19.0
+│   │   └── generic-array v0.14.7 (*)
+│   ├── chacha20 v0.9.1
+│   │   ├── cfg-if v1.0.4
+│   │   ├── cipher v0.4.4
+│   │   │   ├── crypto-common v0.1.7 (*)
+│   │   │   ├── inout v0.1.4
+│   │   │   │   └── generic-array v0.14.7 (*)
+│   │   │   └── zeroize v1.8.2
+│   │   └── cpufeatures v0.2.17
+│   ├── cipher v0.4.4 (*)
+│   ├── poly1305 v0.8.0
+│   │   ├── cpufeatures v0.2.17
+│   │   ├── opaque-debug v0.3.1
+...
+
+=== zeroclaw-memory (406 dep tree entries) ===
+zeroclaw-memory v0.1.0 (/home/shane/git/zeroclaw/crates/zeroclaw-memory)
+├── anyhow v1.0.102
+├── async-trait v0.1.89 (proc-macro)
+│   ├── proc-macro2 v1.0.106
+│   │   └── unicode-ident v1.0.24
+│   ├── quote v1.0.45
+│   │   └── proc-macro2 v1.0.106 (*)
+│   └── syn v2.0.117
+│       ├── proc-macro2 v1.0.106 (*)
+│       ├── quote v1.0.45 (*)
+│       └── unicode-ident v1.0.24
+├── chrono v0.4.44
+│   ├── iana-time-zone v0.1.65
+│   ├── num-traits v0.2.19
+│   └── serde v1.0.228
+│       ├── serde_core v1.0.228
+│       └── serde_derive v1.0.228 (proc-macro)
+│           ├── proc-macro2 v1.0.106 (*)
+│           ├── quote v1.0.45 (*)
+│           └── syn v2.0.117 (*)
+├── parking_lot v0.12.5
+│   ├── lock_api v0.4.14
+│   │   └── scopeguard v1.2.0
+│   └── parking_lot_core v0.9.12
+│       ├── cfg-if v1.0.4
+...
+
+=== zeroclaw-providers (427 dep tree entries) ===
+zeroclaw-providers v0.1.0 (/home/shane/git/zeroclaw/crates/zeroclaw-providers)
+├── anyhow v1.0.102
+├── async-trait v0.1.89 (proc-macro)
+│   ├── proc-macro2 v1.0.106
+│   │   └── unicode-ident v1.0.24
+│   ├── quote v1.0.45
+│   │   └── proc-macro2 v1.0.106 (*)
+│   └── syn v2.0.117
+│       ├── proc-macro2 v1.0.106 (*)
+│       ├── quote v1.0.45 (*)
+│       └── unicode-ident v1.0.24
+├── base64 v0.22.1
+├── chacha20poly1305 v0.10.1
+│   ├── aead v0.5.2
+│   │   ├── crypto-common v0.1.7
+│   │   │   ├── generic-array v0.14.7
+│   │   │   │   └── typenum v1.19.0
+│   │   │   ├── rand_core v0.6.4
+│   │   │   │   └── getrandom v0.2.17
+│   │   │   │       ├── cfg-if v1.0.4
+│   │   │   │       └── libc v0.2.184
+│   │   │   └── typenum v1.19.0
+│   │   └── generic-array v0.14.7 (*)
+│   ├── chacha20 v0.9.1
+│   │   ├── cfg-if v1.0.4
+...
+
+=== Full workspace duplicates ===
+Total duplicate crate pairs: 46
+
+async-channel v1.9.0
+async-channel v2.5.0
+chacha20 v0.10.0
+chacha20 v0.9.1
+cpufeatures v0.2.17
+cpufeatures v0.3.0
+crypto-common v0.1.7
+crypto-common v0.1.7
+digest v0.10.7 (*)
+digest v0.10.7 (*)
+event-listener v2.5.3
+event-listener v5.4.1
+foldhash v0.1.5
+foldhash v0.2.0
+getrandom v0.2.17
+getrandom v0.3.4
+getrandom v0.4.2
+hashbrown v0.15.5 (*)
+hashbrown v0.16.1 (*)
+itertools v0.13.0
+itertools v0.14.0
+nom v7.1.3
+nom v8.0.0
+rand_core v0.10.0
+rand_core v0.6.4 (*)
+rand_core v0.9.5 (*)
+rand v0.10.0 (*)
+rand v0.9.2 (*)
+rustls v0.22.4 (*)
+rustls v0.23.37 (*)
+rustls-webpki v0.102.8 (*)
+rustls-webpki v0.103.10 (*)
+thiserror-impl v1.0.69 (proc-macro)
+thiserror-impl v2.0.18 (proc-macro)
+thiserror v1.0.69
+thiserror v2.0.18
+tokio-rustls v0.25.0 (*)
+tokio-rustls v0.26.4 (*)
+tokio-tungstenite v0.28.0 (*)
+tokio-tungstenite v0.29.0 (*)
+tungstenite v0.28.0 (*)
+tungstenite v0.29.0 (*)
+webpki-roots v0.26.11
+webpki-roots v1.0.6
+winnow v0.6.26
+winnow v1.0.1

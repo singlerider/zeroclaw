@@ -14,3 +14,9 @@ pub mod media;
 pub mod provider;
 pub mod summarizer;
 pub mod tool;
+
+tokio::task_local! {
+    /// Current thread/sender ID for per-sender rate limiting.
+    /// Set by the agent loop, read by SecurityPolicy.
+    pub static TOOL_LOOP_THREAD_ID: Option<String>;
+}

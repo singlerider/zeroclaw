@@ -1,6 +1,1 @@
-pub mod types;
-
-pub use types::*;
-
-#[cfg(test)]
-mod tests;
+pub use zeroclaw_core::trust::*;

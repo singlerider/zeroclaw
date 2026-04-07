@@ -1057,15 +1057,23 @@ async fn main() -> Result<()> {
             max_sessions,
             session_timeout,
         } => {
-            let mut acp_config = channels::acp_server::AcpServerConfig::default();
-            if let Some(max) = max_sessions {
-                acp_config.max_sessions = max;
+            #[cfg(feature = "channel-acp-server")]
+            {
+                let mut acp_config = channels::acp_server::AcpServerConfig::default();
+                if let Some(max) = max_sessions {
+                    acp_config.max_sessions = max;
+                }
+                if let Some(timeout) = session_timeout {
+                    acp_config.session_timeout_secs = timeout;
+                }
+                let server = channels::acp_server::AcpServer::new(config, acp_config);
+                server.run().await
             }
-            if let Some(timeout) = session_timeout {
-                acp_config.session_timeout_secs = timeout;
+            #[cfg(not(feature = "channel-acp-server"))]
+            {
+                let _ = (max_sessions, session_timeout);
+                anyhow::bail!("ACP server requires the `channel-acp-server` feature");
             }
-            let server = channels::acp_server::AcpServer::new(config, acp_config);
-            server.run().await
         }
 
         Commands::Gateway { gateway_command } => {

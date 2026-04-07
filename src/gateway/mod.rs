@@ -800,17 +800,21 @@ pub async fn run_gateway(
     }
     println!("  POST {pfx}/pair      — pair a new client (X-Pairing-Code header)");
     println!("  POST {pfx}/webhook   — {{\"message\": \"your prompt\"}}");
+    #[cfg(feature = "channel-whatsapp-cloud")]
     if whatsapp_channel.is_some() {
         println!("  GET  {pfx}/whatsapp  — Meta webhook verification");
         println!("  POST {pfx}/whatsapp  — WhatsApp message webhook");
     }
+    #[cfg(feature = "channel-linq")]
     if linq_channel.is_some() {
         println!("  POST {pfx}/linq      — Linq message webhook (iMessage/RCS/SMS)");
     }
+    #[cfg(feature = "channel-wati")]
     if wati_channel.is_some() {
         println!("  GET  {pfx}/wati      — WATI webhook verification");
         println!("  POST {pfx}/wati      — WATI message webhook");
     }
+    #[cfg(feature = "channel-nextcloud")]
     if nextcloud_talk_channel.is_some() {
         println!("  POST {pfx}/nextcloud-talk — Nextcloud Talk bot webhook");
     }

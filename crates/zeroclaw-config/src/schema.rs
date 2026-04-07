@@ -7322,25 +7322,25 @@ impl Default for EmailConfig {
     }
 }
 
-fn default_imap_port() -> u16 {
+pub fn default_imap_port() -> u16 {
     993
 }
-fn default_smtp_port() -> u16 {
+pub fn default_smtp_port() -> u16 {
     465
 }
-fn default_imap_folder() -> String {
+pub fn default_imap_folder() -> String {
     "INBOX".into()
 }
-fn default_idle_timeout() -> u64 {
+pub fn default_idle_timeout() -> u64 {
     1740 // 29 minutes per RFC 2177
 }
-fn default_email_tls() -> bool {
+pub fn default_email_tls() -> bool {
     true
 }
-fn default_email_subject() -> String {
+pub fn default_email_subject() -> String {
     "ZeroClaw Message".into()
 }
-fn default_max_attachment_bytes() -> usize {
+pub fn default_max_attachment_bytes() -> usize {
     25 * 1024 * 1024
 }
 
@@ -7381,6 +7381,20 @@ impl ChannelConfig for GmailPushConfig {
     }
     fn desc() -> &'static str {
         "Gmail Pub/Sub push notifications"
+    }
+}
+
+impl Default for GmailPushConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            topic: String::new(),
+            label_filter: default_gmail_label_filter(),
+            oauth_token: String::new(),
+            allowed_senders: Vec::new(),
+            webhook_url: String::new(),
+            webhook_secret: String::new(),
+        }
     }
 }
 

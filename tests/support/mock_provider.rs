@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use zeroclaw::providers::traits::{ChatMessage, TokenUsage};
 use zeroclaw::providers::{ChatRequest, ChatResponse, Provider, ToolCall};
+use zeroclaw_types::summarizer::Summarizer;
 
 use super::trace::{LlmTrace, TraceResponse};
 
@@ -200,5 +201,18 @@ impl Provider for TraceLlmProvider {
                 })
             }
         }
+    }
+}
+
+#[async_trait]
+impl Summarizer for MockProvider {
+    async fn summarize(
+        &self,
+        system_prompt: Option<&str>,
+        text: &str,
+        model: &str,
+        temperature: f64,
+    ) -> Result<String> {
+        self.chat_with_system(system_prompt, text, model, temperature).await
     }
 }

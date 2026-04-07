@@ -8,6 +8,7 @@ pub mod domain_matcher;
 pub mod scattered_types;
 pub mod schema;
 pub mod secrets;
+pub mod security_policy;
 pub mod traits;
 pub mod trust_config;
 
@@ -15,4 +16,5 @@ pub mod trust_config;
 pub use domain_matcher::DomainMatcher;
 pub use scattered_types::*;
 pub use secrets::SecretStore;
+pub use security_policy::SecurityPolicy;
 pub use trust_config::TrustConfig;

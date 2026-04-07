@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::time::Duration;
 
 use anyhow::Result;
-use schemars::JsonSchema;
+#[cfg(feature = "schema-export")] use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;

@@ -1,0 +1,19 @@
+date,branch,profile,features,linker,codegen_backend,binary_bytes,binary_mb,text_bytes,rodata_bytes,eh_frame_bytes,data_rel_ro_bytes,dep_tree_entries,duplicate_pairs,build_time_secs,notes
+2026-04-04,issue/compiled-size-improvements,release,default (prometheus+skill-creation+email+mqtt+telegram+tui),gnu-ld,llvm,20757416,19.80,11684584,3175077,1868868,1862488,846,46,323,baseline @ 369c97cf
+2026-04-04,issue/compiled-size-improvements,release,no email (prometheus+skill-creation+mqtt+telegram+tui),gnu-ld,llvm,20174952,19.24,11360616,3117733,1810956,1797528,768,40,280,-569 KB binary; -78 deps; -6 dupes
+2026-04-04,issue/compiled-size-improvements,release,no mqtt (prometheus+skill-creation+email+telegram+tui),gnu-ld,llvm,20399208,19.46,11440040,3154597,1822340,1847096,816,40,278,-346 KB binary; -30 deps; -6 dupes
+2026-04-04,issue/compiled-size-improvements,release,no tui (prometheus+skill-creation+email+mqtt+telegram),gnu-ld,llvm,20507240,19.56,11526440,3134117,1843964,1851832,747,44,284,-244 KB binary; -99 deps; -2 dupes
+2026-04-04,issue/compiled-size-improvements,release,no telegram (prometheus+skill-creation+email+mqtt+tui),gnu-ld,llvm,20596104,19.65,11577448,3166885,1853900,1850776,829,46,278,-158 KB binary; -17 deps; 0 dupes
+2026-04-04,issue/compiled-size-improvements,release,no email+mqtt+telegram+tui (prometheus+skill-creation only),gnu-ld,llvm,19388968,18.49,10846696,3043493,1723468,1760984,622,32,260,-1.34 MB binary; -224 deps; -14 dupes
+2026-04-04,issue/compiled-size-improvements,release,--no-default-features,gnu-ld,llvm,19283816,18.39,10766184,3039909,1709316,1756472,615,32,262,absolute minimum; -1.44 MB from baseline
+2026-04-06,issue/compiled-size-improvements,release,ci-all (everything),gnu-ld,llvm,45613224,43.50,25834561,9073317,4001728,2891352,2325,165,569,all optional features enabled
+2026-04-06,issue/compiled-size-improvements,release,default + channel-matrix,gnu-ld,llvm,31991368,30.51,20002049,3859109,3070268,2222136,1274,70,521,matrix-sdk adds 10.71 MB (+54%)
+2026-04-06,issue/compiled-size-improvements,release,default + channel-nostr,gnu-ld,llvm,22828040,21.77,12398017,4334245,1985880,1887608,926,51,298,nostr-sdk adds 1.97 MB (+10.0%)
+2026-04-06,issue/compiled-size-improvements,release,default + whatsapp-web,gnu-ld,llvm,24487688,23.35,14463272,3404453,2265924,1977208,1102,73,315,wa-rs adds 3.56 MB (+18.0%)
+2026-04-06,issue/compiled-size-improvements,release,default + channel-lark,gnu-ld,llvm,20910664,19.94,11786216,3183269,1882948,1872312,855,49,291,prost adds 0.15 MB (+0.8%)
+2026-04-06,issue/compiled-size-improvements,release,default + hardware,gnu-ld,llvm,20869160,19.90,11746408,3199653,1879564,1867672,876,52,293,nusb+tokio-serial adds 0.11 MB (+0.6%)
+2026-04-06,issue/compiled-size-improvements,release,default + plugins-wasm,gnu-ld,llvm,20856104,19.89,11763944,3179173,1869300,1866584,1276,85,303,extism adds 0.09 MB (+0.5%) but 430 dep entries
+2026-04-06,issue/compiled-size-improvements,release,default + probe,gnu-ld,llvm,20765192,19.80,11691688,3175077,1869868,1862136,1035,61,288,probe-rs adds ~0 KB binary but 189 dep entries
+2026-04-06,issue/compiled-size-improvements,release,default + rag-pdf,gnu-ld,llvm,22004968,20.99,12065768,3498661,1937180,2099032,893,42,290,pdf-extract adds 1.19 MB (+6.0%)
+2026-04-06,issue/compiled-size-improvements,release,default + browser-native,gnu-ld,llvm,21044616,20.07,11891112,3191461,1908508,1869368,930,72,288,fantoccini adds 0.27 MB (+1.4%)
+2026-04-06,issue/compiled-size-improvements,release,default + objcopy --remove-section=.eh_frame,gnu-ld,llvm,18656008,17.79,11684584,3175077,0,1862488,846,46,0,post-build strip; binary verified working

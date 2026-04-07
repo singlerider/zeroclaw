@@ -1,65 +1,100 @@
 # Binary Size & Build Time Tracking Schema
 
-Data file: [`binary-size-tracking.csv`](binary-size-tracking.csv)
+## Data files
 
-## Columns
+- [`binary-size-tracking.csv`](binary-size-tracking.csv) — Binary sizes, section sizes, dep counts, build times
+- [`binary-size-tracking-pre-extraction.csv`](binary-size-tracking-pre-extraction.csv) — Archived pre-workspace-extraction measurements
+- [`incremental-compile-times.csv`](incremental-compile-times.csv) — Incremental rebuild times per workspace crate
+
+## binary-size-tracking.csv
+
+### Columns
 
 | Column | Type | Description |
 |---|---|---|
+| `test_id` | string | Unique identifier: `{profile}-{linker}-{features_short}` |
 | `date` | `YYYY-MM-DD` | Date of measurement |
-| `branch` | string | Git branch name |
-| `profile` | enum | Cargo profile: `dev`, `release`, `release-fast`, `ci`, `dist` |
-| `features` | string | Feature flags used (human-readable summary) |
-| `linker` | enum | `gnu-ld`, `mold`, `lld`, `wild` |
+| `commit` | string | Short git commit hash |
+| `profile` | enum | `dev`, `release`, `release-fast`, `ci` |
+| `linker` | enum | `gnu-ld`, `mold`, `lld` |
 | `codegen_backend` | enum | `llvm`, `cranelift` |
-| `binary_bytes` | int | Binary size in bytes (`stat --format='%s'`) |
-| `binary_mb` | float | Binary size in MB (computed) |
-| `text_bytes` | int | `.text` section size from `readelf -SW` |
-| `rodata_bytes` | int | `.rodata` section size |
-| `eh_frame_bytes` | int | `.eh_frame` section size |
-| `data_rel_ro_bytes` | int | `.data.rel.ro` section size |
+| `features` | string | Feature flags used (human-readable) |
+| `binary_bytes` | int | `stat --format='%s'` |
+| `binary_mb` | float | Computed |
+| `text_bytes` | int | `.text` section from `readelf -SW` |
+| `rodata_bytes` | int | `.rodata` section |
+| `eh_frame_bytes` | int | `.eh_frame` section |
+| `data_rel_ro_bytes` | int | `.data.rel.ro` section |
 | `dep_tree_entries` | int | `cargo tree --edges=normal \| wc -l` |
 | `duplicate_pairs` | int | `cargo tree --duplicates \| grep "^[a-z]" \| wc -l` |
-| `build_time_secs` | int | Wall-clock build time in seconds |
-| `notes` | string | Free-text context |
+| `build_time_secs` | int | Wall-clock seconds |
+| `notes` | string | Free-text |
 
-## How to add a measurement
+### Ad-hoc re-run
+
+1. Find the `test_id` in the CSV
+2. Reconstruct: `cargo build --profile {profile} [--features ...] [--no-default-features]`
+3. For linker override: `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="clang" CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld={linker}"`
+4. Measure: `stat`, `readelf`, `cargo tree`
+5. Replace the row in the CSV
+
+## incremental-compile-times.csv
+
+### Columns
+
+| Column | Type | Description |
+|---|---|---|
+| `test_id` | string | `{profile}-{touched_file_short}` |
+| `date` | `YYYY-MM-DD` | Date |
+| `commit` | string | Short git commit hash |
+| `profile` | enum | `dev`, `release`, `ci` |
+| `touched_file` | string | Full path of file touched |
+| `crates_recompiled` | int | Count of `Compiling` lines in cargo output |
+| `crate_names` | string | Semicolon-separated list of recompiled crate names |
+| `run1_secs` | float | First timed run (seconds) |
+| `run2_secs` | float | Second timed run |
+| `run3_secs` | float | Third timed run |
+| `median_secs` | float | Median of 3 runs |
+| `notes` | string | Free-text |
+
+### Methodology
+
+1. Clean build to populate cache (once per profile)
+2. Warmup run: `touch <file> && cargo build [--profile X]` — discard
+3. Three timed runs: `touch <file> && time cargo build [--profile X]`
+4. Record wall-clock time and which crates recompiled
+5. Take median of 3 runs
+
+## Measurement commands
 
 ```bash
-# 1. Record metadata
-DATE=$(date +%Y-%m-%d)
-BRANCH=$(git branch --show-current)
-PROFILE=release
-FEATURES="description of features"
-LINKER=gnu-ld
-BACKEND=llvm
+# Binary size
+cargo build --release && stat --format='%s' target/release/zeroclaw
 
-# 2. Build and measure
-time cargo build --release [--features ...] [--no-default-features]
-BINARY_BYTES=$(stat --format='%s' target/release/zeroclaw)
-
-# 3. Section sizes (parse hex from readelf)
+# Section sizes
 readelf -SW target/release/zeroclaw | grep -E "\.text |\.rodata |\.eh_frame |\.data\.rel"
 
-# 4. Dependency counts
-DEP_ENTRIES=$(cargo tree --edges=normal [--features ...] | wc -l)
-DUP_PAIRS=$(cargo tree --duplicates [--features ...] | grep "^[a-z]" | wc -l)
+# Dependency counts
+cargo tree --edges=normal | wc -l
+cargo tree --duplicates | grep "^[a-z]" | wc -l
 
-# 5. Append to CSV
-echo "$DATE,$BRANCH,$PROFILE,$FEATURES,$LINKER,$BACKEND,$BINARY_BYTES,..." >> docs/research/binary-size-tracking.csv
-```
+# Per-crate size breakdown
+cargo bloat --release --crates -n 30
 
-## Quick reference: hex to decimal for section sizes
+# Strip .eh_frame (post-build)
+objcopy --remove-section=.eh_frame --remove-section=.eh_frame_hdr target/release/zeroclaw
 
-```python
-python3 -c "print(0xABCDEF)"  # paste hex value from readelf
+# Linker override (mold)
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="clang" \
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold" \
+cargo build --release
 ```
 
 ## Charting
 
-The CSV is importable into Google Sheets, LibreOffice Calc, or any data tool. Suggested charts:
+The CSVs are importable into Google Sheets, LibreOffice Calc, or any data tool.
 
-- **Bar chart:** `binary_mb` grouped by `features` — shows impact of each feature gate
-- **Stacked bar:** section sizes (`text`, `rodata`, `eh_frame`, `data_rel_ro`) per build config
-- **Line chart:** `binary_mb` over `date` — tracks size drift over time
-- **Scatter:** `dep_tree_entries` vs `binary_mb` — correlation between dep count and size
+- **Bar chart:** `binary_mb` grouped by `test_id` — feature gate impact
+- **Stacked bar:** section sizes per build config
+- **Grouped bar:** `median_secs` by `touched_file` grouped by `profile` — incremental timing comparison
+- **Scatter:** `dep_tree_entries` vs `binary_mb` — dep count vs size correlation

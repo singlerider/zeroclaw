@@ -1,5 +1,5 @@
 use crate::providers::traits::ChatMessage;
-use schemars::JsonSchema;
+#[cfg(feature = "schema-export")] use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

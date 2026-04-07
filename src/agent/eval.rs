@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use schemars::JsonSchema;
+#[cfg(feature = "schema-export")] use schemars::JsonSchema;
 
 pub use zeroclaw_config::{AutoClassifyConfig, ComplexityTier, EvalConfig};
 

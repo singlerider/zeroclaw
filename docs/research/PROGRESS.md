@@ -284,12 +284,89 @@ All channels independently toggleable. `schema-export` feature for schemars. All
 - **Channels** (58,524 LOC): `channels/mod.rs` calls `agent::loop_::run_tool_call_loop` directly
 - **Tools + Agent** (~76,000 LOC): `delegate` tool creates a circular tools ↔ agent dependency
 
+---
+
+## Systematic Test Results
+
+### Round 1 (2026-04-07) — After initial extraction (7 crates, 174K LOC)
+
+27 binary size rows + 24 incremental timing rows. See CSV files for full data. Root crate was ~130K LOC.
+
+### Round 2 (2026-04-08) — After full extraction (8 crates, 186K LOC)
+
+Extracted zeroclaw-core (security, SOP, hardware, observability, etc.). Root crate down to ~106K LOC.
+
+**Binary size (27 v2 rows):**
+
+| test_id | Size | Notes |
+|---|---|---|
+| `release-gnuld-default-v2` | **22.15 MB** | Post-full-extraction baseline |
+| `release-gnuld-no-default-v2` | **17.51 MB** | Absolute minimum |
+| `release-gnuld-ciall-v2` | **45.40 MB** | Everything enabled |
+| `release-gnuld-matrix-v2` | **31.48 MB** | Matrix adds +9.3 MB |
+| `release-gnuld-default-strip-eh-v2` | **19.93 MB** | objcopy .eh_frame strip |
+| `release-gnuld-no-4gates-strip-eh-v2` | **18.76 MB** | Minimum achievable |
+| `dev-mold-default-v2` | 562 MB / **120s** | mold 43% faster than gnu-ld for dev |
+| `dev-lld-default-v2` | 538 MB / **123s** | lld 41% faster than gnu-ld for dev |
+| `dev-gnuld-default-v2` | 538 MB / **210s** | gnu-ld baseline for dev |
+
+**Incremental compile times — dev profile (v1 → v2 comparison):**
+
+| Touch point | v1 (7 crates) | v2 (8 crates) | Improvement |
+|---|---|---|---|
+| root-main | 20.8s | **10.0s** | **-52%** |
+| root-agent | 27.9s | **10.1s** | **-64%** |
+| core-security | — | **11.7s** | new |
+| tools-browser | — | **13.0s** | new |
+| infra-debounce | 20.2s | **14.4s** | -29% |
+| channels-discord | — | **15.0s** | new |
+| memory-sqlite | 21.2s | **16.0s** | -25% |
+| providers-anthropic | 23.0s | **16.5s** | -28% |
+| config-schema | 24.5s | **23.8s** | -3% |
+| types-channel | 32.4s | **28.0s** | -14% |
+
+**Incremental compile times — release profile (v1 → v2):**
+
+| Touch point | v1 | v2 | Improvement |
+|---|---|---|---|
+| root-main | 338.8s | **234.4s** | **-31%** |
+| root-agent | 366.2s | **231.2s** | **-37%** |
+| tools-browser | — | **247.5s** | new |
+| core-security | — | **250.3s** | new |
+| infra-debounce | 353.9s | **274.5s** | -22% |
+| channels-discord | — | **282.1s** | new |
+| memory-sqlite | 336.0s | **286.5s** | -15% |
+| providers-anthropic | 375.0s | **287.0s** | -23% |
+| config-schema | 377.6s | **323.9s** | -14% |
+| types-channel | 427.3s | **339.7s** | -20% |
+
+**Incremental compile times — CI profile (v1 → v2):**
+
+| Touch point | v1 | v2 | Improvement |
+|---|---|---|---|
+| root-main | 188.3s | **105.6s** | **-44%** |
+| root-agent | 188.9s | **109.4s** | **-42%** |
+| core-security | — | **119.5s** | new |
+| tools-browser | — | **134.3s** | new |
+| memory-sqlite | 187.3s | **144.0s** | -23% |
+| infra-debounce | 196.4s | **145.4s** | -26% |
+| channels-discord | — | **155.8s** | new |
+| providers-anthropic | 184.7s | **175.3s** | -5% |
+| config-schema | 207.7s | **180.6s** | -13% |
+| types-channel | 209.2s | **198.3s** | -5% |
+
+### Feature gate validation
+
+**28/28 PASS, 0 FAIL.** All channel features compile correctly when individually disabled.
+
 ### Key findings
 
 | Optimization | Savings | Status |
 |---|---|---|
-| `objcopy --remove-section=.eh_frame` | 2.0 MB | Documented, not in build pipeline |
-| All 4 initial feature gates disabled | 1.31 MB | Implemented |
-| schemars optional | ~457 KB | Implemented |
-| All 28 channel gates disabled | ~1.5 MB est. | Implemented |
-| Workspace splitting | Incremental compile improvement | 62,603 LOC extracted |
+| `objcopy --remove-section=.eh_frame` | 2.2 MB | Documented, not in build pipeline |
+| All 4 initial feature gates disabled | 1.3 MB | Implemented |
+| schemars optional | 2.1 MB | Implemented |
+| Workspace splitting (dev root rebuild) | **52% faster** | 186K LOC extracted |
+| Workspace splitting (release root rebuild) | **31-37% faster** | 8 crates |
+| Workspace splitting (CI root rebuild) | **42-44% faster** | |
+| mold/lld for dev builds | **43% faster** link | Not yet in config |
