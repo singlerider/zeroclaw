@@ -3490,6 +3490,34 @@ mod tests {
         }
     }
 
+    // ── Inception / Mercury provider ────────────────────────
+
+    #[test]
+    fn factory_inception_provider_creates_successfully() {
+        for name in ["inception", "mercury", "inception-mercury"] {
+            assert!(
+                create_provider(name, Some("test-key")).is_ok(),
+                "factory should create provider for name: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn inception_listed_with_correct_aliases() {
+        let providers = list_providers();
+        let inception = providers.iter().find(|p| p.name == "inception");
+        assert!(inception.is_some(), "inception should be in provider list");
+        let inception = inception.unwrap();
+        assert!(
+            inception.aliases.contains(&"mercury"),
+            "inception should have 'mercury' alias"
+        );
+        assert!(
+            inception.aliases.contains(&"inception-mercury"),
+            "inception should have 'inception-mercury' alias"
+        );
+    }
+
     // ── API error sanitization ───────────────────────────────
 
     #[test]

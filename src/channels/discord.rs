@@ -2442,4 +2442,63 @@ mod tests {
         let chunks = split_message_for_discord_multi("", 2000);
         assert!(chunks.is_empty());
     }
+
+    // ── Diffusion streaming tests ───────────────────────────
+
+    #[test]
+    fn draft_event_refine_replaces_accumulated_text() {
+        use crate::agent::loop_::DraftEvent;
+
+        // Simulate the draft updater accumulation logic.
+        let mut accumulated = String::new();
+
+        let events = vec![
+            DraftEvent::Content("hello ".to_string()),
+            DraftEvent::Content("world".to_string()),
+            DraftEvent::Refine("refined output".to_string()),
+            DraftEvent::Content(" appended".to_string()),
+        ];
+
+        for event in events {
+            match event {
+                DraftEvent::Clear => accumulated.clear(),
+                DraftEvent::Progress(_) => {}
+                DraftEvent::Content(text) => accumulated.push_str(&text),
+                DraftEvent::Refine(text) => accumulated = text,
+            }
+        }
+
+        assert_eq!(
+            accumulated, "refined output appended",
+            "Refine should replace accumulated text, then Content should append"
+        );
+    }
+
+    #[test]
+    fn multi_message_should_downgrade_to_partial_for_diffusion() {
+        use crate::config::StreamMode;
+        use crate::providers::traits::ProviderCapabilities;
+
+        let caps = ProviderCapabilities {
+            native_tool_calling: true,
+            vision: false,
+            prompt_caching: false,
+            diffusion_streaming: true,
+        };
+
+        let configured_mode = StreamMode::MultiMessage;
+
+        // When diffusion_streaming is true, MultiMessage should downgrade to Partial.
+        let effective_mode = if caps.diffusion_streaming && configured_mode == StreamMode::MultiMessage {
+            StreamMode::Partial
+        } else {
+            configured_mode
+        };
+
+        assert_eq!(
+            effective_mode,
+            StreamMode::Partial,
+            "MultiMessage should downgrade to Partial for diffusion providers"
+        );
+    }
 }

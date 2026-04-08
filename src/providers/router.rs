@@ -805,6 +805,7 @@ mod tests {
                 native_tool_calling: self.tools,
                 vision: self.vision,
                 prompt_caching: false,
+                diffusion_streaming: false,
             }
         }
 

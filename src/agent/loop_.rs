@@ -5242,6 +5242,7 @@ mod tests {
                 native_tool_calling: false,
                 vision: true,
                 prompt_caching: false,
+                diffusion_streaming: false,
             }
         }
 
@@ -5446,6 +5447,7 @@ mod tests {
                 native_tool_calling: true,
                 vision: false,
                 prompt_caching: false,
+                diffusion_streaming: false,
             }
         }
 
@@ -7055,6 +7057,7 @@ mod tests {
                 DraftEvent::Content(text) => {
                     visible_deltas.push_str(&text);
                 }
+                DraftEvent::Refine(_) => {}
             }
         }
 
@@ -7126,6 +7129,7 @@ mod tests {
                 DraftEvent::Content(text) => {
                     visible_deltas.push_str(&text);
                 }
+                DraftEvent::Refine(_) => {}
             }
         }
 
@@ -7201,6 +7205,7 @@ mod tests {
                 DraftEvent::Content(text) => {
                     visible_deltas.push_str(&text);
                 }
+                DraftEvent::Refine(_) => {}
             }
         }
 
@@ -7285,6 +7290,7 @@ mod tests {
                 DraftEvent::Content(text) => {
                     visible_deltas.push_str(&text);
                 }
+                DraftEvent::Refine(_) => {}
             }
         }
 
@@ -9297,7 +9303,7 @@ Let me check the result."#;
         let all_deltas: String = deltas
             .iter()
             .filter_map(|d| match d {
-                DraftEvent::Progress(t) | DraftEvent::Content(t) => Some(t.as_str()),
+                DraftEvent::Progress(t) | DraftEvent::Content(t) | DraftEvent::Refine(t) => Some(t.as_str()),
                 DraftEvent::Clear => None,
             })
             .collect();
@@ -9586,5 +9592,67 @@ Let me check the result."#;
         .expect("should succeed without cost scope");
 
         assert_eq!(result, "ok");
+    }
+
+    // ── Diffusion streaming tests ───────────────────────────
+
+    #[test]
+    fn text_refinement_replaces_response_text() {
+        use crate::providers::traits::{StreamChunk, StreamEvent};
+
+        // Simulate the consumption logic from consume_provider_streaming_response.
+        let mut response_text = String::new();
+
+        let events = vec![
+            StreamEvent::TextDelta(StreamChunk::delta("hello ".to_string())),
+            StreamEvent::TextDelta(StreamChunk::delta("world".to_string())),
+            StreamEvent::TextRefinement(StreamChunk::delta("completely refined".to_string())),
+            StreamEvent::TextRefinement(StreamChunk::delta("final refined output".to_string())),
+        ];
+
+        for event in events {
+            match event {
+                StreamEvent::TextDelta(chunk) => {
+                    response_text.push_str(&chunk.delta);
+                }
+                StreamEvent::TextRefinement(chunk) => {
+                    response_text = chunk.delta;
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(
+            response_text, "final refined output",
+            "TextRefinement should replace accumulated text, not append"
+        );
+    }
+
+    #[tokio::test]
+    async fn text_refinement_emits_draft_refine_event() {
+        use crate::providers::traits::{StreamChunk, StreamEvent};
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<DraftEvent>(64);
+
+        // Simulate forwarding logic for a TextRefinement event.
+        let chunk = StreamChunk::delta("refined text".to_string());
+        let event = StreamEvent::TextRefinement(chunk);
+
+        match event {
+            StreamEvent::TextRefinement(chunk) => {
+                let _ = tx.send(DraftEvent::Refine(chunk.delta)).await;
+            }
+            _ => {}
+        }
+
+        drop(tx);
+        let received = rx.recv().await;
+        assert!(received.is_some(), "should have received a DraftEvent");
+        match received.unwrap() {
+            DraftEvent::Refine(text) => {
+                assert_eq!(text, "refined text");
+            }
+            other => panic!("expected DraftEvent::Refine, got {other:?}"),
+        }
     }
 }

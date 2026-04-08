@@ -584,6 +584,7 @@ mod tests {
                 native_tool_calling: true,
                 vision: true,
                 prompt_caching: false,
+                diffusion_streaming: false,
             }
         }
 
@@ -701,16 +702,19 @@ mod tests {
             native_tool_calling: true,
             vision: false,
             prompt_caching: false,
+            diffusion_streaming: false,
         };
         let caps2 = ProviderCapabilities {
             native_tool_calling: true,
             vision: false,
             prompt_caching: false,
+            diffusion_streaming: false,
         };
         let caps3 = ProviderCapabilities {
             native_tool_calling: false,
             vision: false,
             prompt_caching: false,
+            diffusion_streaming: false,
         };
 
         assert_eq!(caps1, caps2);

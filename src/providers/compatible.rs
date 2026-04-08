@@ -3241,6 +3241,41 @@ mod tests {
         assert_eq!(provider.reasoning_effort_for_model("llama-3.3-70b"), None);
     }
 
+    #[test]
+    fn reasoning_effort_applies_to_mercury_models() {
+        let provider = make_provider("test", "https://example.com", None)
+            .with_reasoning_effort(Some("medium".to_string()));
+
+        assert_eq!(
+            provider.reasoning_effort_for_model("mercury-coder-small-beta"),
+            Some("medium".to_string()),
+            "mercury-coder-small-beta should support reasoning effort"
+        );
+        assert_eq!(
+            provider.reasoning_effort_for_model("inception/mercury-2"),
+            Some("medium".to_string()),
+            "inception/mercury-2 should support reasoning effort (after slash split)"
+        );
+    }
+
+    #[test]
+    fn diffusion_streaming_capability_flag() {
+        let provider = make_provider("test", "https://example.com", None)
+            .with_diffusion_streaming(true);
+        let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&provider);
+        assert!(
+            caps.diffusion_streaming,
+            "diffusion_streaming should be true when set via builder"
+        );
+
+        let default_provider = make_provider("test", "https://example.com", None);
+        let default_caps = <OpenAiCompatibleProvider as Provider>::capabilities(&default_provider);
+        assert!(
+            !default_caps.diffusion_streaming,
+            "diffusion_streaming should default to false"
+        );
+    }
+
     #[tokio::test]
     async fn warmup_without_key_is_noop() {
         let provider = make_provider("test", "https://example.com", None);
