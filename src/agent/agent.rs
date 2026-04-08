@@ -1066,6 +1066,9 @@ impl Agent {
                         } => {
                             let _ = event_tx.send(TurnEvent::ToolResult { name, output }).await;
                         }
+                        crate::providers::traits::StreamEvent::TextRefinement(_chunk) => {
+                            // TODO: implement diffusion streaming support
+                        }
                         crate::providers::traits::StreamEvent::Final => break,
                     },
                     Err(_) => break,

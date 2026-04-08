@@ -48,6 +48,8 @@ pub struct OpenAiCompatibleProvider {
     api_path: Option<String>,
     /// Maximum output tokens to include in API requests.
     max_tokens: Option<u32>,
+    /// Whether this provider uses diffusion-based streaming (full-text refinement).
+    diffusion_streaming: bool,
 }
 
 /// How the provider expects the API key to be sent.
@@ -239,6 +241,7 @@ impl OpenAiCompatibleProvider {
             reasoning_effort: None,
             api_path: None,
             max_tokens: None,
+            diffusion_streaming: false,
         }
     }
 
@@ -286,6 +289,13 @@ impl OpenAiCompatibleProvider {
     /// Set the maximum output tokens for API requests.
     pub fn with_max_tokens(mut self, max_tokens: Option<u32>) -> Self {
         self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Mark this provider as using diffusion-based streaming (full-text
+    /// refinement rather than append-only deltas).
+    pub fn with_diffusion_streaming(mut self, enabled: bool) -> Self {
+        self.diffusion_streaming = enabled;
         self
     }
 
@@ -1643,6 +1653,7 @@ impl Provider for OpenAiCompatibleProvider {
             native_tool_calling: self.native_tool_calling,
             vision: self.supports_vision,
             prompt_caching: false,
+            diffusion_streaming: false,
         }
     }
 

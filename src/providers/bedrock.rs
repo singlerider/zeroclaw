@@ -1053,6 +1053,7 @@ impl Provider for BedrockProvider {
             native_tool_calling: true,
             vision: true,
             prompt_caching: false,
+            diffusion_streaming: false,
         }
     }
 

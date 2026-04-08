@@ -273,6 +273,9 @@ pub enum DraftEvent {
     Progress(String),
     /// Actual response content delta to append to the draft message.
     Content(String),
+    /// Full replacement text from a diffusion model refinement pass.
+    /// Replaces all previously accumulated draft content.
+    Refine(String),
 }
 
 tokio::task_local! {
@@ -2058,6 +2061,9 @@ async fn consume_provider_streaming_response(
                 // Pre-executed tool events are for observability only.
                 // They are forwarded to the gateway via turn_streamed but
                 // do not affect the agent's tool dispatch loop.
+            }
+            StreamEvent::TextRefinement(_chunk) => {
+                // TODO: implement diffusion streaming support
             }
             StreamEvent::TextDelta(chunk) => {
                 if chunk.delta.is_empty() {
@@ -4246,6 +4252,9 @@ pub async fn run(
                             content_streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                             print!("{text}");
                             let _ = std::io::stdout().flush();
+                        }
+                        DraftEvent::Refine(_text) => {
+                            // TODO: implement diffusion streaming support
                         }
                     }
                 }

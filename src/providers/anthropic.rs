@@ -882,6 +882,7 @@ impl Provider for AnthropicProvider {
             native_tool_calling: true,
             vision: true,
             prompt_caching: true,
+            diffusion_streaming: false,
         }
     }
 

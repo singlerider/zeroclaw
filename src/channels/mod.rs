@@ -2897,6 +2897,9 @@ async fn process_channel_message(
                                 tracing::debug!("Draft update failed: {e}");
                             }
                         }
+                        DraftEvent::Refine(_text) => {
+                            // TODO: implement diffusion streaming support
+                        }
                     }
                 }
             }))

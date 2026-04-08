@@ -188,6 +188,9 @@ impl StreamChunk {
 pub enum StreamEvent {
     /// Text delta from the assistant.
     TextDelta(StreamChunk),
+    /// Full replacement text from a diffusion model refinement pass.
+    /// Unlike `TextDelta` (append-only), this replaces all previously streamed text.
+    TextRefinement(StreamChunk),
     /// Structured tool call emitted during streaming.
     ToolCall(ToolCall),
     /// A tool call that was already executed by the provider (e.g. Claude Code proxy).
@@ -283,6 +286,9 @@ pub struct ProviderCapabilities {
     /// Whether the provider supports prompt caching (Anthropic cache_control,
     /// OpenAI automatic prompt caching).
     pub prompt_caching: bool,
+    /// Whether the provider uses diffusion-based streaming (full-text refinement
+    /// rather than append-only deltas).
+    pub diffusion_streaming: bool,
 }
 
 /// Provider-specific tool payload formats.
