@@ -2897,8 +2897,14 @@ async fn process_channel_message(
                                 tracing::debug!("Draft update failed: {e}");
                             }
                         }
-                        DraftEvent::Refine(_text) => {
-                            // TODO: implement diffusion streaming support
+                        DraftEvent::Refine(text) => {
+                            accumulated = text;
+                            if let Err(e) = channel
+                                .update_draft(&reply_target, &draft_id, &accumulated)
+                                .await
+                            {
+                                tracing::debug!("Draft update (refine) failed: {e}");
+                            }
                         }
                     }
                 }

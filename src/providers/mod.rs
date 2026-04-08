@@ -966,6 +966,9 @@ fn resolve_provider_credential(name: &str, credential_override: Option<&str>) ->
         "siliconflow" | "silicon-flow" => vec!["SILICONFLOW_API_KEY"],
         "osaurus" => vec!["OSAURUS_API_KEY"],
         "telnyx" => vec!["TELNYX_API_KEY"],
+        "inception" | "mercury" | "inception-mercury" => {
+            vec!["INCEPTION_API_KEY", "MERCURY_API_KEY"]
+        }
         "azure_openai" | "azure-openai" | "azure" => vec!["AZURE_OPENAI_API_KEY"],
         _ => vec![],
     };
@@ -1577,6 +1580,15 @@ fn create_provider_with_url_and_options(
             key,
             AuthStyle::Bearer,
         ))),
+        "inception" | "mercury" | "inception-mercury" => Ok(compat(
+            OpenAiCompatibleProvider::new(
+                "Inception (Mercury)",
+                "https://api.inceptionlabs.ai/v1",
+                key,
+                AuthStyle::Bearer,
+            )
+            .with_diffusion_streaming(true),
+        )),
 
         // ── Model hosting platforms ──────────────────────────
         "deepinfra" | "deep-infra" => Ok(compat(OpenAiCompatibleProvider::new(
@@ -2264,6 +2276,12 @@ pub fn list_providers() -> Vec<ProviderInfo> {
             name: "hyperbolic",
             display_name: "Hyperbolic",
             aliases: &[],
+            local: false,
+        },
+        ProviderInfo {
+            name: "inception",
+            display_name: "Inception (Mercury)",
+            aliases: &["mercury", "inception-mercury"],
             local: false,
         },
         // ── Model hosting platforms ──────────────────────────

@@ -2062,8 +2062,20 @@ async fn consume_provider_streaming_response(
                 // They are forwarded to the gateway via turn_streamed but
                 // do not affect the agent's tool dispatch loop.
             }
-            StreamEvent::TextRefinement(_chunk) => {
-                // TODO: implement diffusion streaming support
+            StreamEvent::TextRefinement(chunk) => {
+                if chunk.delta.is_empty() {
+                    continue;
+                }
+                outcome.response_text = chunk.delta.clone();
+                if let Some(tx) = delta_sender {
+                    if !outcome.forwarded_live_deltas {
+                        let _ = tx.send(DraftEvent::Clear).await;
+                        outcome.forwarded_live_deltas = true;
+                    }
+                    if tx.send(DraftEvent::Refine(chunk.delta)).await.is_err() {
+                        delta_sender = None;
+                    }
+                }
             }
             StreamEvent::TextDelta(chunk) => {
                 if chunk.delta.is_empty() {
@@ -4253,8 +4265,16 @@ pub async fn run(
                             print!("{text}");
                             let _ = std::io::stdout().flush();
                         }
-                        DraftEvent::Refine(_text) => {
-                            // TODO: implement diffusion streaming support
+                        DraftEvent::Refine(text) => {
+                            content_streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            // Clear current output and replace with refined text.
+                            if is_tty {
+                                // Move to start of output area and clear.
+                                print!("\r\x1b[J{text}");
+                            } else {
+                                print!("{text}");
+                            }
+                            let _ = std::io::stdout().flush();
                         }
                     }
                 }

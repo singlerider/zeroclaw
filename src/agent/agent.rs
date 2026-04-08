@@ -1066,8 +1066,14 @@ impl Agent {
                         } => {
                             let _ = event_tx.send(TurnEvent::ToolResult { name, output }).await;
                         }
-                        crate::providers::traits::StreamEvent::TextRefinement(_chunk) => {
-                            // TODO: implement diffusion streaming support
+                        crate::providers::traits::StreamEvent::TextRefinement(chunk) => {
+                            if !chunk.delta.is_empty() {
+                                got_stream = true;
+                                streamed_text = chunk.delta.clone();
+                                let _ = event_tx
+                                    .send(TurnEvent::Chunk { delta: chunk.delta })
+                                    .await;
+                            }
                         }
                         crate::providers::traits::StreamEvent::Final => break,
                     },
