@@ -144,6 +144,20 @@ Field names differ by channel:
 
 ---
 
+## 3.1 Streaming Modes
+
+Channels that support streaming can operate in one of three modes:
+
+| Mode | Behavior |
+|------|----------|
+| `off` | No streaming. The complete response is sent as a single message. |
+| `partial` | An editable draft message updates in-place as the LLM streams tokens. |
+| `multi_message` | The response is delivered as separate messages, split at paragraph boundaries. |
+
+**Diffusion model providers** (e.g. Inception/Mercury) use a refinement-based streaming paradigm where the full output is progressively refined rather than appended token-by-token. When a diffusion provider is active, `multi_message` mode is automatically downgraded to `partial` because paragraph-splitting is incompatible with text that may be rewritten on each refinement pass. A log message is emitted when this downgrade occurs.
+
+---
+
 ## 4. Per-Channel Config Examples
 
 ### 4.1 Telegram
@@ -184,6 +198,7 @@ Discord notes:
 - `draft_update_interval_ms` controls edit throttling in partial mode (default: 1000ms).
 - `multi_message_delay_ms` controls minimum delay between paragraph sends in multi_message mode to avoid Discord rate limits (default: 800ms).
 - Code fences are never split across messages in multi_message mode.
+- Diffusion model providers (e.g. Mercury) automatically downgrade `multi_message` to `partial`. See [Streaming Modes](#31-streaming-modes).
 
 ### 4.3 Slack
 
@@ -235,6 +250,7 @@ Matrix streaming notes:
 - `multi_message_delay_ms` controls minimum delay between paragraph sends in multi_message mode (default: 800ms).
 - Both modes work in encrypted and unencrypted rooms — the matrix-sdk handles E2EE transparently.
 - Existing configs without `stream_mode` default to `off` (no behavior change).
+- Diffusion model providers (e.g. Mercury) automatically downgrade `multi_message` to `partial`. See [Streaming Modes](#31-streaming-modes).
 
 See [Matrix E2EE Guide](../../security/matrix-e2ee-guide.md) for encrypted-room troubleshooting.
 
