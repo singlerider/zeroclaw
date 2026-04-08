@@ -2928,11 +2928,22 @@ async fn process_channel_message(
         }
     }
 
+    // Diffusion providers (e.g. Mercury) refine the full text on every chunk,
+    // which is incompatible with MultiMessage paragraph splitting. Downgrade
+    // to Partial (edit-in-place) so refined text replaces a single message.
+    let is_diffusion_provider = matches!(route.provider.as_str(), "inception" | "mercury" | "inception-mercury");
+    if is_diffusion_provider && target_channel.as_ref().is_some_and(|ch| ch.supports_multi_message_streaming()) {
+        tracing::info!("Diffusion provider detected — downgrading MultiMessage to Partial streaming");
+    }
+
     // Skip typing only for Partial mode — the draft message itself provides
     // visual feedback. MultiMessage and Off both keep typing active.
     let is_partial_draft = target_channel
         .as_ref()
-        .is_some_and(|ch| ch.supports_draft_updates() && !ch.supports_multi_message_streaming());
+        .is_some_and(|ch| {
+            ch.supports_draft_updates()
+                && (is_diffusion_provider || !ch.supports_multi_message_streaming())
+        });
     let typing_cancellation = if is_partial_draft {
         None
     } else {
