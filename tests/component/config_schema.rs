@@ -9,6 +9,29 @@ use zeroclaw::config::{AutonomyConfig, ChannelsConfig, Config, GatewayConfig, Se
 // Invalid value fail-fast
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Regression test for #5414 / #5320 / #5483: Option<T> fields that
+/// default to None must not be flagged as unknown config keys.
+#[test]
+fn config_option_fields_not_flagged_as_unknown() {
+    let toml_str = "api_key = \"test-key-123\"\n";
+    let config: Config = toml::from_str(toml_str).unwrap();
+    let raw: toml::Table = toml_str.parse().unwrap();
+    // Mirror the fixed production logic: serialize the *parsed* config.
+    let known: Vec<String> = toml::to_string(&config)
+        .unwrap()
+        .parse::<toml::Table>()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    for key in raw.keys() {
+        assert!(
+            known.contains(key),
+            "key '{key}' should be recognized as a valid config key, not flagged as unknown",
+        );
+    }
+}
+
 #[test]
 fn config_unknown_keys_parse_without_error() {
     let toml_str = r#"

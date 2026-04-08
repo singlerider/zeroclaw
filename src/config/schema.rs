@@ -9444,16 +9444,14 @@ impl Config {
             // This replaces the previous serde_ignored-based approach which
             // had false-positive issues with #[serde(default)] nested structs.
             if let Ok(raw) = contents.parse::<toml::Table>() {
-                // Build the set of known top-level keys from a default Config
-                // serialization round-trip.  This is computed once and cached.
-                static KNOWN_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-                let known = KNOWN_KEYS.get_or_init(|| {
-                    toml::to_string(&Config::default())
-                        .ok()
-                        .and_then(|s| s.parse::<toml::Table>().ok())
-                        .map(|t| t.keys().cloned().collect())
-                        .unwrap_or_default()
-                });
+                // Re-serialize the parsed config to discover which top-level
+                // keys serde actually consumed.  Unlike Config::default(),
+                // user-populated Option<T> fields survive the TOML round-trip.
+                let known: Vec<String> = toml::to_string(&config)
+                    .ok()
+                    .and_then(|s| s.parse::<toml::Table>().ok())
+                    .map(|t| t.keys().cloned().collect())
+                    .unwrap_or_default();
                 for key in raw.keys() {
                     if !known.contains(key) {
                         tracing::warn!(
