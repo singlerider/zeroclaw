@@ -62,6 +62,7 @@ Tiers are promoted, never demoted, through deliberate team decision.
 ## Repository Map
 
 - `src/main.rs` — CLI entrypoint and command routing
+- `src/lib.rs` — module re-exports and CLI command enum definitions
 - `crates/zeroclaw-api/` — public trait definitions (Provider, Channel, Tool, Memory, Observer, Peripheral)
 - `crates/zeroclaw-config/` — schema, config loading/merging
 - `crates/zeroclaw-macros/` — Configurable derive macro
@@ -84,7 +85,7 @@ Tiers are promoted, never demoted, through deliberate team decision.
 
 - **Low risk**: docs/chore/tests-only changes
 - **Medium risk**: most `crates/*/src/**` behavior changes without boundary/security impact
-- **High risk**: `crates/zeroclaw-runtime/src/security/**`, `crates/zeroclaw-runtime/src/**`, `crates/zeroclaw-gateway/src/**`, `crates/zeroclaw-tools/src/**`, `.github/workflows/**`, access-control boundaries
+- **High risk**: `crates/zeroclaw-runtime/src/**` (especially `src/security/`), `crates/zeroclaw-gateway/src/**`, `crates/zeroclaw-tools/src/**`, `.github/workflows/**`, access-control boundaries
 
 When uncertain, classify as higher risk.
 
