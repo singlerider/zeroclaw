@@ -2042,6 +2042,7 @@ async fn main() -> Result<()> {
 }
 
 /// Build wizard callbacks that wire downstream crate functionality into the onboarding wizard.
+#[cfg(feature = "agent-runtime")]
 fn build_wizard_callbacks() -> onboard::WizardCallbacks {
     onboard::WizardCallbacks {
         #[cfg(feature = "hardware")]
