@@ -264,13 +264,21 @@ echo "  Version: $(bold "$VERSION") (MSRV: $MSRV, edition: $EDITION)"
 
 # ── Preflight: Rust ───────────────────────────────────────────────
 
+NEED_RUST=false
 if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
+  NEED_RUST=true
+elif [[ "$PREFIX" != "$HOME" && ! -d "$RUSTUP_HOME/toolchains" ]]; then
+  # Custom prefix but no local toolchain — system Rust won't work with our RUSTUP_HOME
+  NEED_RUST=true
+fi
+
+if [[ "$NEED_RUST" == true ]]; then
   if [[ "$DRY_RUN" == true ]]; then
     warn "[dry-run] Would install Rust via rustup into $RUSTUP_HOME"
   else
-    warn "Rust not found — installing via rustup"
+    warn "Installing Rust via rustup into $CARGO_HOME"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-      --no-modify-path
+      --no-modify-path --default-toolchain stable
     # shellcheck source=/dev/null
     source "$CARGO_HOME/env"
   fi
@@ -314,8 +322,9 @@ fi
 
 # ── Detect reinstall ─────────────────────────────────────────────
 
-if command -v zeroclaw >/dev/null 2>&1; then
-  EXISTING=$(zeroclaw --version 2>/dev/null | awk '{print $NF}' || echo "unknown")
+EXISTING_BIN="$CARGO_HOME/bin/zeroclaw"
+if [[ -f "$EXISTING_BIN" ]]; then
+  EXISTING=$("$EXISTING_BIN" --version 2>/dev/null | awk '{print $NF}' || echo "unknown")
   warn "Existing install detected: v$EXISTING"
   if [[ "$MINIMAL" == true && "$DRY_RUN" != true ]]; then
     echo
