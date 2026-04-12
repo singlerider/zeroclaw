@@ -199,7 +199,7 @@ PREFIX="$HOME"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --minimal)        MINIMAL=true ;;
-    --features)       shift; USER_FEATURES="$1" ;;
+    --features)       shift; USER_FEATURES="${USER_FEATURES:+$USER_FEATURES,}$1" ;;
     --list-features)  LIST_FEATURES=true ;;
     --prefix)         shift; PREFIX="$1" ;;
     --dry-run)        DRY_RUN=true ;;
@@ -309,13 +309,18 @@ if [[ "$MINIMAL" == true ]]; then
 fi
 
 if [[ -n "$USER_FEATURES" ]]; then
-  # Validate each feature
-  IFS=',' read -ra feats <<< "$USER_FEATURES"
-  for feat in "${feats[@]}"; do
-    feat=$(echo "$feat" | xargs) # trim whitespace
-    [[ -n "$feat" ]] && validate_feature "$feat"
-  done
-  CARGO_ARGS+=(--features "$USER_FEATURES")
+  # Normalize: strip spaces, deduplicate, trim empty entries
+  USER_FEATURES=$(echo "$USER_FEATURES" | tr -d ' ' | tr ',' '\n' | grep -v '^$' | sort -u | paste -sd, - || true)
+
+  # Skip if normalization emptied the string
+  if [[ -n "$USER_FEATURES" ]]; then
+    # Validate each feature
+    IFS=',' read -ra feats <<< "$USER_FEATURES"
+    for feat in "${feats[@]}"; do
+      [[ -n "$feat" ]] && validate_feature "$feat"
+    done
+    CARGO_ARGS+=(--features "$USER_FEATURES")
+  fi
 fi
 
 # ── Detect reinstall ─────────────────────────────────────────────
