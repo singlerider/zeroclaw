@@ -3329,6 +3329,11 @@ mod tests {
     use crate::agent::tool_execution::execute_one_tool;
     use tempfile::tempdir;
     use zeroclaw_providers::ChatMessage;
+    use zeroclaw_tool_call_parser::{
+        default_param_for_tool, extract_json_values, map_tool_name_alias, parse_arguments_value,
+        parse_glm_shortened_body, parse_glm_style_tool_calls, parse_tool_call_value,
+        parse_tool_calls_from_json_value,
+    };
 
     // ── truncate_tool_result tests ────────────────────────────────
 
@@ -6720,7 +6725,7 @@ Let me check the result."#;
             None, // no identity config
             None, // no bootstrap_max_chars
             true, // native_tools
-            crate::config::SkillsPromptInjectionMode::Full,
+            zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             crate::security::AutonomyLevel::default(),
         );
 
@@ -7175,7 +7180,7 @@ Let me check the result."#;
             None,
             "telegram",
             None,
-            &crate::config::MultimodalConfig::default(),
+            &zeroclaw_config::schema::MultimodalConfig::default(),
             4,
             None,
             Some(tx),
@@ -7184,7 +7189,7 @@ Let me check the result."#;
             &[],
             None,
             None,
-            &crate::config::PacingConfig::default(),
+            &zeroclaw_config::schema::PacingConfig::default(),
             0,
             0,
             None,
@@ -7281,10 +7286,10 @@ Let me check the result."#;
         use super::{
             TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
         };
-        use zeroclaw_config::schema::ModelPricing;
         use crate::cost::CostTracker;
         use crate::observability::noop::NoopObserver;
         use std::collections::HashMap;
+        use zeroclaw_config::schema::ModelPricing;
 
         let provider = ScriptedProvider {
             responses: Arc::new(Mutex::new(VecDeque::from([ChatResponse {
@@ -7301,9 +7306,9 @@ Let me check the result."#;
         };
         let observer = NoopObserver;
         let workspace = tempfile::TempDir::new().unwrap();
-        let mut cost_config = crate::config::CostConfig {
+        let mut cost_config = zeroclaw_config::schema::CostConfig {
             enabled: true,
-            ..crate::config::CostConfig::default()
+            ..zeroclaw_config::schema::CostConfig::default()
         };
         cost_config.prices = HashMap::from([(
             "mock-model".to_string(),
@@ -7334,7 +7339,7 @@ Let me check the result."#;
                     None,
                     "test",
                     None,
-                    &crate::config::MultimodalConfig::default(),
+                    &zeroclaw_config::schema::MultimodalConfig::default(),
                     2,
                     None,
                     None,
@@ -7343,7 +7348,7 @@ Let me check the result."#;
                     &[],
                     None,
                     None,
-                    &crate::config::PacingConfig::default(),
+                    &zeroclaw_config::schema::PacingConfig::default(),
                     0,
                     0,
                     None,
@@ -7367,18 +7372,18 @@ Let me check the result."#;
         use super::{
             TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
         };
-        use zeroclaw_config::schema::ModelPricing;
         use crate::cost::CostTracker;
         use crate::observability::noop::NoopObserver;
         use std::collections::HashMap;
+        use zeroclaw_config::schema::ModelPricing;
 
         let provider = ScriptedProvider::from_text_responses(vec!["should not reach this"]);
         let observer = NoopObserver;
         let workspace = tempfile::TempDir::new().unwrap();
-        let cost_config = crate::config::CostConfig {
+        let cost_config = zeroclaw_config::schema::CostConfig {
             enabled: true,
             daily_limit_usd: 0.001, // very low limit
-            ..crate::config::CostConfig::default()
+            ..zeroclaw_config::schema::CostConfig::default()
         };
         let tracker = Arc::new(CostTracker::new(cost_config.clone(), workspace.path()).unwrap());
         // Record a usage that already exceeds the limit
@@ -7419,7 +7424,7 @@ Let me check the result."#;
                     None,
                     "test",
                     None,
-                    &crate::config::MultimodalConfig::default(),
+                    &zeroclaw_config::schema::MultimodalConfig::default(),
                     2,
                     None,
                     None,
@@ -7428,7 +7433,7 @@ Let me check the result."#;
                     &[],
                     None,
                     None,
-                    &crate::config::PacingConfig::default(),
+                    &zeroclaw_config::schema::PacingConfig::default(),
                     0,
                     0,
                     None,
@@ -7477,7 +7482,7 @@ Let me check the result."#;
             None,
             "test",
             None,
-            &crate::config::MultimodalConfig::default(),
+            &zeroclaw_config::schema::MultimodalConfig::default(),
             2,
             None,
             None,
@@ -7486,7 +7491,7 @@ Let me check the result."#;
             &[],
             None,
             None,
-            &crate::config::PacingConfig::default(),
+            &zeroclaw_config::schema::PacingConfig::default(),
             0,
             0,
             None,
