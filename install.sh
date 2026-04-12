@@ -352,6 +352,12 @@ if [[ "$DRY_RUN" == true ]]; then
   else
     info "cargo install --path . --locked --force"
   fi
+
+  EXPORT_LINE=$(shell_export_syntax)
+  PROFILE=$(detect_shell_profile)
+  echo
+  echo "  $(bold "Shell profile") ($PROFILE):"
+  echo "    $EXPORT_LINE"
   echo
   exit 0
 fi
@@ -380,19 +386,28 @@ else
   warn "Binary not found at expected path: $BIN"
 fi
 
-# ── PATH check ────────────────────────────────────────────────────
+# ── PATH guidance ─────────────────────────────────────────────────
 
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$CARGO_HOME/bin"; then
-  PROFILE=$(detect_shell_profile)
-  EXPORT_LINE=$(shell_export_syntax)
+PROFILE=$(detect_shell_profile)
+EXPORT_LINE=$(shell_export_syntax)
+
+# Always show for custom prefix; for default prefix, check if profile has it
+SHOW_PATH_HELP=false
+if [[ "$PREFIX" != "$HOME" ]]; then
+  SHOW_PATH_HELP=true
+elif [[ -f "$PROFILE" ]] && ! grep -q "$CARGO_HOME/bin" "$PROFILE" 2>/dev/null; then
+  SHOW_PATH_HELP=true
+elif [[ ! -f "$PROFILE" ]]; then
+  SHOW_PATH_HELP=true
+fi
+
+if [[ "$SHOW_PATH_HELP" == true ]]; then
   echo
-  warn "$CARGO_HOME/bin is not in your PATH"
-  echo
-  echo "  Add this to $(bold "$PROFILE"):"
+  echo "  $(bold "Add to your shell profile") ($PROFILE):"
   echo
   echo "    $EXPORT_LINE"
   echo
-  echo "  Then reload your shell:"
+  echo "  Then reload:"
   echo
   echo "    source $PROFILE"
   echo
