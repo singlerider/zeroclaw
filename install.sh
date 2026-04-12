@@ -6,7 +6,6 @@ set -euo pipefail
 # All feature lists and version info read from Cargo.toml — nothing hardcoded.
 
 REPO_URL="https://github.com/zeroclaw-labs/zeroclaw.git"
-INSTALL_DIR="${ZEROCLAW_INSTALL_DIR:-$HOME/.zeroclaw/src}"
 
 # ── Output helpers ────────────────────────────────────────────────
 
@@ -93,6 +92,31 @@ version_gte() {
   printf '%s\n%s' "$2" "$1" | sort -V -C
 }
 
+# ── Detect user's shell ──────────────────────────────────────────
+
+detect_shell_profile() {
+  local shell_name
+  shell_name=$(basename "${SHELL:-/bin/bash}")
+  case "$shell_name" in
+    zsh)  echo "$PREFIX/.zshrc" ;;
+    fish) echo "$PREFIX/.config/fish/config.fish" ;;
+    *)    echo "$PREFIX/.bashrc" ;;
+  esac
+}
+
+shell_export_syntax() {
+  local shell_name
+  shell_name=$(basename "${SHELL:-/bin/bash}")
+  case "$shell_name" in
+    fish)
+      echo "set -gx PATH \"$CARGO_HOME/bin\" \$PATH"
+      ;;
+    *)
+      echo "export PATH=\"$CARGO_HOME/bin:\$PATH\""
+      ;;
+  esac
+}
+
 # ── Usage ─────────────────────────────────────────────────────────
 
 usage() {
@@ -105,6 +129,9 @@ Options:
   --minimal            Build kernel only (config + providers + memory, ~6.6MB)
   --features X,Y       Select specific features (comma-separated)
   --list-features      Print all available features and exit
+  --prefix PATH        Install everything under PATH (default: \$HOME)
+                       Sets CARGO_HOME, RUSTUP_HOME, source checkout, config
+  --dry-run            Show what would happen without building or installing
   --skip-onboard       Skip the setup wizard after install
   --uninstall          Remove ZeroClaw binary and optionally config/data
   -h, --help           Show this help
@@ -114,10 +141,12 @@ Examples:
   $0 --minimal                                # smallest possible binary
   $0 --features agent-runtime,channel-discord  # custom feature set
   $0 --skip-onboard                           # build only, configure later
+  $0 --prefix /tmp/zc-test --skip-onboard     # isolated test install
+  $0 --dry-run --minimal                      # preview without building
   $0 --uninstall                              # remove ZeroClaw
 
 Environment:
-  ZEROCLAW_INSTALL_DIR   Source checkout location (default: ~/.zeroclaw/src)
+  ZEROCLAW_INSTALL_DIR   Source checkout override (default: PREFIX/.zeroclaw/src)
 EOF
 }
 
@@ -128,7 +157,7 @@ do_uninstall() {
   echo "$(bold "Uninstalling ZeroClaw")"
   echo
 
-  local bin="${CARGO_HOME:-$HOME/.cargo}/bin/zeroclaw"
+  local bin="$CARGO_HOME/bin/zeroclaw"
   if [[ -f "$bin" ]]; then
     rm -f "$bin"
     info "Removed $bin"
@@ -142,7 +171,7 @@ do_uninstall() {
     zeroclaw service uninstall 2>/dev/null || true
   fi
 
-  local config_dir="$HOME/.zeroclaw"
+  local config_dir="$PREFIX/.zeroclaw"
   if [[ -d "$config_dir" ]]; then
     echo
     read -rp "  Remove config and data ($config_dir)? [y/N] " confirm
@@ -166,12 +195,16 @@ USER_FEATURES=""
 SKIP_ONBOARD=false
 LIST_FEATURES=false
 UNINSTALL=false
+DRY_RUN=false
+PREFIX="$HOME"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --minimal)        MINIMAL=true ;;
     --features)       shift; USER_FEATURES="$1" ;;
     --list-features)  LIST_FEATURES=true ;;
+    --prefix)         shift; PREFIX="$1" ;;
+    --dry-run)        DRY_RUN=true ;;
     --skip-onboard)   SKIP_ONBOARD=true ;;
     --uninstall)      UNINSTALL=true ;;
     -h|--help)        usage; exit 0 ;;
@@ -179,6 +212,13 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# ── Derive paths from prefix ─────────────────────────────────────
+
+export CARGO_HOME="${CARGO_HOME:-$PREFIX/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$PREFIX/.rustup}"
+INSTALL_DIR="${ZEROCLAW_INSTALL_DIR:-$PREFIX/.zeroclaw/src}"
+export PATH="$CARGO_HOME/bin:$PATH"
 
 [[ "$UNINSTALL" == true ]] && do_uninstall
 
@@ -199,6 +239,9 @@ fi
 
 echo
 echo "$(bold "ZeroClaw — source install")"
+if [[ "$PREFIX" != "$HOME" ]]; then
+  echo "  prefix: $(bold "$PREFIX")"
+fi
 echo
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -207,6 +250,7 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   git -C "$INSTALL_DIR" reset --hard origin/master --quiet
 else
   info "Cloning into $INSTALL_DIR"
+  mkdir -p "$(dirname "$INSTALL_DIR")"
   git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
 fi
 
@@ -216,22 +260,29 @@ cd "$INSTALL_DIR"
 
 parse_cargo_toml "Cargo.toml"
 
-echo "  Version: $(bold "$VERSION") (MSRV: $MSRV)"
+echo "  Version: $(bold "$VERSION") (MSRV: $MSRV, edition: $EDITION)"
 
 # ── Preflight: Rust ───────────────────────────────────────────────
 
 if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
-  warn "Rust not found — installing via rustup"
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  # shellcheck source=/dev/null
-  source "${CARGO_HOME:-$HOME/.cargo}/env"
+  if [[ "$DRY_RUN" == true ]]; then
+    warn "[dry-run] Would install Rust via rustup into $RUSTUP_HOME"
+  else
+    warn "Rust not found — installing via rustup"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+      --no-modify-path
+    # shellcheck source=/dev/null
+    source "$CARGO_HOME/env"
+  fi
 fi
 
-RUST_VERSION=$(rustc --version | awk '{print $2}')
-if ! version_gte "$RUST_VERSION" "$MSRV"; then
-  die "Rust $RUST_VERSION is too old. ZeroClaw requires $MSRV+ (edition $EDITION). Run: rustup update stable"
+if [[ "$DRY_RUN" != true ]]; then
+  RUST_VERSION=$(rustc --version | awk '{print $2}')
+  if ! version_gte "$RUST_VERSION" "$MSRV"; then
+    die "Rust $RUST_VERSION is too old. ZeroClaw requires $MSRV+ (edition $EDITION). Run: rustup update stable"
+  fi
+  info "Rust $RUST_VERSION (>= $MSRV)"
 fi
-info "Rust $RUST_VERSION (>= $MSRV)"
 
 # ── Preflight: 32-bit ARM ────────────────────────────────────────
 
@@ -266,11 +317,31 @@ fi
 if command -v zeroclaw >/dev/null 2>&1; then
   EXISTING=$(zeroclaw --version 2>/dev/null | awk '{print $NF}' || echo "unknown")
   warn "Existing install detected: v$EXISTING"
-  if [[ "$MINIMAL" == true ]]; then
+  if [[ "$MINIMAL" == true && "$DRY_RUN" != true ]]; then
     echo
     read -rp "  --minimal will produce a reduced binary (no agent runtime by default). Continue? [Y/n] " confirm
     [[ "$confirm" =~ ^[Nn] ]] && { echo "Aborted."; exit 0; }
   fi
+fi
+
+# ── Dry run ───────────────────────────────────────────────────────
+
+if [[ "$DRY_RUN" == true ]]; then
+  echo
+  echo "$(bold "Dry run — nothing will be built or installed")"
+  echo
+  info "Source:   $INSTALL_DIR"
+  info "Binary:   $CARGO_HOME/bin/zeroclaw"
+  info "Config:   $PREFIX/.zeroclaw/"
+  info "Rust:     $CARGO_HOME (CARGO_HOME), $RUSTUP_HOME (RUSTUP_HOME)"
+  echo
+  if [[ ${#CARGO_ARGS[@]} -gt 0 ]]; then
+    info "cargo install --path . --locked --force ${CARGO_ARGS[*]}"
+  else
+    info "cargo install --path . --locked --force"
+  fi
+  echo
+  exit 0
 fi
 
 # ── Build and install ─────────────────────────────────────────────
@@ -288,13 +359,31 @@ cargo install --path . --locked --force "${CARGO_ARGS[@]}"
 
 # ── Summary ───────────────────────────────────────────────────────
 
-BIN="${CARGO_HOME:-$HOME/.cargo}/bin/zeroclaw"
+BIN="$CARGO_HOME/bin/zeroclaw"
 if [[ -f "$BIN" ]]; then
   SIZE=$(du -h "$BIN" | awk '{print $1}')
   echo
   info "Installed: $BIN ($SIZE)"
 else
   warn "Binary not found at expected path: $BIN"
+fi
+
+# ── PATH check ────────────────────────────────────────────────────
+
+if ! echo "$PATH" | tr ':' '\n' | grep -qx "$CARGO_HOME/bin"; then
+  PROFILE=$(detect_shell_profile)
+  EXPORT_LINE=$(shell_export_syntax)
+  echo
+  warn "$CARGO_HOME/bin is not in your PATH"
+  echo
+  echo "  Add this to $(bold "$PROFILE"):"
+  echo
+  echo "    $EXPORT_LINE"
+  echo
+  echo "  Then reload your shell:"
+  echo
+  echo "    source $PROFILE"
+  echo
 fi
 
 # ── Onboard ───────────────────────────────────────────────────────
