@@ -201,7 +201,7 @@ while [[ $# -gt 0 ]]; do
     --minimal)        MINIMAL=true ;;
     --features)       shift; USER_FEATURES="${USER_FEATURES:+$USER_FEATURES,}$1" ;;
     --list-features)  LIST_FEATURES=true ;;
-    --prefix)         shift; PREFIX="$1" ;;
+    --prefix)         shift; PREFIX="$(echo "$1" | sed 's|/*$||')" ;;
     --dry-run)        DRY_RUN=true ;;
     --skip-onboard)   SKIP_ONBOARD=true ;;
     --uninstall)      UNINSTALL=true ;;
@@ -309,8 +309,8 @@ if [[ "$MINIMAL" == true ]]; then
 fi
 
 if [[ -n "$USER_FEATURES" ]]; then
-  # Normalize: strip spaces, deduplicate, trim empty entries
-  USER_FEATURES=$(echo "$USER_FEATURES" | tr -d ' ' | tr ',' '\n' | grep -v '^$' | sort -u | paste -sd, - || true)
+  # Normalize: treat commas, spaces, and tabs as delimiters; deduplicate; trim empty
+  USER_FEATURES=$(echo "$USER_FEATURES" | tr ',[:space:]' '\n' | grep -v '^$' | sort -u | paste -sd, - || true)
 
   # Skip if normalization emptied the string
   if [[ -n "$USER_FEATURES" ]]; then
