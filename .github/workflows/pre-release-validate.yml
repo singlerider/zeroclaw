@@ -40,6 +40,7 @@ jobs:
           fi
 
       - name: Check crates.io publishability
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           echo "::group::Checking cargo publish --dry-run"
