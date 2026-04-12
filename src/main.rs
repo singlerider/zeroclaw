@@ -656,26 +656,8 @@ Examples:
 /// `zeroclaw props <anything>` and print a deprecation message.
 #[derive(Subcommand, Debug)]
 enum DeprecatedPropsCommands {
-    #[command(hide = true)]
-    List {
-        #[arg(short, long)]
-        filter: Option<String>,
-        #[arg(long)]
-        secrets: bool,
-    },
-    #[command(hide = true)]
-    Get { path: String },
-    #[command(hide = true)]
-    Set {
-        path: String,
-        value: Option<String>,
-        #[arg(long)]
-        no_interactive: bool,
-    },
-    #[command(hide = true)]
-    Init { section: Option<String> },
-    #[command(hide = true)]
-    Complete { partial: Option<String> },
+    #[command(external_subcommand)]
+    Any(Vec<String>),
 }
 
 #[cfg(feature = "plugins-wasm")]
@@ -2001,9 +1983,10 @@ async fn main() -> Result<()> {
         },
 
         Commands::Props { .. } => {
-            eprintln!("Error: `zeroclaw props` has been renamed to `zeroclaw config`.");
-            eprintln!("Replace `props` with `config` in your command and try again.");
-            std::process::exit(1);
+            anyhow::bail!(
+                "`zeroclaw props` has been renamed to `zeroclaw config`. \
+                 Replace `props` with `config` in your command and try again."
+            );
         }
 
         #[cfg(feature = "plugins-wasm")]
