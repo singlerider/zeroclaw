@@ -158,17 +158,15 @@ do_uninstall() {
   echo
 
   local bin="$CARGO_HOME/bin/zeroclaw"
+
+  # Stop/remove service BEFORE deleting the binary
   if [[ -f "$bin" ]]; then
+    "$bin" service stop 2>/dev/null || true
+    "$bin" service uninstall 2>/dev/null || true
     rm -f "$bin"
     info "Removed $bin"
   else
     warn "Binary not found at $bin"
-  fi
-
-  # Try to stop/remove service if zeroclaw is still callable
-  if command -v zeroclaw >/dev/null 2>&1; then
-    zeroclaw service stop 2>/dev/null || true
-    zeroclaw service uninstall 2>/dev/null || true
   fi
 
   local config_dir="$PREFIX/.zeroclaw"
