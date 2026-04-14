@@ -1271,9 +1271,9 @@ impl SecurityPolicy {
                 // Ref: https://nodejs.org/api/cli.html
                 !args.iter().any(|arg| {
                     arg.starts_with("-e")
-                        || arg == "--eval"
+                        || arg.starts_with("--eval")
                         || arg.starts_with("-p")
-                        || arg == "--print"
+                        || arg.starts_with("--print")
                 })
             }
             "pip" | "pip3" => {
@@ -1285,7 +1285,13 @@ impl SecurityPolicy {
                 // exec can fetch+run remote packages (npx behavior)
                 // install fetches external packages; lifecycle scripts run arbitrary code
                 // Ref: https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html
-                !args.iter().any(|arg| arg == "exec" || arg == "install")
+                !args.iter().any(|arg| {
+                    arg == "exec"
+                        || arg == "install"
+                        || arg == "i"
+                        || arg == "add"
+                        || arg == "ci"
+                })
             }
             "cargo" => {
                 // install fetches+builds external crate; build.rs executes arbitrary code
@@ -2527,8 +2533,10 @@ mod tests {
         // node: -e/--eval evaluates JS, -p/--print evaluates and prints
         assert!(!p.is_command_allowed("node -e 'require(\"child_process\").execSync(\"id\")'"));
         assert!(!p.is_command_allowed("node --eval 'process.exit(1)'"));
+        assert!(!p.is_command_allowed("node --eval=process.exit(1)"));
         assert!(!p.is_command_allowed("node -p '1+1'"));
         assert!(!p.is_command_allowed("node --print 'process.env'"));
+        assert!(!p.is_command_allowed("node --print=process.env"));
         // Glued form bypass: -c'code' is one whitespace token
         assert!(!p.is_command_allowed("python3 -c'import os'"));
         assert!(!p.is_command_allowed("node -e'process.exit()'"));
@@ -2546,6 +2554,9 @@ mod tests {
         // npm: exec fetches remote, install runs lifecycle scripts
         assert!(!p.is_command_allowed("npm exec -- malicious-pkg"));
         assert!(!p.is_command_allowed("npm install malicious-pkg"));
+        assert!(!p.is_command_allowed("npm i malicious-pkg"));
+        assert!(!p.is_command_allowed("npm add malicious-pkg"));
+        assert!(!p.is_command_allowed("npm ci"));
         // cargo: install fetches+builds external crate (build.rs runs arbitrary code)
         assert!(!p.is_command_allowed("cargo install malicious-crate"));
     }
