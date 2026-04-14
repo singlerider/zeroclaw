@@ -221,20 +221,29 @@ pub fn prune_history(messages: &mut Vec<ChatMessage>, config: &HistoryPrunerConf
                 continue;
             }
             if messages[i].role == "assistant" {
-                // Count following tool messages — drop as atomic group
+                // Count following tool messages — drop as atomic group,
+                // but skip if any tool in the group is protected.
                 let mut tool_count = 0;
+                let mut any_tool_protected = false;
                 while i + 1 + tool_count < messages.len()
                     && messages[i + 1 + tool_count].role == "tool"
                 {
+                    if protected[i + 1 + tool_count] {
+                        any_tool_protected = true;
+                    }
                     tool_count += 1;
                 }
-                if tool_count > 0 {
+                if tool_count > 0 && !any_tool_protected {
                     for _ in 0..=tool_count {
                         messages.remove(i);
                     }
                     dropped_messages += 1 + tool_count;
                     dropped_any = true;
                     break;
+                } else if tool_count > 0 {
+                    // Group has protected tools — skip past it
+                    i += 1 + tool_count;
+                    continue;
                 }
             }
             // Non-tool-group message — safe to drop individually
@@ -709,5 +718,40 @@ mod tests {
         let removed = remove_orphaned_tool_messages(&mut messages);
         assert_eq!(removed, 0);
         assert_eq!(messages.len(), 5);
+    }
+
+    #[test]
+    fn phase2_budget_respects_protected_tool_messages() {
+        // Phase 2 should not drop tool messages that fall within the
+        // keep_recent protection window, even when the assistant that
+        // starts the group is outside the window.
+        let tool_content = r#"{"tool_call_id":"toolu_recent","content":"result"}"#;
+        let assistant_tool = r#"{"content":"calling","tool_calls":[{"id":"toolu_recent","name":"shell","arguments":"{}"}]}"#;
+        let mut messages = vec![
+            msg("system", "sys"),
+            msg("user", "old question"),
+            msg(
+                "assistant",
+                "old answer with lots of padding text to inflate token count significantly beyond budget",
+            ),
+            msg("user", "another old question"),
+            msg("assistant", assistant_tool),  // outside keep_recent
+            msg("tool", tool_content),         // inside keep_recent (3rd from end)
+            msg("user", "recent question"),    // inside keep_recent (2nd from end)
+            msg("assistant", "recent answer"), // inside keep_recent (1st from end)
+        ];
+        // Budget tight enough that Phase 2 fires, keep_recent=3 protects last 3
+        let config = HistoryPrunerConfig {
+            enabled: true,
+            max_tokens: 50,
+            keep_recent: 3,
+            collapse_tool_results: true,
+        };
+        prune_history(&mut messages, &config);
+        // The protected tool message must survive
+        assert!(
+            messages.iter().any(|m| m.content.contains("toolu_recent")),
+            "Protected tool message was dropped by Phase 2 budget enforcement"
+        );
     }
 }
