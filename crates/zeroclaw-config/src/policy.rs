@@ -1257,7 +1257,11 @@ impl SecurityPolicy {
             }
             "python" | "python3" => {
                 // -c executes arbitrary code from argument string
-                // -m runs any installed module as a script
+                // -m runs any installed module as a script — broad block is intentional:
+                //   -m http.server opens a local exfil vector
+                //   -m pip install double-covers the pip arm
+                //   -m pytest, -m mypy, -m venv are blocked as collateral;
+                //   narrowing to a curated module list is a future option
                 // starts_with covers glued form: python3 -c'code' (one whitespace token)
                 // Ref: https://docs.python.org/3/using/cmdline.html
                 !args
@@ -1286,11 +1290,7 @@ impl SecurityPolicy {
                 // install fetches external packages; lifecycle scripts run arbitrary code
                 // Ref: https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html
                 !args.iter().any(|arg| {
-                    arg == "exec"
-                        || arg == "install"
-                        || arg == "i"
-                        || arg == "add"
-                        || arg == "ci"
+                    arg == "exec" || arg == "install" || arg == "i" || arg == "add" || arg == "ci"
                 })
             }
             "cargo" => {
@@ -2530,6 +2530,13 @@ mod tests {
         assert!(!p.is_command_allowed("python3 -c 'import os; os.system(\"id\")'"));
         assert!(!p.is_command_allowed("python -c '__import__(\"os\").system(\"id\")'"));
         assert!(!p.is_command_allowed("python3 -m http.server"));
+        assert!(!p.is_command_allowed("python3 -m pip install evil"));
+        // Broad -m block: these are intentional collateral
+        assert!(!p.is_command_allowed("python3 -m pytest"));
+        assert!(!p.is_command_allowed("python3 -m mypy src/"));
+        assert!(!p.is_command_allowed("python3 -m venv .venv"));
+        // Glued form: -mhttp.server is one token
+        assert!(!p.is_command_allowed("python3 -mhttp.server"));
         // node: -e/--eval evaluates JS, -p/--print evaluates and prints
         assert!(!p.is_command_allowed("node -e 'require(\"child_process\").execSync(\"id\")'"));
         assert!(!p.is_command_allowed("node --eval 'process.exit(1)'"));
