@@ -55,7 +55,7 @@ Then read `references/triage-protocol.md` for the full mode-by-mode workflow.
 | Close — duplicate | Act | Root cause and fix path are identical; primary issue clearly identified |
 | Close — r:support | Act | Usage/config question with no reproducible defect; docs pointer included |
 | Close — stale (RFC policy) | Act | Policy window confirmed met; no exclusion label present |
-| Close — architectural won't-fix | Act | Violates a named constraint in `AGENTS.md`; constraint and reference included in comment |
+| Close — architectural won't-fix | **User confirmation required** | Always — won't-fix is permanent; present draft closure and wait for explicit approval |
 | Close — anything with ambiguity | **User confirmation required** | Any doubt at all about classification, duplication, scope, or fix coverage |
 | Close — RFC issues | **Never** | `type:rfc` label or RFC-style title |
 | Close — issues with an open linked PR | **Never** | Leave open; it will auto-close on merge |

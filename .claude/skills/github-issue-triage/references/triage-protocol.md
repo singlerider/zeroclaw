@@ -20,7 +20,15 @@ This applies to every mode, including accounting. The fetch commands return raw 
 
 ### Steps
 
-1. Fetch all open issues with `gh issue list --repo zeroclaw-labs/zeroclaw --state open --json number,title,labels,createdAt,updatedAt,author,comments --limit 300`.
+1. Fetch open issue metadata — titles, labels, dates, author logins, and comment author/date pairs only (not full comment bodies):
+
+   ```bash
+   gh issue list --repo zeroclaw-labs/zeroclaw --state open \
+     --json number,title,labels,createdAt,author,comments,reactionGroups \
+     --limit 300
+   ```
+
+   The `comments` field here provides author login and date per comment, which is enough to compute author-last-active. Full comment bodies are fetched per-issue only when needed for deeper triage.
 
 2. Compute and display:
 
@@ -57,7 +65,7 @@ Fetch: `gh issue list --repo zeroclaw-labs/zeroclaw --state open --json number,t
 Process two groups:
 
 - **Unlabeled** — has none of: `bug`, `feature`, `enhancement`, `type:rfc`, `r:support`, `r:needs-repro`
-- **Mislabeled** — has a primary type label but the content clearly doesn't match (e.g., a support question filed as `bug`, a bug filed as `feature`). Re-classify and update labels; leave a brief comment explaining the relabel only if the change is non-obvious.
+- **Mislabeled** — has a primary type label but the content clearly doesn't match (e.g., a support question filed as `bug`, a bug filed as `feature`). Re-classify and update labels; always leave a comment when changing the type label — the reporter deserves to know why their label changed.
 
 ### Per-issue steps
 
@@ -107,6 +115,41 @@ If an issue describes a potential vulnerability:
 
 **Purpose:** Reduce backlog noise by closing issues that are resolved, duplicate, out-of-place, or no longer actionable. Run in the priority order below — earlier passes resolve issues that later passes would otherwise evaluate.
 
+### Pre-flight: label existence check
+
+Before any labeling action in any mode, verify that the labels you intend to apply exist in the repository:
+
+```bash
+gh label list --repo zeroclaw-labs/zeroclaw --limit 100 --json name
+```
+
+If a required label is missing, create it before applying:
+
+```bash
+gh label create "status:stale"      --color "E4E669" --repo zeroclaw-labs/zeroclaw
+gh label create "status:wont-do"    --color "B60205" --repo zeroclaw-labs/zeroclaw
+gh label create "status:in-progress" --color "0075CA" --repo zeroclaw-labs/zeroclaw
+gh label create "duplicate"         --color "CFD3D7" --repo zeroclaw-labs/zeroclaw
+```
+
+Only create labels that are actually needed in the current run.
+
+### Batch preview gate
+
+Before executing any closure in sweep mode, compile the full list of proposed actions and present them to the user:
+
+```
+Proposed sweep actions (N total):
+  Close as fixed-by-PR: #X (PR #Y), #Z (PR #W)
+  Close as duplicate:   #A → primary #B, #C → primary #D
+  Close as r:support:   #E, #F
+  Flag for user review: #G (ambiguous duplicate), #H (ambiguous r:support)
+
+Proceed? (yes / no / review each one)
+```
+
+Do not close a single issue until the user confirms. If the user says "review each one," step through them individually.
+
 ### Pass 1 — Fixed by merged PR
 
 1. For each open bug/feature issue, check for merged PRs that reference it.
@@ -125,26 +168,39 @@ If an issue describes a potential vulnerability:
 
 ### Pass 2 — Duplicates
 
-1. Group open issues by: same error message, same root cause, same component.
+1. Group open issues by concrete shared identifiers — not inferred root cause. Require at least one of:
+   - The exact same error string or panic message in both reports
+   - Both reports identifying the same specific code path or function
+   - A merged PR that explicitly closes or fixes both
+   - The issues explicitly cross-referencing each other
+
+   Similar symptoms alone are not sufficient. Two reporters hitting different bugs in the same component can produce nearly identical surface descriptions.
 
 2. For each confirmed duplicate pair:
    - Keep the issue with better documentation (more repro detail, more community engagement). If it is genuinely unclear which is better documented, flag for user.
    - Apply the `duplicate` label to the issue being closed.
-   - Close it with a comment referencing the primary by number.
+   - Close it with a comment referencing the primary by number and explicitly saying "you can reopen this by commenting here if your situation differs."
    - Comment on the primary linking the duplicate so discussion is consolidated.
 
-3. **Ambiguity rule:** if two issues describe similar symptoms but the root cause may differ (same error, different call path; same feature, different scope), flag for user. Do not assume similarity of symptom implies identity of cause.
+3. **Ambiguity rule:** if the shared identifier test above cannot be met, flag for user. Do not close.
 
 ### Pass 3 — r:support
 
-1. Identify open issues that are usage or configuration questions with no reproducible defect — the reporter needs help, not a fix.
+**Default action is comment + leave open, not close.**
 
-2. For each, apply `r:support`, close with a comment that:
-   - Answers the question directly if the answer is known and simple
-   - Points to the relevant docs section (`docs/contributing/change-playbooks.md`, setup guides, etc.)
-   - Invites a new issue if they hit something that turns out to be a real bug
+1. Identify open issues that are usage or configuration questions with no reproducible defect.
 
-3. **Ambiguity rule:** if a usage question might also indicate a latent bug (e.g., "I can't get X to work" where X should work but might not), do not close as r:support — flag for user.
+2. For every r:support candidate, apply the label and post a comment that:
+   - Answers the question directly if the answer is known
+   - Points to the relevant docs section
+   - Explicitly invites a follow-up if they discover it is actually a bug: "If you find that the documented behavior doesn't match what ZeroClaw does, please reopen or file a new issue with the specific mismatch."
+
+3. Close only if **all three** are true:
+   - The issue is a pure how-do-I question with a clear documented answer
+   - There is no plausible path to it being an undiscovered defect
+   - The question has been answered in the comment
+
+4. **Ambiguity rule:** "I can't get X to work" is never a safe r:support close — it leaves open whether X is broken or misconfigured. Label it, comment with docs, leave it open, and flag for user review.
 
 ### Pass 4 — Stale candidates
 
@@ -169,19 +225,20 @@ Activity is defined as: a follow-up comment or update from the **original author
 - `priority:critical`
 - `type:rfc`
 - `no-stale`
+- 10 or more 👍 reactions on the opening post (community has signaled relevance regardless of author silence)
 
 ### Steps
 
-1. Fetch all open issues with `createdAt` and latest activity timestamp.
+1. Fetch all open issues with `createdAt`, `author`, `comments`, and `reactions` fields.
 
-2. Compute effective last-activity date: the most recent of createdAt, last comment, last label change.
+2. For each issue, compute **author-last-active**: the date of the most recent comment where `comment.author.login == issue.author.login`. If the author has never commented after opening, use `createdAt`. Maintainer comments, label changes, and PR links do not count.
 
-3. For issues at 45–59 days of no activity (not already labeled `status:stale`):
+3. For issues at 45–59 days since author-last-active (not already labeled `status:stale`):
    - Apply `status:stale`
    - Comment: acknowledge the issue is still valid, ask if it is still relevant or if the reporter has a workaround; mention that it will be closed in 15 days without a response but can always be reopened
 
-4. For issues at 60+ days of no activity already carrying `status:stale`:
-   - Close with a comment: thank the reporter, explain the backlog hygiene reason, explicitly invite them to reopen with updated context at any time
+4. For issues at 60+ days since author-last-active, already carrying `status:stale`:
+   - Close with a comment: thank the reporter, explain the backlog hygiene reason, and include the phrase **"you can reopen this issue by commenting here, or open a new issue with updated context — either works"**
    - Reference a related open issue or feature if one exists
 
 5. Report the full list of actions to the user before executing. Confirm before proceeding.
@@ -211,14 +268,19 @@ Stale closures are especially sensitive — a reporter may have been waiting pat
    - "Add X as a required dependency" → minimal footprint / single binary
    - "Disable security check Z by default" → secure by default
 
-3. For each clear violation:
-   - Name the specific constraint being violated (not just "doesn't fit our architecture")
-   - Explain briefly why the constraint exists
-   - Suggest the closest in-scope alternative if one exists (e.g., "this can be implemented as a WASM plugin at v1.0.0" or "the trait boundary allows a custom implementation without changing core")
-   - Reference the relevant RFC or `AGENTS.md` section
-   - Apply `status:wont-do` label
+3. For each apparent violation, draft the closure — but **never execute a won't-fix closure without user confirmation**, regardless of how clear the violation seems. Won't-fix is permanent. Present the draft:
 
-4. **Ambiguity rule:** if a request could be implemented in a constraint-compliant way (e.g., an optional feature flag, a plugin, a trait implementation) — it is **not** a won't-fix. Flag for user to decide whether it's worth prioritizing.
+   ```
+   Proposed won't-fix: #N — "<title>"
+   Constraint violated: <specific constraint from AGENTS.md>
+   Reason: <one sentence>
+   In-scope alternative: <if one exists>
+   Reference: <RFC or AGENTS.md section>
+
+   Confirm close? (yes / no / I'll handle it)
+   ```
+
+4. **Ambiguity rule:** if a request could be implemented in a constraint-compliant way (optional feature flag, WASM plugin, trait implementation) — it is **not** a won't-fix. Flag for user with the compliant path described.
 
 ---
 
@@ -300,6 +362,7 @@ Before closing any issue, verify:
 - [ ] Closure reason is unambiguous — no residual doubt
 - [ ] Comment references at least one other issue or PR by number
 - [ ] Comment is welcoming and specific to this issue
+- [ ] Comment tells the reporter explicitly how to reopen ("you can reopen this by commenting here")
 - [ ] Comment does not contain personal identifiers or real names
 - [ ] Issue is not in the exclusion list: `type:rfc`, open linked PR, `no-stale`, `priority:critical`, `status:blocked`
 - [ ] Label has been applied matching the closure reason (e.g., `r:support`, `status:stale`)
