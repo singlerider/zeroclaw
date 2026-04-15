@@ -16,9 +16,9 @@ Read these repository files at the start of every session — they are authorita
 - `docs/contributing/pr-workflow.md` — §8.3–8.4 Issue triage discipline and automation guards
 - `docs/contributing/pr-discipline.md` — privacy rules, neutral wording requirements
 
-Then fetch RFC #5577 and RFC #5615 (both are open issues in zeroclaw-labs/zeroclaw) for the stale policy, label taxonomy, triage cadence, and contribution culture guidance. These override any defaults in this skill if they conflict.
-
 Then read `references/triage-protocol.md` for the full mode-by-mode workflow.
+
+The protocol encodes operational details from RFC #5577 (governance, stale policy, label taxonomy) and RFC #5615 (contribution culture). If you need background context beyond what the protocol provides, fetch these RFCs (open issues in zeroclaw-labs/zeroclaw). The RFCs are authoritative where they conflict with this skill — but the protocol already reflects their current state, so routine sessions should not need to fetch them.
 
 ## Invocation
 
@@ -51,10 +51,10 @@ Then read `references/triage-protocol.md` for the full mode-by-mode workflow.
 |---|---|---|
 | Apply or remove labels | Act | Always |
 | Comment on an issue | Act | Always |
-| Close — fixed by merged PR | Act | PR confirmed merged; issue explicitly or clearly referenced in PR |
-| Close — duplicate | Act | Root cause and fix path are identical; primary issue clearly identified |
-| Close — r:support | Act | Usage/config question with no reproducible defect; docs pointer included |
-| Close — stale (RFC policy) | Act | Policy window confirmed met; no exclusion label present |
+| Close — fixed by merged PR | Act (single-issue: present first) | PR confirmed merged; issue explicitly referenced in PR |
+| Close — duplicate | Act (single-issue: present first) | Concrete shared identifier confirmed per §3 Pass 2; primary issue clearly identified |
+| Close — r:support | Act only if 3-condition bar met (§3 Pass 3); default is comment + leave open | Pure how-do-I question with documented answer; no defect path |
+| Close — stale (RFC policy) | Act after batch preview | Policy window confirmed met; no exclusion label or reaction threshold |
 | Close — architectural won't-fix | **User confirmation required** | Always — won't-fix is permanent; present draft closure and wait for explicit approval |
 | Close — anything with ambiguity | **User confirmation required** | Any doubt at all about classification, duplication, scope, or fix coverage |
 | Close — RFC issues | **Never** | `type:rfc` label or RFC-style title |
@@ -80,9 +80,9 @@ When in doubt, classify higher — prefer "ask the user" over "act".
 Every comment must be:
 
 - **Specific to the issue** — never a copy-paste that could apply to anything
-- **Referenced** — links at least one other issue or PR so the reporter has somewhere to go
+- **Referenced** — links at least one other issue, PR, or specific docs section so the reporter has somewhere to go next
 - **Welcoming** — the repo is under new management with a human touch; do not discourage contributors; assume good faith
-- **Privacy-compliant** — use project-scoped placeholders only (`ZeroClawAgent`, `zeroclaw_user`, etc.); no real names, handles, or identifiers per `docs/contributing/pr-discipline.md`
+- **Privacy-compliant** — the `docs/contributing/pr-discipline.md` privacy rules apply to code, tests, fixtures, and examples (use `zeroclaw_user`, `example.com`, etc.). In issue comments, addressing contributors by their GitHub handle (@username) is expected and welcome — that's how you talk to people on GitHub. Do not put real names, emails, or personal data in comments, but @-mentioning the issue author is not a privacy violation.
 - **Concise** — under ~200 words for routine actions; longer only when the issue warrants real explanation
 
 Situational tailoring is always preferred. If multiple issues in a batch warrant structurally similar comments (e.g., a stale sweep), generate the shared pattern at runtime and vary it per issue — do not apply a literal copy-paste to more than one issue.
