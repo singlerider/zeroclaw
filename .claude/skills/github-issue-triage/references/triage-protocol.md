@@ -266,7 +266,7 @@ Flag (do not close) issues that meet the stale entry condition per §4. Present 
 
 Activity is defined as: a follow-up comment or update from the **original author** after the opening post. Maintainer comments, label changes, and PR links do not reset the clock — the signal is whether the person who filed the issue is still engaged.
 
-### Exclusions — never apply stale to issues with any of:
+### Exclusions — never apply stale to issues with any of
 
 - `status:blocked`
 - `priority:critical`
@@ -274,7 +274,7 @@ Activity is defined as: a follow-up comment or update from the **original author
 - `no-stale`
 - 10 or more 👍 reactions on the opening post (community has signaled relevance regardless of author silence)
 
-### Steps
+### Stale enforcement steps
 
 1. Fetch all open issues with `createdAt`, `author`, `comments`, and `reactions` fields.
 
@@ -306,7 +306,7 @@ Stale closures are especially sensitive — a reporter may have been waiting pat
 
 **Purpose:** Close issues that require violating a named core engineering constraint. These are permanent architectural decisions, not deferrals.
 
-### Steps
+### Won't-fix evaluation steps
 
 1. Read the core engineering constraints from `AGENTS.md` and `SKILL.md §Core Engineering Constraints`.
 
@@ -337,7 +337,7 @@ Stale closures are especially sensitive — a reporter may have been waiting pat
 
 **Purpose:** Full triage of one specific issue, with the same care as a human maintainer reviewing it directly.
 
-### Steps
+### Single-issue triage steps
 
 1. Fetch full issue state:
    ```bash
@@ -369,7 +369,7 @@ Stale closures are especially sensitive — a reporter may have been waiting pat
 
 Derived from RFC #5577. Apply these consistently:
 
-**Type**
+### Type
 - `bug` — reproducible defect
 - `feature` — new capability or enhancement
 - `type:rfc` — architectural proposal issue
@@ -377,28 +377,28 @@ Derived from RFC #5577. Apply these consistently:
 - `r:support` — usage/configuration question, not a bug
 - `duplicate` — applied to the issue being closed in favour of a primary
 
-**Priority** (apply when determinable)
+### Priority (apply when determinable)
 - `priority:critical` — security issue or complete workflow blocker
 - `priority:high` — significant degraded experience
 - `priority:medium` — notable but has workaround
 - `priority:low` — minor issue or edge case
 
-**Status**
+### Status
 - `status:stale` — original author has not engaged for 45+ days; pending closure
 - `status:blocked` — waiting on external blocker; exempt from stale
 - `status:in-progress` — linked open PR exists
 - `status:wont-do` — architectural won't-fix; permanent decision, not a deferral
 - `no-stale` — explicitly exempt from stale automation; maintainer-applied
 
-**Module labels** (apply when issue is scoped to a specific subsystem)
+### Module labels (apply when issue is scoped to a specific subsystem)
 - `channel:*` (e.g., `channel:telegram`, `channel:matrix`)
 - `provider:*` (e.g., `provider:ollama`, `provider:gemini`)
 - `tool:*` (e.g., `tool:shell`, `tool:memory`)
 - `gateway`, `security`, `runtime`, `memory`, `hardware`, `tui`, `plugins`
 
-**Contributor** (applied automatically by PR Labeler; do not apply manually during issue triage)
+### Contributor (applied automatically by PR Labeler; do not apply manually during issue triage)
 
-**Community**
+### Community
 - `good first issue` — well-scoped, documented, beginner-accessible
 - `help wanted` — maintainers welcome external contribution
 
