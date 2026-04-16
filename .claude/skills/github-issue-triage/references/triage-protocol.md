@@ -370,6 +370,7 @@ Stale closures are especially sensitive — a reporter may have been waiting pat
 Derived from RFC #5577. Apply these consistently:
 
 ### Type
+
 - `bug` — reproducible defect
 - `feature` — new capability or enhancement
 - `type:rfc` — architectural proposal issue
@@ -378,12 +379,14 @@ Derived from RFC #5577. Apply these consistently:
 - `duplicate` — applied to the issue being closed in favour of a primary
 
 ### Priority (apply when determinable)
+
 - `priority:critical` — security issue or complete workflow blocker
 - `priority:high` — significant degraded experience
 - `priority:medium` — notable but has workaround
 - `priority:low` — minor issue or edge case
 
 ### Status
+
 - `status:stale` — original author has not engaged for 45+ days; pending closure
 - `status:blocked` — waiting on external blocker; exempt from stale
 - `status:in-progress` — linked open PR exists
@@ -391,6 +394,7 @@ Derived from RFC #5577. Apply these consistently:
 - `no-stale` — explicitly exempt from stale automation; maintainer-applied
 
 ### Module labels (apply when issue is scoped to a specific subsystem)
+
 - `channel:*` (e.g., `channel:telegram`, `channel:matrix`)
 - `provider:*` (e.g., `provider:ollama`, `provider:gemini`)
 - `tool:*` (e.g., `tool:shell`, `tool:memory`)
@@ -399,6 +403,7 @@ Derived from RFC #5577. Apply these consistently:
 ### Contributor (applied automatically by PR Labeler; do not apply manually during issue triage)
 
 ### Community
+
 - `good first issue` — well-scoped, documented, beginner-accessible
 - `help wanted` — maintainers welcome external contribution
 
