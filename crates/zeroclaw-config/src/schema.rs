@@ -405,7 +405,7 @@ pub struct Config {
     /// Locale for tool descriptions (e.g. `"en"`, `"zh-CN"`).
     ///
     /// When set, tool descriptions shown in system prompts are loaded from
-    /// `tool_descriptions/<locale>.toml`. Falls back to English, then to
+    /// Fluent `.ftl` locale files. Falls back to embedded English, then to
     /// hardcoded descriptions.
     ///
     /// If omitted or empty, the locale is auto-detected from `ZEROCLAW_LOCALE`,

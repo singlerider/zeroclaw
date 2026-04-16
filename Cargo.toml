@@ -46,7 +46,7 @@ include = [
   "/LICENSE*",
   "/README.md",
   "/web/dist/**/*",
-  "/tool_descriptions/**/*",
+  "/locales/**/*",
 ]
 
 [[bin]]

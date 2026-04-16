@@ -30,7 +30,6 @@ pub fn register_peripheral_tools_fn(f: PeripheralToolsFn) {
     let _ = PERIPHERAL_TOOLS_FN.set(f);
 }
 use crate::cost::types::BudgetCheck;
-use crate::i18n::ToolDescriptions;
 use crate::observability::{self, Observer, ObserverEvent, runtime_trace};
 use crate::platform;
 use crate::security::{AutonomyLevel, SecurityPolicy};
@@ -1926,10 +1925,7 @@ pub async fn run_tool_call_loop(
 
 /// Build the tool instruction block for the system prompt so the LLM knows
 /// how to invoke tools.
-pub fn build_tool_instructions(
-    tools_registry: &[Box<dyn Tool>],
-    tool_descriptions: Option<&ToolDescriptions>,
-) -> String {
+pub fn build_tool_instructions(tools_registry: &[Box<dyn Tool>]) -> String {
     let mut instructions = String::new();
     instructions.push_str("\n## Tool Use Protocol\n\n");
     instructions.push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
@@ -1945,9 +1941,8 @@ pub fn build_tool_instructions(
     instructions.push_str("### Available Tools\n\n");
 
     for tool in tools_registry {
-        let desc = tool_descriptions
-            .and_then(|td| td.get(tool.name()))
-            .unwrap_or_else(|| tool.description());
+        let i18n_description = crate::i18n::get_tool_description(tool.name());
+        let desc = i18n_description.unwrap_or_else(|| tool.description());
         let _ = writeln!(
             instructions,
             "**{}**: {}\nParameters: `{}`\n",
@@ -2191,15 +2186,14 @@ pub async fn run(
         .map(|b| b.board.clone())
         .collect();
 
-    // ── Load locale-aware tool descriptions ────────────────────────
+    // ── Initialize locale-aware tool descriptions ──────────────────
     let i18n_locale = config
         .locale
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(crate::i18n::detect_locale);
-    let i18n_search_dirs = crate::i18n::default_search_dirs(&config.workspace_dir);
-    let i18n_descs = crate::i18n::ToolDescriptions::load(&i18n_locale, &i18n_search_dirs);
+    crate::i18n::init(&i18n_locale);
 
     // ── Build system prompt from workspace MD files (OpenClaw framework) ──
     let skills = crate::skills::load_skills_with_config(&config.workspace_dir, &config);
@@ -2347,7 +2341,7 @@ pub async fn run(
 
     // Append structured tool-use instructions with schemas (only for non-native providers)
     if !native_tools {
-        system_prompt.push_str(&build_tool_instructions(&tools_registry, Some(&i18n_descs)));
+        system_prompt.push_str(&build_tool_instructions(&tools_registry));
     }
 
     // Append deferred MCP tool names so the LLM knows what is available
@@ -3133,15 +3127,14 @@ pub async fn process_message(
         .map(|b| b.board.clone())
         .collect();
 
-    // ── Load locale-aware tool descriptions ────────────────────────
+    // ── Initialize locale-aware tool descriptions ──────────────────
     let i18n_locale = config
         .locale
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(crate::i18n::detect_locale);
-    let i18n_search_dirs = crate::i18n::default_search_dirs(&config.workspace_dir);
-    let i18n_descs = crate::i18n::ToolDescriptions::load(&i18n_locale, &i18n_search_dirs);
+    crate::i18n::init(&i18n_locale);
 
     let skills = crate::skills::load_skills_with_config(&config.workspace_dir, &config);
 
@@ -3234,7 +3227,7 @@ pub async fn process_message(
         config.agent.max_system_prompt_chars,
     );
     if !native_tools {
-        system_prompt.push_str(&build_tool_instructions(&tools_registry, Some(&i18n_descs)));
+        system_prompt.push_str(&build_tool_instructions(&tools_registry));
     }
     if !deferred_section.is_empty() {
         system_prompt.push('\n');
@@ -5949,7 +5942,7 @@ mod tests {
             std::path::Path::new("/tmp"),
         ));
         let tools = tools::default_tools(security);
-        let instructions = build_tool_instructions(&tools, None);
+        let instructions = build_tool_instructions(&tools);
 
         assert!(instructions.contains("## Tool Use Protocol"));
         assert!(instructions.contains("<tool_call>"));
