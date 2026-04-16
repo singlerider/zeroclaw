@@ -166,13 +166,9 @@ gh pr view "$NUMBER" --repo zeroclaw-labs/zeroclaw \
 
 If `state` is not `MERGED`, report the discrepancy and stop — do not assume success.
 
-Report to the user: merge commit SHA, PR URL, and the following cleanup note:
+Report to the user: merge commit SHA and PR URL.
 
-> The contributor's branch `<headRefName>` still exists on the remote. Delete it with:
-> ```bash
-> gh api -X DELETE repos/zeroclaw-labs/zeroclaw/git/refs/heads/<headRefName>
-> ```
-> Skip if GitHub's "auto-delete head branches" setting is enabled for the repo.
+**Never delete contributor branches.** Do not suggest, offer, or run any branch deletion command — not on the upstream remote, not on forks. Branch cleanup is the contributor's responsibility and is always a human decision.
 
 ## Rules
 
@@ -184,5 +180,5 @@ Report to the user: merge commit SHA, PR URL, and the following cleanup note:
 - **Always run pre-flight checks** (CI, merge conflicts, review decision) before confirming — do not skip them even if the user says "just merge it."
 - **Always confirm before merging, no exceptions** — show the user the exact expanded command with real values and require an explicit yes. Never infer consent.
 - **If the merge command fails, stop and report verbatim** — do not retry, do not work around branch protection automatically.
-- **Note branch cleanup** after every successful merge — the contributor's remote head branch does not auto-delete unless the repo is configured to do so.
+- **Never delete branches** — not on upstream, not on forks. Branch cleanup is always the contributor's decision. Never suggest a deletion command.
 - **Self-merge note:** Maintainers routinely merge their own PRs. If the user is the PR author, proceed normally — just note it in the confirmation summary so it's visible in the audit trail.
