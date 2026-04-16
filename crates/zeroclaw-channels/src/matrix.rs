@@ -940,9 +940,12 @@ impl Channel for MatrixChannel {
                             ),
                         }));
                 }
-                let _ = room
+                if let Err(e) = room
                     .send_attachment(&*name, &mime, data, attachment_config)
-                    .await;
+                    .await
+                {
+                    tracing::warn!(file = %name, err = %e, "Matrix: attachment upload failed");
+                }
             }
         }
 
@@ -1193,7 +1196,8 @@ impl Channel for MatrixChannel {
                         },
                         Err(e) => {
                             tracing::warn!("Matrix media download failed: {e}");
-                            body.replace("[IMAGE:", "[image-failed: ")
+                            let prefix_end = body.find(':').unwrap_or(body.len());
+                            format!("[{}-failed:{}", &body[1..prefix_end], &body[prefix_end..])
                         }
                     }
                 } else {
