@@ -27,6 +27,12 @@ gh pr view --repo zeroclaw-labs/zeroclaw \
   --json number,title,headRefName,baseRefName,state,author,mergeable,mergeStateStatus,reviewDecision
 ```
 
+Capture the PR number into a variable for use in all subsequent steps:
+
+```bash
+NUMBER=$(gh pr view <NUMBER_OR_URL> --repo zeroclaw-labs/zeroclaw --json number --jq '.number')
+```
+
 Run all four pre-flight checks. **Stop at the first failure** and explain clearly:
 
 | Check | Command | Fail condition | What to tell the user |
@@ -34,19 +40,19 @@ Run all four pre-flight checks. **Stop at the first failure** and explain clearl
 | PR is open | `.state` from above | `state != "OPEN"` | "PR #N is already `<state>`, nothing to merge." |
 | Targets master | `.baseRefName` from above | `baseRefName != "master"` | "PR #N targets `<base>`, not master. Confirm before proceeding." |
 | No merge conflicts | `.mergeable` from above | `mergeable == "CONFLICTING"` | "PR #N has merge conflicts with master. The author must resolve them before this can merge." |
-| CI passing | `gh pr checks <N> --repo zeroclaw-labs/zeroclaw` | Any required check failing | "PR #N has failing required checks: `<names>`. Do not merge until CI passes." |
+| CI passing | `gh pr checks "$NUMBER" --repo zeroclaw-labs/zeroclaw` | Any check in a failing/error state | "PR #N has failing checks: `<names>`. Confirm with the user which are required before proceeding — informational or optional checks are not blocking." |
 
 After the four checks, fetch the review decision:
 
 ```bash
-gh pr view <NUMBER> --repo zeroclaw-labs/zeroclaw --json reviewDecision \
-  --jq '.reviewDecision'
+REVIEW_DECISION=$(gh pr view "$NUMBER" --repo zeroclaw-labs/zeroclaw --json reviewDecision \
+  --jq '.reviewDecision // ""')
 ```
 
 - `APPROVED` → proceed
 - `REVIEW_REQUIRED` → warn: "PR #N has not yet received a required review. Proceed only if you are waiving this requirement as a maintainer."
 - `CHANGES_REQUESTED` → stop: "PR #N has a `CHANGES_REQUESTED` review outstanding. Do not merge until resolved."
-- `""` (empty / no rule) → proceed
+- `""` or `null` (empty / no rule) → proceed
 
 ### Step 2: Get Commit History
 
@@ -58,13 +64,20 @@ COMMITS=$(gh pr view <NUMBER> --repo zeroclaw-labs/zeroclaw \
   --jq '[.commits[] | "- \(.oid[:7]) \(.messageHeadline)"] | join("\n")')
 ```
 
-If `gh` returns no commit data or hashes are missing, fall back to local git using the PR's actual base ref:
+If `gh` returns no commit data or hashes are missing, fall back to local git using the PR's actual base ref. This requires the contributor's branch to be fetched locally — fetch first if needed:
 
 ```bash
-BASE_REF=$(gh pr view <NUMBER> --repo zeroclaw-labs/zeroclaw --json baseRefName --jq '.baseRefName')
-HEAD_REF=$(gh pr view <NUMBER> --repo zeroclaw-labs/zeroclaw --json headRefName --jq '.headRefName')
-COMMITS=$(git log "upstream/${BASE_REF}..${HEAD_REF}" --format="- %h %s")
+BASE_REF=$(gh pr view "$NUMBER" --repo zeroclaw-labs/zeroclaw --json baseRefName --jq '.baseRefName')
+HEAD_REF=$(gh pr view "$NUMBER" --repo zeroclaw-labs/zeroclaw --json headRefName --jq '.headRefName')
+
+# Ensure refs are available locally
+git fetch upstream
+git fetch origin
+
+COMMITS=$(git log "upstream/${BASE_REF}..origin/${HEAD_REF}" --format="- %h %s")
 ```
+
+If `origin/${HEAD_REF}` doesn't exist (contributor's branch is on their own fork, not `origin`), the fallback cannot be used — stick with the `gh` API output even if hashes look incomplete.
 
 **Single-commit PRs:** If the result is exactly one line, omit the bulleted body entirely. Instead, use the full commit body (if any) from `git log -1 --format="%b" <sha>` or leave the body empty. A one-item bullet list adds no information.
 
@@ -103,24 +116,24 @@ gh pr merge <NUMBER> --repo zeroclaw-labs/zeroclaw --squash \
 
 **This step is non-negotiable.** A squash merge into `upstream/master` cannot be undone without a revert commit.
 
-Present the following to the user — all values must be real and fully expanded, not placeholders:
+Present the following to the user with `$NUMBER`, `$SUBJECT`, and `$COMMITS` substituted with their actual runtime values — never show angle brackets or placeholder text:
 
 ---
 
 **About to run:**
 ```
-gh pr merge <NUMBER> --repo zeroclaw-labs/zeroclaw --squash \
-  --subject "<actual subject line here>" \
-  --body "<actual body lines here, one per line>"
+gh pr merge $NUMBER --repo zeroclaw-labs/zeroclaw --squash \
+  --subject "$SUBJECT" \
+  --body "$COMMITS"
 ```
 
 **Effect:**
-- PR #`<NUMBER>` will be permanently merged (state → Merged, purple badge)
+- PR #$NUMBER will be permanently merged (state → Merged, purple badge)
 - Linked issues will auto-close
-- Squash commit subject: `<actual subject>`
+- Squash commit subject: `$SUBJECT`
 - Squash commit body:
   ```
-  <actual body>
+  $COMMITS
   ```
 
 **Run this command? (yes/no)**
@@ -146,9 +159,9 @@ If the command exits non-zero, stop immediately and report the full error output
 Confirm the merge succeeded:
 
 ```bash
-gh pr view <NUMBER> --repo zeroclaw-labs/zeroclaw \
+gh pr view "$NUMBER" --repo zeroclaw-labs/zeroclaw \
   --json state,mergedAt,mergeCommit \
-  --jq '"State: \(.state) | Merged at: \(.mergedAt) | Commit: \(.mergeCommit.oid[:7])"'
+  --jq '"State: \(.state) | Merged at: \(.mergedAt) | Commit: \(if .mergeCommit then .mergeCommit.oid[:7] else "N/A" end)"'
 ```
 
 If `state` is not `MERGED`, report the discrepancy and stop — do not assume success.
