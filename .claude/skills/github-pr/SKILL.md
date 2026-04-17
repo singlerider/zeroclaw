@@ -10,6 +10,26 @@ The PR template at `.github/pull_request_template.md` is the source of truth for
 
 ---
 
+## Shell Safety: Always Use Temp Files for PR Bodies
+
+**Never** pass a PR body inline via `--body "$(cat <<'EOF' ... EOF)"` — zsh evaluates backticks and special characters inside command substitution, corrupting the body.
+
+**Always** write the body to a temp file first, then reference it:
+
+```bash
+cat > /tmp/pr-body.txt << 'EOF'
+<full body content>
+EOF
+
+gh pr create --title "<title>" --base master --body "$(cat /tmp/pr-body.txt)"
+# or for edits:
+gh pr edit <number> --body "$(cat /tmp/pr-body.txt)"
+```
+
+This applies to all PR body operations: create, edit, closure comments, review posts.
+
+---
+
 ## Shared: Read the PR Template
 
 Before opening or updating a PR body, read `.github/pull_request_template.md` and parse it to understand:
@@ -20,6 +40,55 @@ Before opening or updating a PR body, read `.github/pull_request_template.md` an
 - Any inline formatting conventions (backtick options, Yes/No fields, etc.)
 
 This parsed structure drives how you fill, present, and edit the PR body.
+
+---
+
+## Risk Label Reference
+
+Apply the correct `risk:` label based on the primary scope of changes. When uncertain, classify higher.
+
+| Risk | Applies to |
+|---|---|
+| `risk: high` | `crates/zeroclaw-runtime/src/**`, `crates/zeroclaw-gateway/src/**`, `crates/zeroclaw-tools/src/**`, `.github/workflows/**`, security/access-control boundaries, self-update (`commands/update`) |
+| `risk: medium` | Most `crates/*/src/**` behavior changes — channels, providers, config, memory — without boundary/security impact |
+| `risk: low` | Docs-only, chore, tests-only, web UI |
+
+**Fix incorrect risk labels directly** — never ask the author to do it.
+
+---
+
+## Supported i18n Locales
+
+When filling the i18n Follow-Through section, supported locales are: `en`, `zh-CN`, `ja`, `ru`, `fr`, `vi`.
+
+Turkish (`tr`) and Korean (`ko`) are **not** supported locales. A PR adding docs in those languages is a governance decision, not a routine i18n task.
+
+---
+
+## Supersede Attribution
+
+When a PR supersedes one or more closed PRs, the `## Linked Issue` section must include `Supersedes #N` and the `## Supersede Attribution` section must be fully filled — not left as N/A.
+
+Fill it as follows:
+
+```
+## Linked Issue
+
+- Closes #<issue>
+- Supersedes #<pr1>, #<pr2>
+
+## Supersede Attribution (required when `Supersedes #` is used)
+
+- Superseded PRs + authors (`#<pr> by @<author>`, one per line):
+  - #<pr1> by @<author1>
+  - #<pr2> by @<author2>
+- Integrated scope by source PR (what was materially carried forward): <description or "None — independent implementations">
+- `Co-authored-by` trailers added for materially incorporated contributors? Yes/No
+- If `No`, explain why: <reason>
+- Trailer format check: Pass/N/A
+```
+
+If no code was directly carried forward (e.g., two PRs converged independently on the same solution), say so explicitly rather than leaving the field blank.
 
 ---
 
@@ -74,6 +143,7 @@ Using the parsed template structure and gathered context, draft a complete PR bo
 - For Yes/No fields, infer from the diff (e.g., if no files in `src/security/` changed, security impact is likely all No).
 - For required sections, always provide a substantive answer. For optional sections, fill if there's enough context, otherwise leave the template prompts in place.
 - Draft a conventional commit-style PR title based on the changes (e.g., `feat(provider): add retry budget override`, `fix(channel): handle disconnect gracefully`, `chore(ci): update workflow targets`).
+- Apply the correct `risk:` label using the Risk Label Reference above. Default to higher when uncertain.
 
 ### Step 3: Present Draft for Review
 
@@ -98,12 +168,13 @@ Iterate on changes until the user approves.
    git push -u origin <branch>
    ```
 
-2. Create the PR using a HEREDOC for the body:
+2. Write the body to a temp file, then create the PR:
    ```bash
-   gh pr create --title "<title>" --base master --body "$(cat <<'PR_BODY_EOF'
+   cat > /tmp/pr-body.txt << 'PR_BODY_EOF'
    <full body>
    PR_BODY_EOF
-   )"
+
+   gh pr create --title "<title>" --base master --body "$(cat /tmp/pr-body.txt)"
    ```
 
 3. If labels were agreed on, add them:
@@ -156,22 +227,24 @@ Support these operations:
 | Operation | How |
 |---|---|
 | **Edit title** | `gh pr edit <number> --title "<new title>"` |
-| **Edit full body** | `gh pr edit <number> --body "<new body>"` |
+| **Edit full body** | Write to temp file, then `gh pr edit <number> --body "$(cat /tmp/pr-body.txt)"` |
 | **Add labels** | `gh pr edit <number> --add-label "<label1>,<label2>"` |
 | **Remove labels** | `gh pr edit <number> --remove-label "<label1>"` |
-| **Edit specific section** | Parse body by `## ` headers, modify target section, re-submit full body |
-| **Add a comment** | `gh pr comment <number> --body "<comment>"` |
+| **Edit specific section** | Parse body by `## ` headers, modify target section, re-submit full body via temp file |
+| **Add a comment** | Write to temp file, then `gh pr comment <number> --body "$(cat /tmp/comment.txt)"` |
 | **Link an issue** | Edit the linked-issue section in the body |
+| **Add Supersedes** | Add `Supersedes #N` to Linked Issue section and fill `## Supersede Attribution` |
 | **Smart update after new commits** | Re-analyze and suggest section updates |
 
 ### Step 4: Handle Body Section Edits
 
 When editing a specific section:
 
-1. Parse the current PR body into sections by `## ` headers
-2. Match the user's request to the corresponding section from the template
-3. Show the current content of that section and the proposed replacement
-4. On confirmation, modify only that section, reconstruct the full body, and submit
+1. Fetch the latest body first to avoid clobbering concurrent changes
+2. Parse the current PR body into sections by `## ` headers
+3. Match the user's request to the corresponding section from the template
+4. Show the current content of that section and the proposed replacement
+5. On confirmation, modify only that section, reconstruct the full body, write to temp file, and submit
 
 ### Step 5: Smart Update After New Commits
 
@@ -194,20 +267,22 @@ When the user wants to sync the PR description after pushing new changes:
 
 For title/label changes, use direct `gh pr edit` flags.
 
-For body edits, use a HEREDOC:
+For body edits, always use a temp file:
 ```bash
-gh pr edit <number> --body "$(cat <<'PR_BODY_EOF'
+cat > /tmp/pr-body.txt << 'PR_BODY_EOF'
 <full updated body>
 PR_BODY_EOF
-)"
+
+gh pr edit <number> -R zeroclaw-labs/zeroclaw --body "$(cat /tmp/pr-body.txt)"
 ```
 
-For comments:
+For comments, same pattern:
 ```bash
-gh pr comment <number> --body "$(cat <<'COMMENT_EOF'
+cat > /tmp/comment.txt << 'COMMENT_EOF'
 <comment text>
 COMMENT_EOF
-)"
+
+gh pr comment <number> -R zeroclaw-labs/zeroclaw --body "$(cat /tmp/comment.txt)"
 ```
 
 ### Step 7: Confirm
@@ -224,9 +299,13 @@ Return the PR URL.
 ## Important Rules
 
 - **Always read `.github/pull_request_template.md`** before filling or editing a PR body. Never assume section names, fields, or structure — derive everything from the template. It's the source of truth and may change.
+- **Always use temp files** for PR body content — never inline heredocs in command substitution. zsh backtick evaluation corrupts bodies.
 - **For updates, only modify requested sections.** Preserve everything else exactly as-is.
 - **Always show diffs before applying body edits.** Present current vs proposed for each changed section.
 - **Never include personal/sensitive data** in PR content per ZeroClaw's privacy contract.
 - **For label changes**, only use labels that exist in the repository. Check with `gh label list` if unsure.
 - **Fetch the latest body before editing** to avoid clobbering concurrent changes.
 - **For new PRs**, push the branch before creating (with `-u` to set upstream tracking).
+- **Fix incorrect risk labels directly** — never ask the author to do it.
+- **Supersede Attribution is required** whenever `Supersedes #` appears in Linked Issue — never leave it as N/A.
+- **i18n locales**: en, zh-CN, ja, ru, fr, vi only. Turkish and Korean are not supported.
