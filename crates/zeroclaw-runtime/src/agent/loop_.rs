@@ -1455,7 +1455,10 @@ pub async fn run_tool_call_loop(
             }
 
             history.push(ChatMessage::assistant(response_text.clone()));
-            return Ok(append_receipt_footer(accumulated_display_text, collected_receipts));
+            return Ok(append_receipt_footer(
+                accumulated_display_text,
+                collected_receipts,
+            ));
         }
 
         // Accumulate text from this iteration (tool calls present, loop continues).
@@ -2006,7 +2009,10 @@ pub async fn run_tool_call_loop(
                 anyhow::bail!("Agent exceeded maximum tool iterations ({max_iterations})")
             }
             accumulated_display_text.push_str(&text);
-            Ok(append_receipt_footer(accumulated_display_text, collected_receipts))
+            Ok(append_receipt_footer(
+                accumulated_display_text,
+                collected_receipts,
+            ))
         }
         Err(e) => {
             tracing::warn!(error = %e, "Final summary LLM call failed, bailing");
@@ -2905,8 +2911,8 @@ pub async fn run(
                             config.agent.max_context_tokens,
                             None, // shared_budget
                             None, // channel: interactive CLI — uses prompt_cli
-                        None, // receipt_generator
-                        None, // collected_receipts
+                            None, // receipt_generator
+                            None, // collected_receipts
                         ),
                     )
                     .await
@@ -3849,6 +3855,7 @@ mod tests {
             None,
             &observer,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("empty successful tool output should still execute");
