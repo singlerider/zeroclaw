@@ -95,7 +95,12 @@ pub async fn execute_one_tool(
                 success: r.success,
             });
             if r.success {
-                let output = scrub_credentials(&r.output);
+                let normalized_output = if r.output.is_empty() {
+                    "(no output)"
+                } else {
+                    &r.output
+                };
+                let output = scrub_credentials(normalized_output);
                 let receipt = receipt_generator.map(|receipt_gen| {
                     receipt_gen.generate_now(call_name, &call_arguments, &output)
                 });
