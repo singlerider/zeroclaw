@@ -47,10 +47,24 @@ jobs:
         with:
           shared-key: docs-deploy
 
+      - name: Install json-schema-for-humans
+        run: pipx install json-schema-for-humans
+
+      - name: Build zeroclaw (schema-export only, no agent-runtime)
+        run: cargo build --no-default-features --features schema-export
+
       - name: Generate CLI reference from clap
         run: |
           mkdir -p docs/book/src/reference
-          cargo run --no-default-features -- markdown-help > docs/book/src/reference/cli.md
+          cargo run --no-default-features --features schema-export -- markdown-help \
+            > docs/book/src/reference/cli.md
+
+      - name: Generate Config reference from JSON Schema
+        run: |
+          cargo run --no-default-features --features schema-export -- markdown-schema \
+            > /tmp/config.schema.json
+          generate-schema-doc --config template_name=md \
+            /tmp/config.schema.json docs/book/src/reference/config.md
 
       - name: Build book
         working-directory: docs/book

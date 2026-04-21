@@ -5,3 +5,4 @@
 # Reference
 
 - [CLI](./reference/cli.md)
+- [Config](./reference/config.md)
