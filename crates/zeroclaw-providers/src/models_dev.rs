@@ -41,11 +41,7 @@ async fn fetch_catalog() -> Result<Catalog> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
         .build()?;
-    let response = client
-        .get(CATALOG_URL)
-        .send()
-        .await?
-        .error_for_status()?;
+    let response = client.get(CATALOG_URL).send().await?.error_for_status()?;
     let catalog: HashMap<String, ProviderEntry> = response.json().await?;
     Ok(Arc::new(catalog))
 }

@@ -73,26 +73,29 @@ impl RatatuiUi {
         Ok(())
     }
 
-    fn log_panel(&self) -> InfoPanel<'_> {
-        let lines: Vec<Line<'_>> = self
-            .log
-            .iter()
-            .rev()
-            .take(8)
-            .rev()
-            .map(|entry| {
-                let style = match entry.level {
-                    LogLevel::Note => theme::dim_style(),
-                    LogLevel::Status => theme::body_style(),
-                    LogLevel::Warn => theme::warn_style(),
-                };
-                Line::from(Span::styled(entry.text.clone(), style))
-            })
-            .collect();
-        InfoPanel {
-            title: "ZeroClaw Onboard",
-            lines,
-        }
+}
+
+/// Build the rolling log panel. Free function (not `&self`) so the caller can
+/// hold a shared borrow of `self.log` while `self.terminal` is borrowed
+/// mutably by `draw()`.
+fn log_panel(log: &[LogLine]) -> InfoPanel<'_> {
+    let lines: Vec<Line<'_>> = log
+        .iter()
+        .rev()
+        .take(8)
+        .rev()
+        .map(|entry| {
+            let style = match entry.level {
+                LogLevel::Note => theme::dim_style(),
+                LogLevel::Status => theme::body_style(),
+                LogLevel::Warn => theme::warn_style(),
+            };
+            Line::from(Span::styled(entry.text.clone(), style))
+        })
+        .collect();
+    InfoPanel {
+        title: "ZeroClaw Onboard",
+        lines,
     }
 }
 
@@ -113,13 +116,13 @@ fn split(area: Rect) -> (Rect, Rect) {
 
 fn wait_key() -> Result<KeyEvent> {
     loop {
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    anyhow::bail!("aborted by user (Ctrl+C)");
-                }
-                return Ok(key);
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                anyhow::bail!("aborted by user (Ctrl+C)");
             }
+            return Ok(key);
         }
     }
 }
@@ -129,7 +132,7 @@ impl OnboardUi for RatatuiUi {
     async fn confirm(&mut self, prompt: &str, default: bool) -> Result<bool> {
         let mut choice = default;
         loop {
-            let log = self.log_panel();
+            let log = log_panel(&self.log);
             let prompt = prompt.to_string();
             self.terminal.draw(|frame| {
                 let (top, bottom) = split(frame.area());
@@ -159,7 +162,7 @@ impl OnboardUi for RatatuiUi {
     async fn string(&mut self, prompt: &str, current: Option<&str>) -> Result<String> {
         let mut buffer = current.unwrap_or_default().to_string();
         loop {
-            let log = self.log_panel();
+            let log = log_panel(&self.log);
             let label = prompt.to_string();
             let input = buffer.clone();
             self.terminal.draw(|frame| {
@@ -208,7 +211,7 @@ impl OnboardUi for RatatuiUi {
         }
         let mut buffer = String::new();
         loop {
-            let log = self.log_panel();
+            let log = log_panel(&self.log);
             let label = prompt.to_string();
             let input = buffer.clone();
             self.terminal.draw(|frame| {
@@ -275,7 +278,7 @@ impl OnboardUi for RatatuiUi {
                 cursor = matches.len() - 1;
             }
 
-            let log = self.log_panel();
+            let log = log_panel(&self.log);
             let prompt_text = prompt.to_string();
             let filter_text = filter.clone();
             let visible: Vec<(String, bool, Option<String>)> = matches
@@ -317,10 +320,8 @@ impl OnboardUi for RatatuiUi {
                         } else {
                             theme::body_style()
                         };
-                        let mut spans = vec![Span::styled(
-                            if *selected { "› " } else { "  " },
-                            style,
-                        )];
+                        let mut spans =
+                            vec![Span::styled(if *selected { "› " } else { "  " }, style)];
                         spans.push(Span::styled(label.clone(), style));
                         if let Some(b) = badge {
                             spans.push(Span::raw(" "));
@@ -361,11 +362,7 @@ impl OnboardUi for RatatuiUi {
                 } => anyhow::bail!("aborted by user"),
                 KeyEvent {
                     code: KeyCode::Up, ..
-                } => {
-                    if cursor > 0 {
-                        cursor -= 1;
-                    }
-                }
+                } => cursor = cursor.saturating_sub(1),
                 KeyEvent {
                     code: KeyCode::Down,
                     ..
@@ -398,17 +395,21 @@ impl OnboardUi for RatatuiUi {
         // than pulling in dialoguer just for the launcher — it's ~15 lines
         // of std::process + std::fs, no extra dep footprint.
         self.suspend()?;
-        let path = std::env::temp_dir().join(format!(
-            "zeroclaw-onboard-{}.txt",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("zeroclaw-onboard-{}.txt", std::process::id()));
         std::fs::write(&path, initial)?;
         if !hint.is_empty() {
             println!("  {hint}");
         }
         let editor = std::env::var("EDITOR")
             .or_else(|_| std::env::var("VISUAL"))
-            .unwrap_or_else(|_| if cfg!(windows) { "notepad".into() } else { "vi".into() });
+            .unwrap_or_else(|_| {
+                if cfg!(windows) {
+                    "notepad".into()
+                } else {
+                    "vi".into()
+                }
+            });
         let status = std::process::Command::new(&editor).arg(&path).status()?;
         let edited = if status.success() {
             std::fs::read_to_string(&path).unwrap_or_else(|_| initial.to_string())

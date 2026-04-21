@@ -1128,19 +1128,39 @@ async fn main() -> Result<()> {
         workspace_only,
     } = &cli.command
     {
-        use zeroclaw_runtime::onboard::{Flags, Section, run as run_onboard};
         use zeroclaw_runtime::onboard::ui::{QuickUi, TermUi};
+        use zeroclaw_runtime::onboard::{Flags, Section, run as run_onboard};
 
         // Translate the clap-level selector (explicit subcommand OR a legacy
         // --*-only flag, deprecated with a warning) into the orchestrator's
         // Section enum.
         let legacy = [
-            (*channels_only,   Section::Channels,  "--channels-only",  "channels"),
-            (*providers_only,  Section::Providers, "--providers-only", "providers"),
-            (*memory_only,     Section::Memory,    "--memory-only",    "memory"),
-            (*hardware_only,   Section::Hardware,  "--hardware-only",  "hardware"),
-            (*tunnel_only,     Section::Tunnel,    "--tunnel-only",    "tunnel"),
-            (*workspace_only,  Section::Workspace, "--workspace-only", "workspace"),
+            (
+                *channels_only,
+                Section::Channels,
+                "--channels-only",
+                "channels",
+            ),
+            (
+                *providers_only,
+                Section::Providers,
+                "--providers-only",
+                "providers",
+            ),
+            (*memory_only, Section::Memory, "--memory-only", "memory"),
+            (
+                *hardware_only,
+                Section::Hardware,
+                "--hardware-only",
+                "hardware",
+            ),
+            (*tunnel_only, Section::Tunnel, "--tunnel-only", "tunnel"),
+            (
+                *workspace_only,
+                Section::Workspace,
+                "--workspace-only",
+                "workspace",
+            ),
         ]
         .into_iter()
         .find(|(flag, ..)| *flag);
@@ -1150,12 +1170,14 @@ async fn main() -> Result<()> {
         let explicit = section.map(|s| match s {
             OnboardSection::Workspace => Section::Workspace,
             OnboardSection::Providers => Section::Providers,
-            OnboardSection::Channels  => Section::Channels,
-            OnboardSection::Memory    => Section::Memory,
-            OnboardSection::Hardware  => Section::Hardware,
-            OnboardSection::Tunnel    => Section::Tunnel,
+            OnboardSection::Channels => Section::Channels,
+            OnboardSection::Memory => Section::Memory,
+            OnboardSection::Hardware => Section::Hardware,
+            OnboardSection::Tunnel => Section::Tunnel,
         });
-        let target = explicit.or(legacy.map(|(_, s, _, _)| s)).unwrap_or(Section::All);
+        let target = explicit
+            .or(legacy.map(|(_, s, _, _)| s))
+            .unwrap_or(Section::All);
 
         // --reinit backs up the config dir BEFORE load_or_init re-materializes it.
         if *reinit {
@@ -1165,7 +1187,10 @@ async fn main() -> Result<()> {
                 let ts = chrono::Local::now().format("%Y%m%d%H%M%S");
                 let backup = format!("{}.backup.{}", zeroclaw_dir.display(), ts);
                 if !*force {
-                    eprintln!("⚠️  --reinit will back up {} → {backup}", zeroclaw_dir.display());
+                    eprintln!(
+                        "⚠️  --reinit will back up {} → {backup}",
+                        zeroclaw_dir.display()
+                    );
                     eprint!("Continue? [y/N] ");
                     std::io::stderr().flush().ok();
                     let mut answer = String::new();
@@ -2223,7 +2248,6 @@ async fn main() -> Result<()> {
         },
     }
 }
-
 
 #[cfg(feature = "agent-runtime")]
 fn handle_estop_command(
@@ -3548,4 +3572,3 @@ mod tests {
         assert!((final_temperature - 0.7).abs() < f64::EPSILON);
     }
 }
-

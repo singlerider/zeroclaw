@@ -146,17 +146,9 @@ impl SelectItem {
 pub trait OnboardUi: Send {
     async fn confirm(&mut self, prompt: &str, default: bool) -> anyhow::Result<bool>;
 
-    async fn string(
-        &mut self,
-        prompt: &str,
-        current: Option<&str>,
-    ) -> anyhow::Result<String>;
+    async fn string(&mut self, prompt: &str, current: Option<&str>) -> anyhow::Result<String>;
 
-    async fn secret(
-        &mut self,
-        prompt: &str,
-        has_current: bool,
-    ) -> anyhow::Result<Option<String>>;
+    async fn secret(&mut self, prompt: &str, has_current: bool) -> anyhow::Result<Option<String>>;
 
     async fn select(
         &mut self,

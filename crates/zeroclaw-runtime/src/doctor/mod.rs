@@ -134,7 +134,6 @@ pub fn run(config: &Config) -> Result<()> {
     Ok(())
 }
 
-
 pub fn run_traces(
     config: &Config,
     id: Option<&str>,
@@ -787,22 +786,6 @@ fn check_command_available(cmd: &str, args: &[&str], cat: &'static str, items: &
             items.push(DiagItem::warn(cat, format!("{cmd} not found in PATH")));
         }
     }
-}
-
-fn format_error_chain(error: &anyhow::Error) -> String {
-    let mut parts = Vec::new();
-    for cause in error.chain() {
-        let message = cause.to_string();
-        if !message.is_empty() {
-            parts.push(message);
-        }
-    }
-
-    if parts.is_empty() {
-        return String::new();
-    }
-
-    parts.join(": ")
 }
 
 fn truncate_for_display(input: &str, max_chars: usize) -> String {

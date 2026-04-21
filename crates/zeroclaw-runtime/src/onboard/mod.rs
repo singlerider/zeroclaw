@@ -108,7 +108,7 @@ async fn prompt_field(cfg: &mut Config, ui: &mut dyn OnboardUi, name: &str) -> R
             // Empty input on an unset Option field = leave it unset.
             // Empty input on a set field = would be a clear; set_prop with "" will
             // remove the key (serde_set_prop handles the Option case).
-            if new != current && !(new.is_empty() && !is_set) {
+            if (is_set || !new.is_empty()) && new != current {
                 cfg.set_prop(name, &new)?;
             }
         }
@@ -212,10 +212,7 @@ async fn providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> R
 
     // Seed the HashMap entry so prop_fields enumerates its fields. Default
     // ModelProviderConfig is empty; set_prop fills it as we prompt.
-    cfg.providers
-        .models
-        .entry(picked.clone())
-        .or_insert_with(Default::default);
+    cfg.providers.models.entry(picked.clone()).or_default();
 
     // Apply CLI-flag overrides up front, then skip those names in the
     // interactive pass so the user isn't re-prompted for what they already
