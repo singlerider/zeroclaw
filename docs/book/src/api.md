@@ -7,4 +7,4 @@ comments on each type, function, and module.
 Use the crate dropdown in the top-left of the rustdoc page to navigate
 between workspace crates.
 
-[Open API reference →](./api/zeroclaw/index.html)
+[Open API reference →](../api/zeroclaw/index.html)

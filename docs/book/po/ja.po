@@ -1,0 +1,40 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: ZeroClaw Docs\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# --- Sidebar (SUMMARY.md) ---
+msgid "Summary"
+msgstr "目次"
+
+msgid "Introduction"
+msgstr "はじめに"
+
+msgid "Reference"
+msgstr "リファレンス"
+
+msgid "Config"
+msgstr "設定"
+
+# --- introduction.md ---
+msgid "ZeroClaw"
+msgstr "ZeroClaw"
+
+msgid "Personal AI assistant you own, written in Rust."
+msgstr "Rust で書かれた、あなただけの個人 AI アシスタント。"
+
+msgid "Source"
+msgstr "ソース"
+
+# --- api.md ---
+msgid "API Reference"
+msgstr "API リファレンス"
+
+msgid "Open API reference →"
+msgstr "API リファレンスを開く →"
+
+msgid "Use the crate dropdown in the top-left of the rustdoc page to navigate between workspace crates."
+msgstr "ワークスペース内のクレート間を移動するには、rustdoc ページ左上のクレートドロップダウンを使用してください。"

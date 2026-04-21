@@ -25,6 +25,7 @@ env:
   MDBOOK_VERSION: v0.5.2
   CARGO_FLAGS: --no-default-features --features schema-export
   REF_DIR: docs/book/src/reference
+  LOCALES: en ja
 
 jobs:
   deploy:
@@ -49,9 +50,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: docs-deploy
+          cache-all-crates: true
 
       - name: Install json-schema-for-humans
         run: pipx install json-schema-for-humans
+
+      - name: Install mdbook-i18n-helpers
+        run: cargo install --locked mdbook-i18n-helpers
 
       - name: Generate reference pages from code
         run: |
@@ -64,12 +69,23 @@ jobs:
       - name: Generate API reference (rustdoc)
         run: cargo doc --no-deps --workspace --exclude zeroclaw-desktop
 
-      - name: Build book
+      - name: Build mdBook per locale
         working-directory: docs/book
-        run: mdbook build
+        run: |
+          for locale in $LOCALES; do
+            MDBOOK_BOOK__LANGUAGE="$locale" mdbook build -d "book/$locale"
+          done
 
-      - name: Merge rustdoc into book artifact
-        run: cp -r target/doc docs/book/book/api
+      - name: Assemble Pages artifact (rustdoc + locale redirect)
+        run: |
+          cp -r target/doc docs/book/book/api
+          cat > docs/book/book/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=./en/">
+          <link rel="canonical" href="./en/">
+          <title>ZeroClaw Docs</title>
+          HTML
 
       - uses: actions/configure-pages@v5
 
