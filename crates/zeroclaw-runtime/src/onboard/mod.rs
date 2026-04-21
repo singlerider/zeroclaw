@@ -278,25 +278,41 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, provider: &str) 
 
 async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
     loop {
-        // Configured channels are the `channels.<name>.*` prefixes currently
-        // present in prop_fields — channels whose Option<T> is Some emit
-        // their sub-fields, channels that are None don't. This keeps the menu
-        // free of any hardcoded name list.
-        let configured: Vec<String> = cfg
+        // Master list of all channels that exist in the schema. Probe on a
+        // clone: init_defaults(Some("channels")) forces every Option<T>
+        // subsection to Some(default), then prop_fields reveals the full
+        // set. Feature-gated channels (channel-nostr, voice-wake, …) are
+        // absent from the compiled struct, so they drop out automatically.
+        let all_channels: Vec<String> = {
+            let mut probe = cfg.clone();
+            probe.init_defaults(Some("channels"));
+            probe
+                .prop_fields()
+                .iter()
+                .filter_map(|f| f.name.strip_prefix("channels."))
+                .filter_map(|suffix| suffix.split_once('.').map(|(head, _)| head.to_string()))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        // Which of those are already configured in the real cfg?
+        let configured: std::collections::BTreeSet<String> = cfg
             .prop_fields()
             .iter()
             .filter_map(|f| f.name.strip_prefix("channels."))
             .filter_map(|suffix| suffix.split_once('.').map(|(head, _)| head.to_string()))
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
             .collect();
 
-        let mut options: Vec<SelectItem> = configured
+        let mut options: Vec<SelectItem> = all_channels
             .iter()
-            .map(|c| SelectItem::with_badge(c.clone(), "[configured]"))
+            .map(|name| {
+                if configured.contains(name) {
+                    SelectItem::with_badge(name.clone(), "[configured]")
+                } else {
+                    SelectItem::new(name.clone())
+                }
+            })
             .collect();
-        let add_new_idx = options.len();
-        options.push(SelectItem::new("+ Configure a new channel"));
         let done_idx = options.len();
         options.push(SelectItem::new("Done"));
 
@@ -305,26 +321,9 @@ async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> R
             break;
         }
 
-        let picked = if idx == add_new_idx {
-            ui.note("Type the channel key (e.g. telegram, discord, slack, matrix, webhook).");
-            ui.string("Channel name", None).await?.trim().to_string()
-        } else {
-            configured[idx].clone()
-        };
-        if picked.is_empty() {
-            continue;
-        }
-
+        let picked = &all_channels[idx];
         let prefix = format!("channels.{picked}");
         cfg.init_defaults(Some(&prefix));
-        let exists = cfg
-            .prop_fields()
-            .iter()
-            .any(|f| f.name.starts_with(&format!("{prefix}.")));
-        if !exists {
-            ui.warn(&format!("Unknown channel: {picked}"));
-            continue;
-        }
         prompt_fields_under(cfg, ui, &prefix, &[]).await?;
     }
     Ok(())
