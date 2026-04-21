@@ -21,7 +21,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use zeroclaw_config::traits::{OnboardUi, SelectItem};
 
@@ -312,17 +312,25 @@ impl OnboardUi for RatatuiUi {
             let log = log_panel(&self.log);
             let prompt_text = prompt.to_string();
             let filter_text = filter.clone();
-            let visible: Vec<(String, bool, Option<String>)> = matches
+            let list_items: Vec<ListItem<'_>> = matches
                 .iter()
-                .enumerate()
-                .map(|(display_idx, &real_idx)| {
-                    (
-                        items[real_idx].label.clone(),
-                        display_idx == cursor,
-                        items[real_idx].badge.clone(),
-                    )
+                .map(|&real_idx| {
+                    let item = &items[real_idx];
+                    let mut spans = vec![Span::styled(item.label.clone(), theme::body_style())];
+                    if let Some(badge) = &item.badge {
+                        spans.push(Span::raw(" "));
+                        spans.push(Span::styled(
+                            badge.clone(),
+                            theme::dim_style().add_modifier(Modifier::ITALIC),
+                        ));
+                    }
+                    ListItem::new(Line::from(spans))
                 })
                 .collect();
+            let mut list_state = ListState::default();
+            if !matches.is_empty() {
+                list_state.select(Some(cursor));
+            }
 
             self.terminal.draw(|frame| {
                 let area = frame.area();
@@ -353,32 +361,16 @@ impl OnboardUi for RatatuiUi {
                     ])),
                     chunks[2],
                 );
-                let lines: Vec<Line<'_>> = visible
-                    .iter()
-                    .map(|(label, selected, badge)| {
-                        let style = if *selected {
-                            theme::selected_style()
-                        } else {
-                            theme::body_style()
-                        };
-                        let mut spans =
-                            vec![Span::styled(if *selected { "› " } else { "  " }, style)];
-                        spans.push(Span::styled(label.clone(), style));
-                        if let Some(b) = badge {
-                            spans.push(Span::raw(" "));
-                            spans.push(Span::styled(
-                                b.clone(),
-                                theme::dim_style().add_modifier(Modifier::ITALIC),
-                            ));
-                        }
-                        Line::from(spans)
-                    })
-                    .collect();
-                frame.render_widget(
-                    Paragraph::new(lines)
-                        .wrap(Wrap { trim: false })
-                        .block(Block::default().borders(Borders::ALL)),
+                // ratatui's List + ListState handles scrolling + highlight
+                // automatically — the visible window follows the cursor so
+                // long lists (e.g., 28 channels + Done) stay reachable.
+                frame.render_stateful_widget(
+                    List::new(list_items)
+                        .block(Block::default().borders(Borders::ALL))
+                        .highlight_style(theme::selected_style())
+                        .highlight_symbol("› "),
                     chunks[3],
+                    &mut list_state,
                 );
                 frame.render_widget(
                     Paragraph::new(Span::styled(
