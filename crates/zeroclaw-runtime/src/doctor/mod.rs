@@ -145,9 +145,18 @@ pub async fn run(config: &Config) -> Result<()> {
         println!("    {} {}", icon, item.message);
     }
 
-    let errors = results.iter().filter(|i| i.severity == Severity::Error).count();
-    let warns = results.iter().filter(|i| i.severity == Severity::Warn).count();
-    let oks = results.iter().filter(|i| i.severity == Severity::Ok).count();
+    let errors = results
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+    let warns = results
+        .iter()
+        .filter(|i| i.severity == Severity::Warn)
+        .count();
+    let oks = results
+        .iter()
+        .filter(|i| i.severity == Severity::Ok)
+        .count();
 
     println!();
     println!("  Summary: {oks} ok, {warns} warnings, {errors} errors");
