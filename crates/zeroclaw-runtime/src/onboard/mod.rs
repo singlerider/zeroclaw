@@ -221,17 +221,52 @@ async fn providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> R
     // interactive pass so the user isn't re-prompted for what they already
     // passed on the command line.
     let prefix = format!("providers.models.{picked}");
-    let mut excludes: Vec<&str> = Vec::new();
+    let mut excludes: Vec<&str> = vec!["model"]; // handled below via live fetch
     if let Some(api_key) = &flags.api_key {
         cfg.set_prop(&format!("{prefix}.api-key"), api_key)?;
         excludes.push("api-key");
     }
     if let Some(model) = &flags.model {
         cfg.set_prop(&format!("{prefix}.model"), model)?;
-        excludes.push("model");
+        return prompt_fields_under(cfg, ui, &prefix, &excludes).await;
     }
 
     prompt_fields_under(cfg, ui, &prefix, &excludes).await?;
+    prompt_model(cfg, ui, &picked).await?;
+    Ok(())
+}
+
+/// Prompt for the model field using the provider's live model catalog.
+///
+/// Calls `Provider::list_models()` (no auth — see `zeroclaw-providers`
+/// models_dev + native public endpoints). Falls back to a manual string
+/// input when the provider doesn't expose a no-auth list or the fetch fails.
+async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, provider: &str) -> Result<()> {
+    let model_path = format!("providers.models.{provider}.model");
+    let current = cfg.get_prop(&model_path).unwrap_or_default();
+    let is_set = !current.is_empty() && current != "<unset>";
+
+    let live_models = match zeroclaw_providers::create_provider(provider, None) {
+        Ok(handle) => handle.list_models().await.ok(),
+        Err(_) => None,
+    };
+
+    let new_value = match live_models.filter(|ms| !ms.is_empty()) {
+        Some(models) => {
+            let items: Vec<SelectItem> = models.iter().map(SelectItem::new).collect();
+            let current_idx = models.iter().position(|m| m == &current);
+            let idx = ui.select("Model", &items, current_idx).await?;
+            models[idx].clone()
+        }
+        None => {
+            let default = if is_set { Some(current.as_str()) } else { None };
+            ui.string("Model id", default).await?
+        }
+    };
+
+    if new_value != current && !new_value.is_empty() {
+        cfg.set_prop(&model_path, &new_value)?;
+    }
     Ok(())
 }
 
