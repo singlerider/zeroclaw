@@ -37,7 +37,19 @@
   button.setAttribute("aria-haspopup", "true");
   button.setAttribute("aria-expanded", "false");
   button.setAttribute("aria-controls", "language-list");
-  button.innerHTML = '<i class="fa fa-globe"></i>';
+  // Inline SVG globe matches mdBook 0.5.x's icon pattern (.fa-svg wrapper,
+  // currentColor stroke so it picks up the theme).
+  button.innerHTML =
+    '<span class="fa-svg">' +
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="12" cy="12" r="10"/>' +
+    '<line x1="2" y1="12" x2="22" y2="12"/>' +
+    '<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 ' +
+    '15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>' +
+    "</svg>" +
+    "</span>";
 
   const list = document.createElement("ul");
   list.id = "language-list";
