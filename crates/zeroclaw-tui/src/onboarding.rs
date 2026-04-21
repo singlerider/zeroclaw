@@ -641,6 +641,11 @@ impl OnboardUi for RatatuiUi {
             level: LogLevel::Status,
             text: msg.to_string(),
         });
+        // Force a paint so the message is visible before any subsequent
+        // blocking work (e.g. a models.dev fetch). Without this, the new
+        // log line only surfaces when the next prompt triggers a draw,
+        // which defeats the point of a "waiting…" indicator.
+        let _ = self.draw_idle();
     }
 
     fn warn(&mut self, msg: &str) {
@@ -648,5 +653,42 @@ impl OnboardUi for RatatuiUi {
             level: LogLevel::Warn,
             text: msg.to_string(),
         });
+        let _ = self.draw_idle();
+    }
+}
+
+impl RatatuiUi {
+    /// Render a frame with banner + breadcrumb + log + help and no input
+    /// region. Used by `status` / `warn` to flush the log immediately,
+    /// since those are called between prompts (no prompt loop is active
+    /// to drive its own draw).
+    fn draw_idle(&mut self) -> Result<()> {
+        let section = self.section.clone();
+        let subsection = self.subsection.clone();
+        let help = self.help.clone();
+        let log_lines: Vec<LogLine> = self
+            .log
+            .iter()
+            .map(|l| LogLine {
+                level: match l.level {
+                    LogLevel::Status => LogLevel::Status,
+                    LogLevel::Warn => LogLevel::Warn,
+                },
+                text: l.text.clone(),
+            })
+            .collect();
+        self.terminal.draw(|frame| {
+            let r = layout(frame.area(), help.as_deref(), 0);
+            render_banner(frame, r.banner);
+            render_breadcrumb(
+                frame,
+                r.breadcrumb,
+                section.as_deref(),
+                subsection.as_deref(),
+            );
+            render_log(frame, r.log, &log_lines);
+            render_help(frame, r.help, help.as_deref());
+        })?;
+        Ok(())
     }
 }

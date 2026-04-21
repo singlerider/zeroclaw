@@ -672,7 +672,10 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, provider: &str) 
     let is_set = !current.is_empty() && current != "<unset>";
 
     let live_models = match zeroclaw_providers::create_provider(provider, None) {
-        Ok(handle) => handle.list_models().await.ok(),
+        Ok(handle) => {
+            ui.status("Fetching models...");
+            handle.list_models().await.ok()
+        }
         Err(_) => None,
     };
 
