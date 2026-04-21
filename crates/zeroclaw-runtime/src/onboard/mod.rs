@@ -112,22 +112,17 @@ async fn channels(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) ->
 }
 
 async fn memory(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
-    const BACKEND_IDS: &[&str] = &["sqlite", "lucid", "markdown", "none"];
-    let options = [
-        SelectItem::new("sqlite   — BM25 + optional embeddings (recommended)"),
-        SelectItem::new("lucid    — local vector store"),
-        SelectItem::new("markdown — plain text files, no DB"),
-        SelectItem::new("none     — disable memory"),
-    ];
+    let backends = zeroclaw_memory::selectable_memory_backends();
+    let options: Vec<SelectItem> = backends.iter().map(|b| SelectItem::new(b.label)).collect();
 
     let current_backend = cfg.memory.backend.clone();
-    let current_idx = BACKEND_IDS.iter().position(|id| *id == current_backend);
+    let current_idx = backends.iter().position(|b| b.key == current_backend);
 
     let new_backend = if let Some(forced) = &flags.memory {
         forced.clone()
     } else {
         let idx = ui.select("Memory backend", &options, current_idx).await?;
-        BACKEND_IDS[idx].to_string()
+        backends[idx].key.to_string()
     };
     if new_backend != current_backend {
         cfg.set_prop("memory.backend", &new_backend)?;
@@ -147,6 +142,38 @@ async fn hardware(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) ->
     Ok(())
 }
 
-async fn tunnel(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn tunnel(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+    // Derive the provider list from the schema itself: each `tunnel.<name>.*`
+    // field in prop_fields() names a real provider. "none" is always valid and
+    // has no sub-config, so it's prepended. Adding a new TunnelConfig
+    // subsection automatically surfaces here — no parallel list to maintain.
+    let mut providers: Vec<String> = cfg
+        .prop_fields()
+        .iter()
+        .filter_map(|field| field.name.strip_prefix("tunnel."))
+        .filter_map(|suffix| suffix.split_once('.').map(|(head, _)| head.to_string()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    providers.insert(0, "none".to_string());
+
+    let options: Vec<SelectItem> = providers.iter().map(SelectItem::new).collect();
+
+    let current_provider = cfg.tunnel.provider.clone();
+    let current_idx = providers.iter().position(|p| p == &current_provider);
+    let idx = ui
+        .select("Public tunnel provider", &options, current_idx)
+        .await?;
+    let new_provider = &providers[idx];
+
+    if new_provider != &current_provider {
+        cfg.set_prop("tunnel.provider", new_provider)?;
+    }
+
+    if new_provider != "none" {
+        ui.note(&format!(
+            "Set credentials with: zeroclaw config set tunnel.{new_provider}.<field> <value>"
+        ));
+    }
     Ok(())
 }
