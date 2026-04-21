@@ -270,7 +270,57 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, provider: &str) 
     Ok(())
 }
 
-async fn channels(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+    loop {
+        // Configured channels are the `channels.<name>.*` prefixes currently
+        // present in prop_fields — channels whose Option<T> is Some emit
+        // their sub-fields, channels that are None don't. This keeps the menu
+        // free of any hardcoded name list.
+        let configured: Vec<String> = cfg
+            .prop_fields()
+            .iter()
+            .filter_map(|f| f.name.strip_prefix("channels."))
+            .filter_map(|suffix| suffix.split_once('.').map(|(head, _)| head.to_string()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut options: Vec<SelectItem> = configured
+            .iter()
+            .map(|c| SelectItem::with_badge(c.clone(), "[configured]"))
+            .collect();
+        let add_new_idx = options.len();
+        options.push(SelectItem::new("+ Configure a new channel"));
+        let done_idx = options.len();
+        options.push(SelectItem::new("Done"));
+
+        let idx = ui.select("Channel", &options, Some(done_idx)).await?;
+        if idx == done_idx {
+            break;
+        }
+
+        let picked = if idx == add_new_idx {
+            ui.note("Type the channel key (e.g. telegram, discord, slack, matrix, webhook).");
+            ui.string("Channel name", None).await?.trim().to_string()
+        } else {
+            configured[idx].clone()
+        };
+        if picked.is_empty() {
+            continue;
+        }
+
+        let prefix = format!("channels.{picked}");
+        cfg.init_defaults(Some(&prefix));
+        let exists = cfg
+            .prop_fields()
+            .iter()
+            .any(|f| f.name.starts_with(&format!("{prefix}.")));
+        if !exists {
+            ui.warn(&format!("Unknown channel: {picked}"));
+            continue;
+        }
+        prompt_fields_under(cfg, ui, &prefix, &[]).await?;
+    }
     Ok(())
 }
 
