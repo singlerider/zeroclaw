@@ -173,18 +173,20 @@ async fn prompt_field(
 
     let short = name.rsplit('.').next().unwrap_or(name);
     let current = field.display_value;
-    let is_set = !current.is_empty() && current != "<unset>";
+    // For bools, `display_value` is always `"true"` or `"false"` — never
+    // empty, never `"<unset>"` — so a naive is-set check can't tell an
+    // explicit user choice apart from the struct-level default. Treat
+    // bools as unset here: the [Yes]/[No] toggle already surfaces the
+    // current state, and collapsing `is_set` lets any passed `default`
+    // render in the prompt label (`enabled (default: true)`) while
+    // keeping the misleading "Current: …" annotation out of the help.
+    let is_set = field.kind != PropKind::Bool && !current.is_empty() && current != "<unset>";
 
-    // Surface the docstring as help text above the prompt, and append the
-    // default (if any) so the user always sees what Enter will accept.
-    //
-    // Booleans are suppressed from the "Current: …" annotation: their
-    // `display_value` is always `"true"` or `"false"` (never empty, never
-    // `"<unset>"`), so `is_set` can't distinguish an explicit user choice
-    // from the struct-level default. The [Yes]/[No] toggle in the input
-    // bar surfaces the current state without the misleading prefix.
+    // Surface the docstring as help text above the prompt, and append
+    // whichever annotation fits the prompt's state: "Default: X" when
+    // the section supplied one and the field is unset, "Current: X"
+    // when the config carries a user-set value (non-bool only).
     let mut help = field.description.to_string();
-    let is_bool = field.kind == PropKind::Bool;
     if !is_set
         && let Some(d) = default
         && !d.is_empty()
@@ -193,7 +195,7 @@ async fn prompt_field(
             help.push('\n');
         }
         help.push_str(&format!("Default: {d}. Press Enter to accept."));
-    } else if is_set && !is_bool {
+    } else if is_set {
         if !help.is_empty() {
             help.push('\n');
         }
