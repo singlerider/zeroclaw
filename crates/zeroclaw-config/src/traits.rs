@@ -104,3 +104,70 @@ pub trait ConfigHandle {
     fn name(&self) -> &'static str;
     fn desc(&self) -> &'static str;
 }
+
+/// A menu item for `OnboardUi::select`, with an optional status badge
+/// (e.g. `[configured]` / `[not set]`) that backends render next to the label.
+#[derive(Debug, Clone)]
+pub struct SelectItem {
+    pub label: String,
+    pub badge: Option<String>,
+}
+
+impl SelectItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            badge: None,
+        }
+    }
+
+    pub fn with_badge(label: impl Into<String>, badge: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            badge: Some(badge.into()),
+        }
+    }
+}
+
+/// Prompt-surface the onboard orchestrator drives.
+///
+/// Async is deliberate: the orchestrator is already async (Config::load_or_init,
+/// Config::save), and a future gateway-backed onboarder (WebSocket → browser)
+/// needs to await network I/O per prompt. A sync trait would force that
+/// backend to bridge sync↔async via blocking threads and channels, which
+/// starves the tokio runtime under concurrent onboarding sessions. Blocking
+/// backends (dialoguer) wrap their calls in `tokio::task::spawn_blocking`.
+///
+/// Idempotency contract: prompts accept a `current` value and pre-populate it
+/// as the default. `secret(has_current=true)` returns `None` when the user
+/// declines to rotate; callers then skip the write. The orchestrator never
+/// calls `config.set_prop` unless the new value differs from `current`.
+#[async_trait::async_trait]
+pub trait OnboardUi: Send {
+    async fn confirm(&mut self, prompt: &str, default: bool) -> anyhow::Result<bool>;
+
+    async fn string(
+        &mut self,
+        prompt: &str,
+        current: Option<&str>,
+    ) -> anyhow::Result<String>;
+
+    async fn secret(
+        &mut self,
+        prompt: &str,
+        has_current: bool,
+    ) -> anyhow::Result<Option<String>>;
+
+    async fn select(
+        &mut self,
+        prompt: &str,
+        items: &[SelectItem],
+        current: Option<usize>,
+    ) -> anyhow::Result<usize>;
+
+    async fn editor(&mut self, hint: &str, initial: &str) -> anyhow::Result<String>;
+
+    fn note(&mut self, msg: &str);
+    fn status(&mut self, msg: &str);
+    fn warn(&mut self, msg: &str);
+}
