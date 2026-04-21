@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 use zeroclaw_config::schema::Config;
-use zeroclaw_config::traits::OnboardUi;
+use zeroclaw_config::traits::{OnboardUi, SelectItem};
 
 pub mod ui;
 
@@ -24,7 +24,6 @@ pub enum Section {
     Memory,
     Hardware,
     Tunnel,
-    Project,
 }
 
 /// Runtime knobs sourced from CLI flags. `--quick`/`--tui` select the UI
@@ -57,7 +56,6 @@ pub async fn run(
             memory(cfg, ui, flags).await?;
             hardware(cfg, ui, flags).await?;
             tunnel(cfg, ui, flags).await?;
-            project(cfg, ui, flags).await?;
         }
         Section::Workspace => workspace(cfg, ui, flags).await?,
         Section::Providers => providers(cfg, ui, flags).await?,
@@ -65,7 +63,6 @@ pub async fn run(
         Section::Memory => memory(cfg, ui, flags).await?,
         Section::Hardware => hardware(cfg, ui, flags).await?,
         Section::Tunnel => tunnel(cfg, ui, flags).await?,
-        Section::Project => project(cfg, ui, flags).await?,
     }
     Ok(())
 }
@@ -114,7 +111,35 @@ async fn channels(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) ->
     Ok(())
 }
 
-async fn memory(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn memory(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
+    const BACKEND_IDS: &[&str] = &["sqlite", "lucid", "markdown", "none"];
+    let options = [
+        SelectItem::new("sqlite   — BM25 + optional embeddings (recommended)"),
+        SelectItem::new("lucid    — local vector store"),
+        SelectItem::new("markdown — plain text files, no DB"),
+        SelectItem::new("none     — disable memory"),
+    ];
+
+    let current_backend = cfg.memory.backend.clone();
+    let current_idx = BACKEND_IDS.iter().position(|id| *id == current_backend);
+
+    let new_backend = if let Some(forced) = &flags.memory {
+        forced.clone()
+    } else {
+        let idx = ui.select("Memory backend", &options, current_idx).await?;
+        BACKEND_IDS[idx].to_string()
+    };
+    if new_backend != current_backend {
+        cfg.set_prop("memory.backend", &new_backend)?;
+    }
+
+    let current_auto_save = cfg.memory.auto_save;
+    let auto_save = ui
+        .confirm("Auto-save user messages to memory?", current_auto_save)
+        .await?;
+    if auto_save != current_auto_save {
+        cfg.set_prop("memory.auto-save", &auto_save.to_string())?;
+    }
     Ok(())
 }
 
@@ -123,9 +148,5 @@ async fn hardware(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) ->
 }
 
 async fn tunnel(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
-    Ok(())
-}
-
-async fn project(_cfg: &mut Config, _ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
     Ok(())
 }
