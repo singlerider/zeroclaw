@@ -5319,9 +5319,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         config.agent.max_system_prompt_chars,
     );
     if !native_tools {
-        system_prompt.push_str(&build_tool_instructions(
-            tools_registry.as_ref(),
-        ));
+        system_prompt.push_str(&build_tool_instructions(tools_registry.as_ref()));
     }
 
     // Append deferred MCP tool names so the LLM knows what is available

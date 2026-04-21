@@ -23,17 +23,17 @@ pub fn get_tool_description(tool_name: &str) -> Option<&'static str> {
 
 fn load_descriptions(locale: &str) -> HashMap<String, String> {
     let mut map = format_ftl_messages(include_str!("../locales/en/tools.ftl"), "en");
-    if locale != "en" {
-        if let Some(locale_ftl) = load_ftl_from_disk(locale, "tools.ftl") {
-            map.extend(format_ftl_messages(&locale_ftl, locale));
-        }
+    if locale != "en"
+        && let Some(locale_ftl) = load_ftl_from_disk(locale, "tools.ftl")
+    {
+        map.extend(format_ftl_messages(&locale_ftl, locale));
     }
     map
 }
 
 fn format_ftl_messages(ftl_source: &str, locale: &str) -> HashMap<String, String> {
-    let resource = FluentResource::try_new(ftl_source.to_string())
-        .unwrap_or_else(|(resource, _)| resource);
+    let resource =
+        FluentResource::try_new(ftl_source.to_string()).unwrap_or_else(|(resource, _)| resource);
     let language_identifier = locale.parse().unwrap_or_else(|_| "en".parse().unwrap());
     let mut bundle = FluentBundle::new(vec![language_identifier]);
     let _ = bundle.add_resource(resource);
@@ -44,14 +44,13 @@ fn format_ftl_messages(ftl_source: &str, locale: &str) -> HashMap<String, String
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('-') {
             continue;
         }
-        if let Some(identifier) = trimmed.split(" =").next() {
-            if let Some(message) = bundle.get_message(identifier) {
-                if let Some(pattern) = message.value() {
-                    let mut errors = vec![];
-                    let value = bundle.format_pattern(pattern, None, &mut errors);
-                    map.insert(identifier.to_string(), value.into_owned());
-                }
-            }
+        if let Some(identifier) = trimmed.split(" =").next()
+            && let Some(message) = bundle.get_message(identifier)
+            && let Some(pattern) = message.value()
+        {
+            let mut errors = vec![];
+            let value = bundle.format_pattern(pattern, None, &mut errors);
+            map.insert(identifier.to_string(), value.into_owned());
         }
     }
     map
@@ -59,11 +58,16 @@ fn format_ftl_messages(ftl_source: &str, locale: &str) -> HashMap<String, String
 
 fn load_ftl_from_disk(locale: &str, filename: &str) -> Option<String> {
     let search_paths = [
-        directories::BaseDirs::new()
-            .map(|base| base.config_dir().join("zeroclaw/locales").join(locale).join(filename)),
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|p| p.join("locales").join(locale).join(filename))),
+        directories::BaseDirs::new().map(|base| {
+            base.config_dir()
+                .join("zeroclaw/locales")
+                .join(locale)
+                .join(filename)
+        }),
+        std::env::current_exe().ok().and_then(|exe| {
+            exe.parent()
+                .map(|p| p.join("locales").join(locale).join(filename))
+        }),
     ];
     for path in search_paths.into_iter().flatten() {
         if let Ok(content) = std::fs::read_to_string(&path) {
