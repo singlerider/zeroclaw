@@ -624,6 +624,10 @@ Examples:
         shell: CompletionShell,
     },
 
+    /// Print the full CLI reference as Markdown (used by the docs pipeline).
+    #[command(hide = true)]
+    MarkdownHelp,
+
     /// Launch or install the companion desktop app
     #[command(long_about = "\
 Launch the ZeroClaw companion desktop app.
@@ -962,6 +966,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if matches!(&cli.command, Commands::MarkdownHelp) {
+        clap_markdown::print_help_markdown::<Cli>();
+        return Ok(());
+    }
+
     // Initialize logging - respects RUST_LOG env var, defaults to INFO.
     // matrix_sdk crates are suppressed to warn because they are extremely
     // noisy at info level. To restore SDK-level output for Matrix debugging:
@@ -1195,7 +1204,7 @@ async fn main() -> Result<()> {
                 }
                 return Ok(());
             }
-            Commands::Completions { shell } => unreachable!(),
+            Commands::Completions { .. } | Commands::MarkdownHelp => unreachable!(),
             _ => {
                 anyhow::bail!(
                     "This command requires the full runtime. Rebuild with default features:\n  cargo build --release"
@@ -1206,7 +1215,9 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "agent-runtime")]
     match cli.command {
-        Commands::Onboard { .. } | Commands::Completions { .. } => unreachable!(),
+        Commands::Onboard { .. } | Commands::Completions { .. } | Commands::MarkdownHelp => {
+            unreachable!()
+        }
 
         Commands::Agent {
             message,
