@@ -10,6 +10,10 @@ const CRAB_ACCENT: Color = Color::Rgb(255, 100, 80);
 const WARN_YELLOW: Color = Color::Rgb(255, 220, 80);
 const SELECTION_BG: Color = Color::Rgb(30, 60, 100);
 
+pub fn title_style() -> Style {
+    Style::default().fg(ICY_BLUE).add_modifier(Modifier::BOLD)
+}
+
 pub fn heading_style() -> Style {
     Style::default().fg(ICY_CYAN).add_modifier(Modifier::BOLD)
 }

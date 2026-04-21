@@ -26,7 +26,7 @@ use ratatui::{
 use zeroclaw_config::traits::{OnboardUi, SelectItem};
 
 use crate::theme;
-use crate::widgets::{InfoPanel, InputPrompt};
+use crate::widgets::{BANNER_HEIGHT, Banner, InfoPanel, InputPrompt};
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -106,20 +106,30 @@ impl Drop for RatatuiUi {
     }
 }
 
-/// Vertical layout: top log panel (flex) + bottom prompt bar sized to the
-/// prompt text so long doc-comment labels don't get truncated.
-fn split(area: Rect, prompt_text: &str) -> (Rect, Rect) {
-    let inner_width = area.width.saturating_sub(2).max(1) as usize; // minus borders
+/// Vertical layout: branded header + log panel (flex) + prompt bar sized to
+/// the prompt text so long doc-comment labels don't get truncated. The
+/// banner collapses when the terminal is too short to leave room for it.
+fn split(area: Rect, prompt_text: &str) -> (Rect, Rect, Rect) {
+    let inner_width = area.width.saturating_sub(2).max(1) as usize;
     let wrapped_rows = prompt_text
         .split('\n')
         .map(|line| line.len().div_ceil(inner_width).max(1))
         .sum::<usize>();
     let bottom_rows = (wrapped_rows + 2).clamp(3, (area.height / 2) as usize) as u16;
+    let banner_rows = if area.height >= BANNER_HEIGHT + bottom_rows + 3 {
+        BANNER_HEIGHT
+    } else {
+        0
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(bottom_rows)])
+        .constraints([
+            Constraint::Length(banner_rows),
+            Constraint::Min(3),
+            Constraint::Length(bottom_rows),
+        ])
         .split(area);
-    (chunks[0], chunks[1])
+    (chunks[0], chunks[1], chunks[2])
 }
 
 fn wait_key() -> Result<KeyEvent> {
@@ -146,7 +156,10 @@ impl OnboardUi for RatatuiUi {
                 if choice { "Yes" } else { "No" }
             );
             self.terminal.draw(|frame| {
-                let (top, bottom) = split(frame.area(), &label);
+                let (header, top, bottom) = split(frame.area(), &label);
+                if header.height > 0 {
+                    frame.render_widget(Banner, header);
+                }
                 frame.render_widget(log, top);
                 frame.render_widget(
                     Paragraph::new(label.clone())
@@ -177,7 +190,10 @@ impl OnboardUi for RatatuiUi {
             // allocate enough bottom rows for wrapped labels.
             let measure = format!("{label}  {input}");
             self.terminal.draw(|frame| {
-                let (top, bottom) = split(frame.area(), &measure);
+                let (header, top, bottom) = split(frame.area(), &measure);
+                if header.height > 0 {
+                    frame.render_widget(Banner, header);
+                }
                 frame.render_widget(log, top);
                 frame.render_widget(
                     InputPrompt {
@@ -227,7 +243,10 @@ impl OnboardUi for RatatuiUi {
             let input = buffer.clone();
             let measure = label.clone();
             self.terminal.draw(|frame| {
-                let (top, bottom) = split(frame.area(), &measure);
+                let (header, top, bottom) = split(frame.area(), &measure);
+                if header.height > 0 {
+                    frame.render_widget(Banner, header);
+                }
                 frame.render_widget(log, top);
                 frame.render_widget(
                     InputPrompt {
@@ -306,23 +325,33 @@ impl OnboardUi for RatatuiUi {
                 .collect();
 
             self.terminal.draw(|frame| {
+                let area = frame.area();
+                let banner_rows = if area.height >= BANNER_HEIGHT + 13 {
+                    BANNER_HEIGHT
+                } else {
+                    0
+                };
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
+                        Constraint::Length(banner_rows),
                         Constraint::Length(8),
                         Constraint::Length(1),
                         Constraint::Min(3),
                         Constraint::Length(1),
                     ])
-                    .split(frame.area());
-                frame.render_widget(log, chunks[0]);
+                    .split(area);
+                if banner_rows > 0 {
+                    frame.render_widget(Banner, chunks[0]);
+                }
+                frame.render_widget(log, chunks[1]);
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(prompt_text, theme::heading_style()),
                         Span::raw(" "),
                         Span::styled(format!("filter: {filter_text}"), theme::dim_style()),
                     ])),
-                    chunks[1],
+                    chunks[2],
                 );
                 let lines: Vec<Line<'_>> = visible
                     .iter()
@@ -349,14 +378,14 @@ impl OnboardUi for RatatuiUi {
                     Paragraph::new(lines)
                         .wrap(Wrap { trim: false })
                         .block(Block::default().borders(Borders::ALL)),
-                    chunks[2],
+                    chunks[3],
                 );
                 frame.render_widget(
                     Paragraph::new(Span::styled(
                         "type to filter  Enter=select  Esc=cancel",
                         theme::dim_style(),
                     )),
-                    chunks[3],
+                    chunks[4],
                 );
             })?;
 
