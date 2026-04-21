@@ -103,7 +103,9 @@ pub fn make_prop_field(
     let display_value = if is_secret {
         match table.and_then(|t| t.get(serde_name)) {
             Some(toml::Value::String(s)) if !s.is_empty() => "****".to_string(),
-            Some(toml::Value::Array(arr)) if !arr.is_empty() => format!("[{}]", vec!["****"; arr.len()].join(", ")),
+            Some(toml::Value::Array(arr)) if !arr.is_empty() => {
+                format!("[{}]", vec!["****"; arr.len()].join(", "))
+            }
             _ => "<unset>".to_string(),
         }
     } else {

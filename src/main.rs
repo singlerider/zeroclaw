@@ -1987,12 +1987,20 @@ async fn main() -> Result<()> {
                             .and_then(|f| {
                                 let raw = toml::from_str::<toml::Value>(&format!(
                                     "v = {}",
-                                    if f.display_value == "<unset>" { "[]".to_string() } else { f.display_value.clone() }
+                                    if f.display_value == "<unset>" {
+                                        "[]".to_string()
+                                    } else {
+                                        f.display_value.clone()
+                                    }
                                 ))
                                 .ok();
                                 raw.and_then(|v| v.get("v").cloned())
                                     .and_then(|v| v.as_array().cloned())
-                                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                            .collect()
+                                    })
                             })
                             .unwrap_or_default();
                         let editor_content = current_items.join("\n");
