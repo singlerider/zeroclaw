@@ -1300,7 +1300,7 @@ async fn main() -> Result<()> {
                 match message {
                     Some(msg) => {
                         let response = provider
-                            .simple_chat(&msg, model_name, final_temperature)
+                            .simple_chat(&msg, model_name, Some(final_temperature))
                             .await?;
                         println!("{response}");
                     }
@@ -1315,7 +1315,7 @@ async fn main() -> Result<()> {
                                 break;
                             }
                             let response = provider
-                                .simple_chat(line.trim(), model_name, final_temperature)
+                                .simple_chat(line.trim(), model_name, Some(final_temperature))
                                 .await?;
                             println!("{response}");
                         }
