@@ -6,3 +6,4 @@
 
 - [CLI](./reference/cli.md)
 - [Config](./reference/config.md)
+- [API](./api.md)

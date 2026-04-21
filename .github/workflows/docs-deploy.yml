@@ -61,9 +61,15 @@ jobs:
           generate-schema-doc --config template_name=md \
             /tmp/config.schema.json "$REF_DIR/config.md"
 
+      - name: Generate API reference (rustdoc)
+        run: cargo doc --no-deps --workspace
+
       - name: Build book
         working-directory: docs/book
         run: mdbook build
+
+      - name: Merge rustdoc into book artifact
+        run: cp -r target/doc docs/book/book/api
 
       - uses: actions/configure-pages@v5
 
