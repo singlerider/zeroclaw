@@ -72,6 +72,10 @@ pub struct PropFieldInfo {
     pub is_secret: bool,
     /// Returns valid variant names for enum fields (None for non-enum fields)
     pub enum_variants: Option<fn() -> Vec<String>>,
+    /// Field's `///` doc comment, flattened to a single line. Empty string
+    /// when the field has no doc comment. Onboard uses this as human-readable
+    /// prompt text instead of the raw kebab-case field name.
+    pub description: &'static str,
 }
 
 impl PropFieldInfo {

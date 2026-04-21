@@ -475,6 +475,8 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
         let category_lit = &category;
         let type_str = field.ty.to_token_stream().to_string().replace(' ', "");
         let type_hint_lit = &type_str;
+        let description = extract_doc(&field.attrs);
+        let description_lit = description.as_str();
 
         // PropKind resolved at compile time via HasPropKind trait.
         // All field types must implement HasPropKind — scalars in traits.rs,
@@ -520,6 +522,7 @@ pub fn derive_configurable(input: TokenStream) -> TokenStream {
                 #kind_token,
                 #is_secret,
                 #enum_variants_expr,
+                #description_lit,
             )
         });
     }
@@ -668,6 +671,32 @@ fn has_attr(field: &syn::Field, name: &str) -> bool {
 
 fn snake_to_kebab(s: &str) -> String {
     s.replace('_', "-")
+}
+
+/// Flatten a field's `///` doc comment into a single space-separated line.
+/// Empty string when the field has no doc comment.
+fn extract_doc(attrs: &[syn::Attribute]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("doc") {
+            continue;
+        }
+        let Meta::NameValue(nv) = &attr.meta else {
+            continue;
+        };
+        let syn::Expr::Lit(expr_lit) = &nv.value else {
+            continue;
+        };
+        let Lit::Str(lit_str) = &expr_lit.lit else {
+            continue;
+        };
+        let line = lit_str.value();
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+    parts.join(" ")
 }
 
 fn is_option_type(ty: &syn::Type) -> bool {

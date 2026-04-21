@@ -83,7 +83,16 @@ async fn prompt_field(cfg: &mut Config, ui: &mut dyn OnboardUi, name: &str) -> R
         .find(|f| f.name == name)
         .ok_or_else(|| anyhow::anyhow!("unknown config field: {name}"))?;
 
-    let prompt = name.rsplit('.').next().unwrap_or(name);
+    // Prefer the field's doc comment as the prompt so users see "Enable
+    // workspace isolation. Default: false." instead of the raw kebab-case
+    // `enabled`. Fall back to the name when no doc comment is attached.
+    let short = name.rsplit('.').next().unwrap_or(name);
+    let prompt = if field.description.is_empty() {
+        short.to_string()
+    } else {
+        format!("{} [{short}]", field.description)
+    };
+    let prompt = prompt.as_str();
     let current = field.display_value;
     let is_set = !current.is_empty() && current != "<unset>";
 

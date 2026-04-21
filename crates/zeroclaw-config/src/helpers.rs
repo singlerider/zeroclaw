@@ -68,6 +68,7 @@ pub fn enum_variants<T: schemars::JsonSchema>() -> String {
 }
 
 /// Build a `PropFieldInfo` by reading the display value from a serialized TOML table.
+#[allow(clippy::too_many_arguments)]
 pub fn make_prop_field(
     table: Option<&toml::Table>,
     name: &'static str,
@@ -77,6 +78,7 @@ pub fn make_prop_field(
     kind: PropKind,
     is_secret: bool,
     enum_variants: Option<fn() -> Vec<String>>,
+    description: &'static str,
 ) -> PropFieldInfo {
     let display_value = if is_secret {
         match table.and_then(|t| t.get(serde_name)) {
@@ -97,6 +99,7 @@ pub fn make_prop_field(
         kind,
         is_secret,
         enum_variants,
+        description,
     }
 }
 
