@@ -178,16 +178,41 @@ async fn prompt_fields_under(
     Ok(())
 }
 
+/// Section-level skip gate. When the section is already meaningfully
+/// configured, offer to skip reconfiguration. Flags.force bypasses the
+/// gate (forces reconfiguration). Quick mode bypasses too — scripts want
+/// deterministic behavior, not prompts.
+async fn skip_if_configured(
+    ui: &mut dyn OnboardUi,
+    flags: &Flags,
+    section: &str,
+    already_configured: bool,
+) -> Result<bool> {
+    if flags.force || !already_configured {
+        return Ok(false);
+    }
+    let reconfigure = ui
+        .confirm(
+            &format!("{section} is already configured. Reconfigure?"),
+            false,
+        )
+        .await?;
+    Ok(!reconfigure)
+}
+
 // ── Sections ─────────────────────────────────────────────────────────────
 // Each section picks the specialized pre-work (registry-driven choices,
 // flag overrides) and then defers to `prompt_fields_under` for the rest.
 
-async fn workspace(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn workspace(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
     ui.note("");
     ui.status(&format!(
         "Workspace directory: {}",
         cfg.workspace_dir.display()
     ));
+    if skip_if_configured(ui, flags, "Workspace", cfg.workspace.enabled).await? {
+        return Ok(());
+    }
     prompt_field(cfg, ui, "workspace.enabled").await?;
     if cfg.workspace.enabled {
         prompt_fields_under(cfg, ui, "workspace", &["enabled"]).await?;
@@ -197,6 +222,10 @@ async fn workspace(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> 
 
 async fn providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
     ui.note("");
+    let already = cfg.providers.fallback.is_some() && flags.provider.is_none();
+    if skip_if_configured(ui, flags, "Providers", already).await? {
+        return Ok(());
+    }
     // Menu is driven by zeroclaw_providers::list_providers() — single source
     // of truth for canonical names, display names, aliases. Badges show which
     // provider is the current fallback and which already have a stored config.
@@ -289,8 +318,15 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, provider: &str) 
     Ok(())
 }
 
-async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
     ui.note("");
+    let already = cfg
+        .prop_fields()
+        .iter()
+        .any(|f| f.name.starts_with("channels.") && f.name.matches('.').count() >= 2);
+    if skip_if_configured(ui, flags, "Channels", already).await? {
+        return Ok(());
+    }
     loop {
         // Master list of all channels that exist in the schema. Probe on a
         // clone: init_defaults(Some("channels")) forces every Option<T>
@@ -346,6 +382,13 @@ async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> R
 
 async fn memory(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
     ui.note("");
+    // Memory always has a backend set (default "sqlite"). "Configured" here
+    // means the user has deviated from the default OR explicitly disabled
+    // auto-save — both count as a deliberate choice.
+    let already = cfg.memory.backend != "sqlite" || !cfg.memory.auto_save;
+    if skip_if_configured(ui, flags, "Memory", already).await? && flags.memory.is_none() {
+        return Ok(());
+    }
     // Backend: registry-driven select (key + label both come from
     // zeroclaw-memory's selectable_memory_backends()). --memory CLI flag
     // bypasses the prompt.
@@ -366,8 +409,11 @@ async fn memory(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Resu
     prompt_field(cfg, ui, "memory.auto-save").await
 }
 
-async fn hardware(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn hardware(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
     ui.note("");
+    if skip_if_configured(ui, flags, "Hardware", cfg.hardware.enabled).await? {
+        return Ok(());
+    }
     prompt_field(cfg, ui, "hardware.enabled").await?;
     if cfg.hardware.enabled {
         prompt_fields_under(cfg, ui, "hardware", &["enabled"]).await?;
@@ -375,8 +421,12 @@ async fn hardware(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> R
     Ok(())
 }
 
-async fn tunnel(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+async fn tunnel(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
     ui.note("");
+    let already = cfg.tunnel.provider != "none";
+    if skip_if_configured(ui, flags, "Tunnel", already).await? {
+        return Ok(());
+    }
     // Provider list is derived from the schema: each `tunnel.<name>.*` field
     // in prop_fields() names a real provider. "none" is always valid and has
     // no sub-config, so it's prepended. Adding a new TunnelConfig subsection
