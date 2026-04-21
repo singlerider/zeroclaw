@@ -349,10 +349,16 @@ fn section_has_signal(cfg: &Config, section_key: &str) -> bool {
     match section_key {
         "workspace" => cfg.workspace.enabled,
         "providers" => cfg.providers.fallback.is_some() && !cfg.providers.models.is_empty(),
-        "channels" => cfg
-            .prop_fields()
-            .iter()
-            .any(|f| f.name.starts_with("channels.")),
+        // `channels.cli: bool` is a default-true scalar that lives directly
+        // under `channels.*`, so a bare `starts_with("channels.")` check
+        // fires on every fresh install. Require a nested channel config
+        // (e.g. `channels.telegram.bot-token`) — anything with a second dot
+        // segment — to count as user-driven signal.
+        "channels" => cfg.prop_fields().iter().any(|f| {
+            f.name
+                .strip_prefix("channels.")
+                .is_some_and(|rest| rest.contains('.'))
+        }),
         "hardware" => cfg.hardware.enabled,
         // Memory's default backend is "sqlite" and Tunnel's is "none" — both
         // are valid user choices indistinguishable from untouched defaults.
@@ -905,4 +911,233 @@ async fn tunnel(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Resu
     }
     mark_completed(cfg, "tunnel").await?;
     Ok(Nav::Done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::onboard::ui::quick::QuickUi;
+    use tempfile::TempDir;
+    use zeroclaw_config::schema::{Config, ModelProviderConfig};
+
+    /// Build a `Config` whose `config_path` / `workspace_dir` live inside a
+    /// temp directory, so `save()` touches only the scratch tree.
+    fn test_cfg(temp: &TempDir) -> Config {
+        Config {
+            config_path: temp.path().join("config.toml"),
+            workspace_dir: temp.path().join("workspace"),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn section_has_signal_workspace_tracks_enabled_flag() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        assert!(!section_has_signal(&cfg, "workspace"));
+        cfg.workspace.enabled = true;
+        assert!(section_has_signal(&cfg, "workspace"));
+    }
+
+    #[tokio::test]
+    async fn section_has_signal_providers_requires_fallback_and_models() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        assert!(!section_has_signal(&cfg, "providers"));
+        cfg.providers.fallback = Some("anthropic".into());
+        // A fallback name alone — with an empty models map — isn't a signal:
+        // the user could have set it and then wiped the per-model block.
+        assert!(!section_has_signal(&cfg, "providers"));
+        cfg.providers
+            .models
+            .insert("anthropic".into(), ModelProviderConfig::default());
+        assert!(section_has_signal(&cfg, "providers"));
+    }
+
+    #[tokio::test]
+    async fn section_has_signal_hardware_tracks_enabled_flag() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        assert!(!section_has_signal(&cfg, "hardware"));
+        cfg.hardware.enabled = true;
+        assert!(section_has_signal(&cfg, "hardware"));
+    }
+
+    #[tokio::test]
+    async fn section_has_signal_memory_and_tunnel_are_marker_only() {
+        let temp = TempDir::new().unwrap();
+        let cfg = test_cfg(&temp);
+        // Memory defaults to "sqlite" and Tunnel defaults to "none" — both
+        // are valid user choices indistinguishable from untouched defaults,
+        // so the completed-sections marker is the only skip-gate signal.
+        assert!(!section_has_signal(&cfg, "memory"));
+        assert!(!section_has_signal(&cfg, "tunnel"));
+    }
+
+    #[tokio::test]
+    async fn mark_completed_is_dedupe_safe() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        mark_completed(&mut cfg, "workspace").await.unwrap();
+        mark_completed(&mut cfg, "workspace").await.unwrap();
+        let count = cfg
+            .onboard_state
+            .completed_sections
+            .iter()
+            .filter(|s| s.as_str() == "workspace")
+            .count();
+        assert_eq!(count, 1, "marker should be inserted at most once");
+    }
+
+    #[tokio::test]
+    async fn skip_gate_skips_when_marked_and_user_declines() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        cfg.onboard_state
+            .completed_sections
+            .push("workspace".into());
+
+        // QuickUi with no scripted answers returns `default` from `confirm`,
+        // which for the reconfigure prompt is `false` → SkipNav::Skip.
+        let mut ui = QuickUi::new();
+        let result = skip_if_configured(
+            &cfg,
+            &mut ui,
+            &Flags::default(),
+            "workspace",
+            "Workspace",
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, SkipNav::Skip);
+    }
+
+    #[tokio::test]
+    async fn skip_gate_skips_when_signal_present_and_user_declines() {
+        let temp = TempDir::new().unwrap();
+        let cfg = test_cfg(&temp);
+        // No marker, but caller reports meaningful config in this section.
+        let mut ui = QuickUi::new();
+        let result = skip_if_configured(
+            &cfg,
+            &mut ui,
+            &Flags::default(),
+            "workspace",
+            "Workspace",
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, SkipNav::Skip);
+    }
+
+    #[tokio::test]
+    async fn skip_gate_enters_when_force_flag_set() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        cfg.onboard_state
+            .completed_sections
+            .push("workspace".into());
+
+        let mut ui = QuickUi::new();
+        let flags = Flags {
+            force: true,
+            ..Default::default()
+        };
+        let result = skip_if_configured(&cfg, &mut ui, &flags, "workspace", "Workspace", true)
+            .await
+            .unwrap();
+        assert_eq!(result, SkipNav::Enter);
+    }
+
+    #[tokio::test]
+    async fn skip_gate_enters_when_unmarked_and_no_signal() {
+        let temp = TempDir::new().unwrap();
+        let cfg = test_cfg(&temp);
+        let mut ui = QuickUi::new();
+        let result = skip_if_configured(
+            &cfg,
+            &mut ui,
+            &Flags::default(),
+            "workspace",
+            "Workspace",
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, SkipNav::Enter);
+    }
+
+    /// Channels section with no scripted answers: the user falls onto the
+    /// pre-selected "Done" option in the channel menu, the section marks
+    /// completed, and a second run hits the skip-gate and leaves the file
+    /// bytes unchanged.
+    #[tokio::test]
+    async fn channels_done_selection_is_idempotent_on_disk() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        let flags = Flags::default();
+
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Channels, &flags)
+            .await
+            .unwrap();
+
+        assert!(
+            cfg.onboard_state
+                .completed_sections
+                .iter()
+                .any(|s| s == "channels"),
+            "first run should mark channels completed"
+        );
+        let after_first = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Channels, &flags)
+            .await
+            .unwrap();
+        let after_second = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+        assert_eq!(
+            after_first, after_second,
+            "second run hit the skip-gate and must not rewrite config.toml"
+        );
+    }
+
+    /// Acceptance-criteria guarantee: a double run of the same section must
+    /// produce identical on-disk TOML. The first run walks the workspace
+    /// section with QuickUi's `confirm` defaults (enabled stays false),
+    /// marks the section complete, and saves. The second run hits the
+    /// skip-gate, the user declines reconfigure (QuickUi default `false`),
+    /// and the section returns without writing.
+    #[tokio::test]
+    async fn workspace_double_run_is_idempotent_on_disk() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+        let flags = Flags::default();
+
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Workspace, &flags)
+            .await
+            .unwrap();
+
+        assert!(
+            cfg.onboard_state
+                .completed_sections
+                .iter()
+                .any(|s| s == "workspace"),
+            "first run should mark workspace completed"
+        );
+        let after_first = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Workspace, &flags)
+            .await
+            .unwrap();
+        let after_second = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+        assert_eq!(
+            after_first, after_second,
+            "second run hit the skip-gate and must not rewrite config.toml"
+        );
+    }
 }
