@@ -1069,6 +1069,77 @@ mod tests {
         assert_eq!(result, SkipNav::Enter);
     }
 
+    /// Providers section driven entirely by CLI flags: the `--provider`,
+    /// `--api-key`, and `--model` overrides fire up-front, bypassing the
+    /// `ui.select` menu, the api-key prompt, and `prompt_model` (which
+    /// would otherwise reach out to `models.dev` for the live catalog).
+    /// Only the opt-in advanced-settings confirmation remains, and QuickUi
+    /// defaults that to `false`.
+    #[tokio::test]
+    async fn providers_forced_via_flags_persists_and_marks_completed() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+
+        let flags = Flags {
+            provider: Some("anthropic".into()),
+            api_key: Some("sk-ant-test".into()),
+            model: Some("claude-opus-4-7".into()),
+            ..Default::default()
+        };
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Providers, &flags)
+            .await
+            .unwrap();
+
+        assert_eq!(cfg.providers.fallback.as_deref(), Some("anthropic"));
+        let model_cfg = cfg
+            .providers
+            .models
+            .get("anthropic")
+            .expect("anthropic entry should be seeded");
+        assert_eq!(model_cfg.model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(model_cfg.api_key.as_deref(), Some("sk-ant-test"));
+        assert!(
+            cfg.onboard_state
+                .completed_sections
+                .iter()
+                .any(|s| s == "providers"),
+            "providers section should mark completed"
+        );
+    }
+
+    /// Double-run idempotency for providers: prime via flags, then a
+    /// flags-free second run hits the skip-gate (marker + fallback +
+    /// models entry = has_signal) and QuickUi's default-false confirm
+    /// declines reconfigure, leaving the on-disk config byte-identical.
+    #[tokio::test]
+    async fn providers_second_run_no_flags_is_idempotent_on_disk() {
+        let temp = TempDir::new().unwrap();
+        let mut cfg = test_cfg(&temp);
+
+        let prime = Flags {
+            provider: Some("anthropic".into()),
+            api_key: Some("sk-ant-test".into()),
+            model: Some("claude-opus-4-7".into()),
+            ..Default::default()
+        };
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Providers, &prime)
+            .await
+            .unwrap();
+        let after_first = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+
+        let mut ui = QuickUi::new();
+        run(&mut cfg, &mut ui, Section::Providers, &Flags::default())
+            .await
+            .unwrap();
+        let after_second = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+        assert_eq!(
+            after_first, after_second,
+            "second run hit the skip-gate and must not rewrite config.toml"
+        );
+    }
+
     /// Channels section with no scripted answers: the user falls onto the
     /// pre-selected "Done" option in the channel menu, the section marks
     /// completed, and a second run hits the skip-gate and leaves the file

@@ -724,6 +724,80 @@ enum DeprecatedPropsCommands {
     Any(Vec<String>),
 }
 
+/// Resolve the onboard target from the positional `<section>` subcommand
+/// (if any) plus the legacy `--*-only` boolean flags. Returns the target
+/// section for the orchestrator plus an optional `(old_flag, new_subcommand)`
+/// pair — `Some(_)` means the caller should emit a deprecation warning.
+///
+/// Precedence: an explicit positional section always wins for target
+/// selection, even when a legacy flag is also set. The deprecation warning
+/// still fires in that case so the user learns the flag is retired.
+#[cfg(feature = "agent-runtime")]
+#[allow(
+    clippy::fn_params_excessive_bools,
+    reason = "Each bool maps 1:1 to a retired CLI flag; a struct would add call-site noise for a short-lived deprecation shim."
+)]
+fn resolve_onboard_target(
+    explicit: Option<OnboardSection>,
+    channels_only: bool,
+    providers_only: bool,
+    memory_only: bool,
+    hardware_only: bool,
+    tunnel_only: bool,
+    workspace_only: bool,
+) -> (
+    zeroclaw_runtime::onboard::Section,
+    Option<(&'static str, &'static str)>,
+) {
+    use zeroclaw_runtime::onboard::Section;
+
+    let legacy = [
+        (
+            channels_only,
+            Section::Channels,
+            "--channels-only",
+            "channels",
+        ),
+        (
+            providers_only,
+            Section::Providers,
+            "--providers-only",
+            "providers",
+        ),
+        (memory_only, Section::Memory, "--memory-only", "memory"),
+        (
+            hardware_only,
+            Section::Hardware,
+            "--hardware-only",
+            "hardware",
+        ),
+        (tunnel_only, Section::Tunnel, "--tunnel-only", "tunnel"),
+        (
+            workspace_only,
+            Section::Workspace,
+            "--workspace-only",
+            "workspace",
+        ),
+    ]
+    .into_iter()
+    .find(|(flag, ..)| *flag);
+
+    let explicit_section = explicit.map(|s| match s {
+        OnboardSection::Workspace => Section::Workspace,
+        OnboardSection::Providers => Section::Providers,
+        OnboardSection::Channels => Section::Channels,
+        OnboardSection::Memory => Section::Memory,
+        OnboardSection::Hardware => Section::Hardware,
+        OnboardSection::Tunnel => Section::Tunnel,
+    });
+
+    let target = explicit_section
+        .or(legacy.map(|(_, s, _, _)| s))
+        .unwrap_or(Section::All);
+    let deprecation = legacy.map(|(_, _, old, new)| (old, new));
+    (target, deprecation)
+}
+
 #[cfg(feature = "plugins-wasm")]
 #[derive(Subcommand, Debug)]
 enum PluginCommands {
@@ -1129,55 +1203,20 @@ async fn main() -> Result<()> {
     } = &cli.command
     {
         use zeroclaw_runtime::onboard::ui::{QuickUi, TermUi};
-        use zeroclaw_runtime::onboard::{Flags, Section, run as run_onboard};
+        use zeroclaw_runtime::onboard::{Flags, run as run_onboard};
 
-        // Translate the clap-level selector (explicit subcommand OR a legacy
-        // --*-only flag, deprecated with a warning) into the orchestrator's
-        // Section enum.
-        let legacy = [
-            (
-                *channels_only,
-                Section::Channels,
-                "--channels-only",
-                "channels",
-            ),
-            (
-                *providers_only,
-                Section::Providers,
-                "--providers-only",
-                "providers",
-            ),
-            (*memory_only, Section::Memory, "--memory-only", "memory"),
-            (
-                *hardware_only,
-                Section::Hardware,
-                "--hardware-only",
-                "hardware",
-            ),
-            (*tunnel_only, Section::Tunnel, "--tunnel-only", "tunnel"),
-            (
-                *workspace_only,
-                Section::Workspace,
-                "--workspace-only",
-                "workspace",
-            ),
-        ]
-        .into_iter()
-        .find(|(flag, ..)| *flag);
-        if let Some((_, _, old, new)) = legacy {
+        let (target, deprecation) = resolve_onboard_target(
+            *section,
+            *channels_only,
+            *providers_only,
+            *memory_only,
+            *hardware_only,
+            *tunnel_only,
+            *workspace_only,
+        );
+        if let Some((old, new)) = deprecation {
             eprintln!("warning: {old} is deprecated; use `zeroclaw onboard {new}` instead");
         }
-        let explicit = section.map(|s| match s {
-            OnboardSection::Workspace => Section::Workspace,
-            OnboardSection::Providers => Section::Providers,
-            OnboardSection::Channels => Section::Channels,
-            OnboardSection::Memory => Section::Memory,
-            OnboardSection::Hardware => Section::Hardware,
-            OnboardSection::Tunnel => Section::Tunnel,
-        });
-        let target = explicit
-            .or(legacy.map(|(_, s, _, _)| s))
-            .unwrap_or(Section::All);
 
         // --reinit backs up the config dir BEFORE load_or_init re-materializes it.
         if *reinit {
@@ -3449,6 +3488,109 @@ mod tests {
                 other => panic!("expected onboard command, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    #[cfg(feature = "agent-runtime")]
+    fn resolve_onboard_target_no_explicit_no_legacy_runs_all() {
+        use zeroclaw_runtime::onboard::Section;
+        let (target, deprecation) =
+            resolve_onboard_target(None, false, false, false, false, false, false);
+        assert_eq!(target, Section::All);
+        assert!(deprecation.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "agent-runtime")]
+    fn resolve_onboard_target_positional_wins_and_emits_no_warning() {
+        use zeroclaw_runtime::onboard::Section;
+        let (target, deprecation) = resolve_onboard_target(
+            Some(OnboardSection::Channels),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(target, Section::Channels);
+        assert!(deprecation.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "agent-runtime")]
+    fn resolve_onboard_target_legacy_flag_routes_and_warns() {
+        use zeroclaw_runtime::onboard::Section;
+        for (mut flags, expected_section, expected_old, expected_new) in [
+            (
+                [true, false, false, false, false, false],
+                Section::Channels,
+                "--channels-only",
+                "channels",
+            ),
+            (
+                [false, true, false, false, false, false],
+                Section::Providers,
+                "--providers-only",
+                "providers",
+            ),
+            (
+                [false, false, true, false, false, false],
+                Section::Memory,
+                "--memory-only",
+                "memory",
+            ),
+            (
+                [false, false, false, true, false, false],
+                Section::Hardware,
+                "--hardware-only",
+                "hardware",
+            ),
+            (
+                [false, false, false, false, true, false],
+                Section::Tunnel,
+                "--tunnel-only",
+                "tunnel",
+            ),
+            (
+                [false, false, false, false, false, true],
+                Section::Workspace,
+                "--workspace-only",
+                "workspace",
+            ),
+        ] {
+            let [channels, providers, memory, hardware, tunnel, workspace] =
+                std::mem::take(&mut flags);
+            let (target, deprecation) = resolve_onboard_target(
+                None, channels, providers, memory, hardware, tunnel, workspace,
+            );
+            assert_eq!(target, expected_section, "{expected_old} target");
+            assert_eq!(
+                deprecation,
+                Some((expected_old, expected_new)),
+                "{expected_old} deprecation pair",
+            );
+        }
+    }
+
+    /// When both an explicit subcommand and a legacy flag are set, the
+    /// subcommand wins for target selection but the deprecation warning
+    /// still fires so the user migrates off the retired flag.
+    #[test]
+    #[cfg(feature = "agent-runtime")]
+    fn resolve_onboard_target_explicit_plus_legacy_warns_but_picks_explicit() {
+        use zeroclaw_runtime::onboard::Section;
+        let (target, deprecation) = resolve_onboard_target(
+            Some(OnboardSection::Providers),
+            true, // --channels-only
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(target, Section::Providers);
+        assert_eq!(deprecation, Some(("--channels-only", "channels")));
     }
 
     #[test]
