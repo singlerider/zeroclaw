@@ -220,39 +220,56 @@ struct Cli {
 enum Commands {
     /// Initialize your workspace and configuration
     Onboard {
-        /// Overwrite existing config without confirmation
-        #[arg(long)]
-        force: bool,
+        /// Configure a specific section only. Omit to run the full flow.
+        #[command(subcommand)]
+        section: Option<OnboardSection>,
 
-        /// Reinitialize from scratch (backup and reset all configuration)
-        #[arg(long)]
-        reinit: bool,
-
-        /// Reconfigure channels only (fast repair flow)
-        #[arg(long)]
-        channels_only: bool,
-
-        /// API key for provider configuration
-        #[arg(long)]
-        api_key: Option<String>,
-
-        /// Provider name (used in quick mode, default: openrouter)
-        #[arg(long)]
-        provider: Option<String>,
-        /// Model ID override (used in quick mode)
-        #[arg(long)]
-        model: Option<String>,
-        /// Memory backend (sqlite, lucid, markdown, none) - used in quick mode, default: sqlite
-        #[arg(long)]
-        memory: Option<String>,
-
-        /// Skip interactive prompts and use quick setup with defaults
+        /// Skip interactive prompts; read from --api-key/--provider/--model/--memory.
         #[arg(long)]
         quick: bool,
 
-        /// Use the ratatui-based TUI onboarding wizard
+        /// Use the ratatui TUI backend instead of dialoguer prompts.
         #[arg(long)]
         tui: bool,
+
+        /// Don't ask "keep stored secret?" — always re-prompt.
+        #[arg(long)]
+        force: bool,
+
+        /// Back up existing config and start from defaults.
+        #[arg(long)]
+        reinit: bool,
+
+        /// API key for provider configuration.
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Provider name (sets providers.fallback).
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Model ID override.
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Memory backend (sqlite, lucid, markdown, none).
+        #[arg(long)]
+        memory: Option<String>,
+
+        // Deprecated legacy flags — parsed for one release, each maps to a
+        // subcommand with a stderr warning pointing at the new form.
+        #[arg(long, hide = true)]
+        channels_only: bool,
+        #[arg(long, hide = true)]
+        providers_only: bool,
+        #[arg(long, hide = true)]
+        memory_only: bool,
+        #[arg(long, hide = true)]
+        hardware_only: bool,
+        #[arg(long, hide = true)]
+        tunnel_only: bool,
+        #[arg(long, hide = true)]
+        workspace_only: bool,
     },
 
     /// Start the AI agent loop
@@ -682,6 +699,23 @@ Examples:
     },
 }
 
+/// Section selector for `zeroclaw onboard <section>`.
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+enum OnboardSection {
+    /// Workspace isolation settings.
+    Workspace,
+    /// Provider selection, credentials, and live model picker.
+    Providers,
+    /// Messaging channels (Telegram, Discord, Slack, Matrix, …).
+    Channels,
+    /// Memory backend (sqlite, lucid, markdown, none) + auto-save.
+    Memory,
+    /// Physical hardware transport (native GPIO, serial, probe).
+    Hardware,
+    /// Public tunnel provider (cloudflare, ngrok, tailscale, …).
+    Tunnel,
+}
+
 /// Stub enum that mirrors the old `props` subcommands so clap can still parse
 /// `zeroclaw props <anything>` and print a deprecation message.
 #[derive(Subcommand, Debug)]
@@ -1076,12 +1110,111 @@ async fn main() -> Result<()> {
     // `zeroclaw onboard --api-key …` both take the fast path, while a bare
     // `zeroclaw onboard` in a terminal launches the wizard.
     #[cfg(feature = "agent-runtime")]
-    if matches!(&cli.command, Commands::Onboard { .. }) {
-        bail!(
-            "`zeroclaw onboard` is being rewritten from scratch — \
-             see https://github.com/zeroclaw-labs/zeroclaw/issues/5951. \
-             Edit ~/.zeroclaw/config.toml directly, or use `zeroclaw config set`."
-        );
+    if let Commands::Onboard {
+        section,
+        quick,
+        tui: use_tui,
+        force,
+        reinit,
+        api_key,
+        provider,
+        model,
+        memory,
+        channels_only,
+        providers_only,
+        memory_only,
+        hardware_only,
+        tunnel_only,
+        workspace_only,
+    } = &cli.command
+    {
+        use zeroclaw_runtime::onboard::{Flags, Section, run as run_onboard};
+        use zeroclaw_runtime::onboard::ui::{QuickUi, TermUi};
+
+        // Translate the clap-level selector (explicit subcommand OR a legacy
+        // --*-only flag, deprecated with a warning) into the orchestrator's
+        // Section enum.
+        let legacy = [
+            (*channels_only,   Section::Channels,  "--channels-only",  "channels"),
+            (*providers_only,  Section::Providers, "--providers-only", "providers"),
+            (*memory_only,     Section::Memory,    "--memory-only",    "memory"),
+            (*hardware_only,   Section::Hardware,  "--hardware-only",  "hardware"),
+            (*tunnel_only,     Section::Tunnel,    "--tunnel-only",    "tunnel"),
+            (*workspace_only,  Section::Workspace, "--workspace-only", "workspace"),
+        ]
+        .into_iter()
+        .find(|(flag, ..)| *flag);
+        if let Some((_, _, old, new)) = legacy {
+            eprintln!("warning: {old} is deprecated; use `zeroclaw onboard {new}` instead");
+        }
+        let explicit = section.map(|s| match s {
+            OnboardSection::Workspace => Section::Workspace,
+            OnboardSection::Providers => Section::Providers,
+            OnboardSection::Channels  => Section::Channels,
+            OnboardSection::Memory    => Section::Memory,
+            OnboardSection::Hardware  => Section::Hardware,
+            OnboardSection::Tunnel    => Section::Tunnel,
+        });
+        let target = explicit.or(legacy.map(|(_, s, _, _)| s)).unwrap_or(Section::All);
+
+        // --reinit backs up the config dir BEFORE load_or_init re-materializes it.
+        if *reinit {
+            let (zeroclaw_dir, _) =
+                crate::config::schema::resolve_runtime_dirs_for_onboarding().await?;
+            if zeroclaw_dir.exists() {
+                let ts = chrono::Local::now().format("%Y%m%d%H%M%S");
+                let backup = format!("{}.backup.{}", zeroclaw_dir.display(), ts);
+                if !*force {
+                    eprintln!("⚠️  --reinit will back up {} → {backup}", zeroclaw_dir.display());
+                    eprint!("Continue? [y/N] ");
+                    std::io::stderr().flush().ok();
+                    let mut answer = String::new();
+                    std::io::stdin().read_line(&mut answer)?;
+                    if !answer.trim().eq_ignore_ascii_case("y") {
+                        bail!("Aborted.");
+                    }
+                }
+                tokio::fs::rename(&zeroclaw_dir, &backup)
+                    .await
+                    .with_context(|| format!("backup {} → {backup}", zeroclaw_dir.display()))?;
+            }
+        }
+
+        let mut cfg = Box::pin(Config::load_or_init()).await?;
+        cfg.apply_env_overrides();
+
+        let flags = Flags {
+            force: *force,
+            reinit: *reinit,
+            api_key: api_key.clone(),
+            provider: provider.clone(),
+            model: model.clone(),
+            memory: memory.clone(),
+        };
+
+        match (*quick, *use_tui) {
+            (true, true) => bail!("--quick and --tui are mutually exclusive"),
+            (true, false) => {
+                let mut ui = QuickUi::new();
+                run_onboard(&mut cfg, &mut ui, target, &flags).await?;
+            }
+            (false, true) => {
+                #[cfg(feature = "tui-onboarding")]
+                {
+                    let mut ui = zeroclaw_tui::RatatuiUi::new()?;
+                    run_onboard(&mut cfg, &mut ui, target, &flags).await?;
+                }
+                #[cfg(not(feature = "tui-onboarding"))]
+                bail!("--tui requires building with --features tui-onboarding");
+            }
+            (false, false) => {
+                let mut ui = TermUi;
+                run_onboard(&mut cfg, &mut ui, target, &flags).await?;
+            }
+        }
+
+        cfg.save().await?;
+        return Ok(());
     }
 
     // All other commands need config loaded first
@@ -3269,8 +3402,28 @@ mod tests {
         let cli = Cli::try_parse_from(["zeroclaw", "onboard"]).expect("bare onboard should parse");
 
         match cli.command {
-            Commands::Onboard { .. } => {}
+            Commands::Onboard { section, .. } => assert!(section.is_none()),
             other => panic!("expected onboard command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "agent-runtime")]
+    fn onboard_cli_positional_sections_parse() {
+        for (arg, expected) in [
+            ("providers", OnboardSection::Providers),
+            ("channels", OnboardSection::Channels),
+            ("memory", OnboardSection::Memory),
+            ("hardware", OnboardSection::Hardware),
+            ("tunnel", OnboardSection::Tunnel),
+            ("workspace", OnboardSection::Workspace),
+        ] {
+            let cli = Cli::try_parse_from(["zeroclaw", "onboard", arg])
+                .unwrap_or_else(|_| panic!("onboard {arg} should parse"));
+            match cli.command {
+                Commands::Onboard { section, .. } => assert_eq!(section, Some(expected)),
+                other => panic!("expected onboard command, got {other:?}"),
+            }
         }
     }
 
