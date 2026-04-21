@@ -21,14 +21,17 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  MDBOOK_VERSION: v0.5.2
+  CARGO_FLAGS: --no-default-features --features schema-export
+  REF_DIR: docs/book/src/reference
+
 jobs:
   deploy:
     runs-on: ubuntu-24.04-arm
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    env:
-      MDBOOK_VERSION: v0.5.2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,21 +53,13 @@ jobs:
       - name: Install json-schema-for-humans
         run: pipx install json-schema-for-humans
 
-      - name: Build zeroclaw (schema-export only, no agent-runtime)
-        run: cargo build --no-default-features --features schema-export
-
-      - name: Generate CLI reference from clap
+      - name: Generate reference pages from code
         run: |
-          mkdir -p docs/book/src/reference
-          cargo run --no-default-features --features schema-export -- markdown-help \
-            > docs/book/src/reference/cli.md
-
-      - name: Generate Config reference from JSON Schema
-        run: |
-          cargo run --no-default-features --features schema-export -- markdown-schema \
-            > /tmp/config.schema.json
+          mkdir -p "$REF_DIR"
+          cargo run $CARGO_FLAGS -- markdown-help    > "$REF_DIR/cli.md"
+          cargo run $CARGO_FLAGS -- markdown-schema  > /tmp/config.schema.json
           generate-schema-doc --config template_name=md \
-            /tmp/config.schema.json docs/book/src/reference/config.md
+            /tmp/config.schema.json "$REF_DIR/config.md"
 
       - name: Build book
         working-directory: docs/book

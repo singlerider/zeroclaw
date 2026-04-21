@@ -970,22 +970,23 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    if matches!(&cli.command, Commands::MarkdownHelp) {
-        clap_markdown::print_help_markdown::<Cli>();
-        return Ok(());
-    }
-
-    if matches!(&cli.command, Commands::MarkdownSchema) {
-        #[cfg(feature = "schema-export")]
-        {
-            let schema = schemars::schema_for!(config::Config);
-            println!("{}", serde_json::to_string_pretty(&schema)?);
+    // Docs-pipeline subcommands: stdout-only, no config load, no logging init.
+    match &cli.command {
+        Commands::MarkdownHelp => {
+            clap_markdown::print_help_markdown::<Cli>();
             return Ok(());
         }
-        #[cfg(not(feature = "schema-export"))]
-        {
+        Commands::MarkdownSchema => {
+            #[cfg(feature = "schema-export")]
+            {
+                let schema = schemars::schema_for!(config::Config);
+                println!("{}", serde_json::to_string_pretty(&schema)?);
+                return Ok(());
+            }
+            #[cfg(not(feature = "schema-export"))]
             anyhow::bail!("zeroclaw was built without the 'schema-export' feature");
         }
+        _ => {}
     }
 
     // Initialize logging - respects RUST_LOG env var, defaults to INFO.

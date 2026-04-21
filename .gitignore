@@ -1,8 +1,7 @@
 /target
 /target-*/
 /docs/book/book/
-/docs/book/src/reference/cli.md
-/docs/book/src/reference/config.md
+/docs/book/src/reference/*.md
 firmware/*/target
 web/dist/*
 !web/dist/.gitkeep
