@@ -533,6 +533,12 @@ impl Provider for OpenAiProvider {
         }
         Ok(())
     }
+
+    async fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        // OpenAI's /v1/models requires a credential. models.dev is the no-auth
+        // path onboard uses before the user has entered a key.
+        crate::models_dev::list_models_for("openai").await
+    }
 }
 
 #[cfg(test)]

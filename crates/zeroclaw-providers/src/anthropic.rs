@@ -950,6 +950,12 @@ impl Provider for AnthropicProvider {
         Ok(())
     }
 
+    async fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        // Anthropic's /v1/models requires a credential. Onboard pulls the
+        // catalog from models.dev before the user has entered a key.
+        crate::models_dev::list_models_for("anthropic").await
+    }
+
     fn supports_streaming(&self) -> bool {
         true
     }

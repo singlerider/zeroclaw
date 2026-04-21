@@ -431,6 +431,31 @@ impl Provider for OpenRouterProvider {
         Ok(())
     }
 
+    async fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        // OpenRouter's /models endpoint is public — no credential required.
+        // Returns ~300 models across every provider OpenRouter proxies.
+        let response = self
+            .http_client()
+            .get("https://openrouter.ai/api/v1/models")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        #[derive(Deserialize)]
+        struct Resp {
+            data: Vec<Entry>,
+        }
+        #[derive(Deserialize)]
+        struct Entry {
+            id: String,
+        }
+
+        let body: Resp = response.json().await?;
+        let mut ids: Vec<String> = body.data.into_iter().map(|e| e.id).collect();
+        ids.sort();
+        Ok(ids)
+    }
+
     async fn chat_with_system(
         &self,
         system_prompt: Option<&str>,

@@ -871,6 +871,31 @@ impl Provider for OllamaProvider {
             reasoning_content: None,
         })
     }
+
+    async fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        // Local Ollama's /api/tags lists installed models and requires no auth.
+        // Remote Ollama endpoints attach the Bearer key; local ones don't.
+        let url = format!("{}/api/tags", self.base_url.trim_end_matches('/'));
+        let mut request = self.http_client().get(&url);
+        if !self.is_local_endpoint()
+            && let Some(key) = self.api_key.as_deref()
+        {
+            request = request.header("Authorization", format!("Bearer {key}"));
+        }
+        let response = request.send().await?.error_for_status()?;
+
+        #[derive(Deserialize)]
+        struct Resp {
+            models: Vec<Entry>,
+        }
+        #[derive(Deserialize)]
+        struct Entry {
+            name: String,
+        }
+
+        let body: Resp = response.json().await?;
+        Ok(body.models.into_iter().map(|e| e.name).collect())
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -1322,6 +1322,12 @@ impl Provider for GeminiProvider {
         }
         Ok(())
     }
+
+    async fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        // Gemini's /v1beta/models requires ?key=<api_key>. Onboard pulls the
+        // catalog from models.dev before the user has entered a key.
+        crate::models_dev::list_models_for("google").await
+    }
 }
 
 #[cfg(test)]
