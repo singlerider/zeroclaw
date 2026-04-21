@@ -11,6 +11,7 @@ preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/singlerider/zeroclaw"
 edit-url-template = "https://github.com/singlerider/zeroclaw/edit/master/docs/book/{path}"
 site-url = "/"
+additional-js = ["theme/lang-switcher.js"]
 
 [output.html.search]
 enable = true
