@@ -39,7 +39,7 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use dialoguer::{Password, Select};
 use serde::{Deserialize, Serialize};
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -139,8 +139,6 @@ mod multimodal;
 #[cfg(feature = "agent-runtime")]
 mod observability;
 #[cfg(feature = "agent-runtime")]
-mod onboard;
-#[cfg(feature = "agent-runtime")]
 mod peripherals;
 #[cfg(feature = "agent-runtime")]
 mod platform;
@@ -163,8 +161,6 @@ mod sop;
 mod tools;
 #[cfg(feature = "agent-runtime")]
 mod trust;
-#[cfg(feature = "tui-onboarding")]
-mod tui;
 #[cfg(feature = "agent-runtime")]
 mod tunnel;
 #[cfg(feature = "agent-runtime")]
@@ -1080,136 +1076,12 @@ async fn main() -> Result<()> {
     // `zeroclaw onboard --api-key …` both take the fast path, while a bare
     // `zeroclaw onboard` in a terminal launches the wizard.
     #[cfg(feature = "agent-runtime")]
-    if let Commands::Onboard {
-        force,
-        reinit,
-        channels_only,
-        api_key,
-        provider,
-        model,
-        memory,
-        quick,
-        tui: use_tui,
-    } = &cli.command
-    {
-        let force = *force;
-        let reinit = *reinit;
-        let channels_only = *channels_only;
-        let api_key = api_key.clone();
-        let provider = provider.clone();
-        let model = model.clone();
-        let memory = memory.clone();
-        let quick = *quick;
-        let use_tui = *use_tui;
-
-        if reinit && channels_only {
-            bail!("--reinit and --channels-only cannot be used together");
-        }
-        if channels_only
-            && (api_key.is_some() || provider.is_some() || model.is_some() || memory.is_some())
-        {
-            bail!("--channels-only does not accept --api-key, --provider, --model, or --memory");
-        }
-        if channels_only && force {
-            bail!("--channels-only does not accept --force");
-        }
-        if quick && channels_only {
-            bail!("--quick and --channels-only cannot be used together");
-        }
-
-        // Handle --reinit: backup and reset configuration
-        if reinit {
-            let (zeroclaw_dir, _) =
-                crate::config::schema::resolve_runtime_dirs_for_onboarding().await?;
-
-            if zeroclaw_dir.exists() {
-                let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-                let backup_dir = format!("{}.backup.{}", zeroclaw_dir.display(), timestamp);
-
-                println!("⚠️  Reinitializing ZeroClaw configuration...");
-                println!("   Current config directory: {}", zeroclaw_dir.display());
-                println!(
-                    "   This will back up your existing config to: {}",
-                    backup_dir
-                );
-                println!();
-                print!("Continue? [y/N] ");
-                std::io::stdout()
-                    .flush()
-                    .context("Failed to flush stdout")?;
-
-                let mut answer = String::new();
-                std::io::stdin().read_line(&mut answer)?;
-                if !answer.trim().eq_ignore_ascii_case("y") {
-                    println!("Aborted.");
-                    return Ok(());
-                }
-                println!();
-
-                // Rename existing directory as backup
-                tokio::fs::rename(&zeroclaw_dir, &backup_dir)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to backup existing config to {}", backup_dir)
-                    })?;
-
-                println!("   Backup created successfully.");
-                println!("   Starting fresh initialization...\n");
-            }
-        }
-
-        // Auto-detect: run the interactive wizard when in a TTY with no
-        // provider flags, quick setup otherwise (scriptable path).
-        let has_provider_flags =
-            api_key.is_some() || provider.is_some() || model.is_some() || memory.is_some();
-        let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-        let env_interactive = std::env::var("ZEROCLAW_INTERACTIVE").as_deref() == Ok("1");
-
-        // TUI onboarding mode (ratatui-based)
-        if use_tui {
-            Box::pin(run_tui_if_enabled()).await?;
-            return Ok(());
-        }
-
-        let wizard_callbacks = build_wizard_callbacks();
-
-        let config = if channels_only {
-            Box::pin(onboard::run_channels_repair_wizard(wizard_callbacks)).await
-        } else if quick || has_provider_flags {
-            Box::pin(onboard::run_quick_setup(
-                api_key.as_deref(),
-                provider.as_deref(),
-                model.as_deref(),
-                memory.as_deref(),
-                force,
-            ))
-            .await
-        } else if is_tty || env_interactive {
-            Box::pin(onboard::run_wizard(force, wizard_callbacks)).await
-        } else {
-            Box::pin(onboard::run_quick_setup(
-                api_key.as_deref(),
-                provider.as_deref(),
-                model.as_deref(),
-                memory.as_deref(),
-                force,
-            ))
-            .await
-        }?;
-
-        if config.gateway.require_pairing {
-            println!();
-            println!("  Pairing is enabled. A one-time pairing code will be");
-            println!("  displayed when the gateway starts.");
-            println!("  Dashboard: http://127.0.0.1:{}", config.gateway.port);
-            println!();
-        }
-
-        // Auto-start channels if user said yes during wizard
-        if std::env::var("ZEROCLAW_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
-            Box::pin(channels::start_channels(config)).await?;
-        }
-        return Ok(());
+    if matches!(&cli.command, Commands::Onboard { .. }) {
+        bail!(
+            "`zeroclaw onboard` is being rewritten from scratch — \
+             see https://github.com/zeroclaw-labs/zeroclaw/issues/5951. \
+             Edit ~/.zeroclaw/config.toml directly, or use `zeroclaw config set`."
+        );
     }
 
     // All other commands need config loaded first
@@ -1705,29 +1577,12 @@ async fn main() -> Result<()> {
 
         Commands::Cron { cron_command } => cron::handle_command(cron_command, &config),
 
-        Commands::Models { model_command } => match model_command {
-            ModelCommands::Refresh {
-                provider,
-                all,
-                force,
-            } => {
-                if all {
-                    if provider.is_some() {
-                        bail!("`models refresh --all` cannot be combined with --provider");
-                    }
-                    onboard::run_models_refresh_all(&config, force).await
-                } else {
-                    onboard::run_models_refresh(&config, provider.as_deref(), force).await
-                }
-            }
-            ModelCommands::List { provider } => {
-                onboard::run_models_list(&config, provider.as_deref()).await
-            }
-            ModelCommands::Set { model } => {
-                Box::pin(onboard::run_models_set(&config, &model)).await
-            }
-            ModelCommands::Status => onboard::run_models_status(&config).await,
-        },
+        Commands::Models { model_command: _ } => {
+            bail!(
+                "`zeroclaw models` is temporarily disabled during the onboard rewrite — \
+                 see https://github.com/zeroclaw-labs/zeroclaw/issues/5951"
+            );
+        }
 
         Commands::Providers => {
             let providers = providers::list_providers();
@@ -1772,10 +1627,10 @@ async fn main() -> Result<()> {
         }
 
         Commands::Doctor { doctor_command } => match doctor_command {
-            Some(DoctorCommands::Models {
-                provider,
-                use_cache,
-            }) => doctor::run_models(&config, provider.as_deref(), use_cache).await,
+            Some(DoctorCommands::Models { .. }) => bail!(
+                "`zeroclaw doctor models` is temporarily disabled during the onboard rewrite — \
+                 see https://github.com/zeroclaw-labs/zeroclaw/issues/5951"
+            ),
             Some(DoctorCommands::Traces {
                 id,
                 event,
@@ -2236,25 +2091,6 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Build wizard callbacks that wire downstream crate functionality into the onboarding wizard.
-#[cfg(feature = "agent-runtime")]
-fn build_wizard_callbacks() -> onboard::WizardCallbacks {
-    onboard::WizardCallbacks {
-        #[cfg(feature = "hardware")]
-        hardware_setup: Some(Box::new(zeroclaw_hardware::wizard::run_setup)),
-        #[cfg(not(feature = "hardware"))]
-        hardware_setup: None,
-
-        #[cfg(feature = "channel-nostr")]
-        nostr_validate_key: Some(Box::new(|key: &str| {
-            let keys = nostr_sdk::Keys::parse(key)
-                .map_err(|e| anyhow::anyhow!("invalid nostr key: {e}"))?;
-            Ok(keys.public_key().to_hex())
-        })),
-
-        whatsapp_web_available: cfg!(feature = "whatsapp-web"),
-    }
-}
 
 #[cfg(feature = "agent-runtime")]
 fn handle_estop_command(
@@ -3294,11 +3130,6 @@ async fn run_gateway_if_enabled(
     anyhow::bail!("Gateway feature is not enabled. Rebuild with --features gateway")
 }
 
-#[cfg(feature = "tui-onboarding")]
-async fn run_tui_if_enabled() -> anyhow::Result<()> {
-    Box::pin(tui::run_tui_onboarding()).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3565,8 +3396,3 @@ mod tests {
     }
 }
 
-#[cfg(not(feature = "tui-onboarding"))]
-#[allow(clippy::unused_async)]
-async fn run_tui_if_enabled() -> anyhow::Result<()> {
-    anyhow::bail!("TUI onboarding feature is not enabled. Rebuild with --features tui-onboarding")
-}
