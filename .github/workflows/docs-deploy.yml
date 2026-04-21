@@ -62,7 +62,7 @@ jobs:
             /tmp/config.schema.json "$REF_DIR/config.md"
 
       - name: Generate API reference (rustdoc)
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --exclude zeroclaw-desktop
 
       - name: Build book
         working-directory: docs/book
