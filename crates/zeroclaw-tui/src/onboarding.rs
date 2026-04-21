@@ -463,10 +463,17 @@ impl OnboardUi for RatatuiUi {
     }
 
     fn note(&mut self, msg: &str) {
-        self.log.push(LogLine {
-            level: LogLevel::Note,
-            text: msg.to_string(),
-        });
+        // Note = "current context for the next prompt". Replace (don't
+        // append) so stale context from a previous section doesn't leak
+        // into a later screen that has no note of its own (e.g., the
+        // provider select).
+        self.log.clear();
+        if !msg.is_empty() {
+            self.log.push(LogLine {
+                level: LogLevel::Note,
+                text: msg.to_string(),
+            });
+        }
     }
 
     fn status(&mut self, msg: &str) {

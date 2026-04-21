@@ -173,6 +173,7 @@ async fn prompt_fields_under(
 // flag overrides) and then defers to `prompt_fields_under` for the rest.
 
 async fn workspace(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+    ui.note("");
     ui.status(&format!(
         "Workspace directory: {}",
         cfg.workspace_dir.display()
@@ -185,6 +186,7 @@ async fn workspace(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> 
 }
 
 async fn providers(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
+    ui.note("");
     // Menu is driven by zeroclaw_providers::list_providers() — single source
     // of truth for canonical names, display names, aliases. Badges show which
     // provider is the current fallback and which already have a stored config.
@@ -277,6 +279,7 @@ async fn prompt_model(cfg: &mut Config, ui: &mut dyn OnboardUi, provider: &str) 
 }
 
 async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+    ui.note("");
     loop {
         // Master list of all channels that exist in the schema. Probe on a
         // clone: init_defaults(Some("channels")) forces every Option<T>
@@ -330,6 +333,7 @@ async fn channels(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> R
 }
 
 async fn memory(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Result<()> {
+    ui.note("");
     // Backend: registry-driven select (key + label both come from
     // zeroclaw-memory's selectable_memory_backends()). --memory CLI flag
     // bypasses the prompt.
@@ -351,6 +355,7 @@ async fn memory(cfg: &mut Config, ui: &mut dyn OnboardUi, flags: &Flags) -> Resu
 }
 
 async fn hardware(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+    ui.note("");
     prompt_field(cfg, ui, "hardware.enabled").await?;
     if cfg.hardware.enabled {
         prompt_fields_under(cfg, ui, "hardware", &["enabled"]).await?;
@@ -359,6 +364,7 @@ async fn hardware(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> R
 }
 
 async fn tunnel(cfg: &mut Config, ui: &mut dyn OnboardUi, _flags: &Flags) -> Result<()> {
+    ui.note("");
     // Provider list is derived from the schema: each `tunnel.<name>.*` field
     // in prop_fields() names a real provider. "none" is always valid and has
     // no sub-config, so it's prepended. Adding a new TunnelConfig subsection
