@@ -229,7 +229,7 @@ async fn prompt_field(
                 Answer::Value(_) => {}
             }
         }
-        PropKind::String | PropKind::Integer | PropKind::Float => {
+        PropKind::String | PropKind::Integer | PropKind::Float | PropKind::StringArray => {
             // Prefill priority: config current value > section default > empty.
             // When the user accepts the prefilled default (no edit), we
             // still write it through set_prop so the config records the
