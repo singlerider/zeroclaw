@@ -4141,6 +4141,9 @@ fn setup_channels(
                         .map(|d| d.multi_message_delay_ms)
                         .unwrap_or(800),
                     stall_timeout_secs: existing_dc.map(|d| d.stall_timeout_secs).unwrap_or(0),
+                    approval_timeout_secs: existing_dc
+                        .map(|d| d.approval_timeout_secs)
+                        .unwrap_or(300),
                 });
             }
             ChannelMenuChoice::Slack => {
@@ -4322,6 +4325,9 @@ fn setup_channels(
                         .map(|s| s.draft_update_interval_ms)
                         .unwrap_or(1200),
                     cancel_reaction: existing_sl.and_then(|s| s.cancel_reaction.clone()),
+                    approval_timeout_secs: existing_sl
+                        .map(|s| s.approval_timeout_secs)
+                        .unwrap_or(300),
                 });
             }
             ChannelMenuChoice::IMessage => {
@@ -4554,6 +4560,9 @@ fn setup_channels(
                     mention_only: existing_mx.map(|m| m.mention_only).unwrap_or(false),
                     recovery_key,
                     password: existing_mx.and_then(|m| m.password.clone()),
+                    approval_timeout_secs: existing_mx
+                        .map(|m| m.approval_timeout_secs)
+                        .unwrap_or(300),
                 });
             }
             ChannelMenuChoice::Signal => {
@@ -4650,6 +4659,11 @@ fn setup_channels(
                     ignore_attachments,
                     ignore_stories,
                     proxy_url: config.signal.as_ref().and_then(|s| s.proxy_url.clone()),
+                    approval_timeout_secs: config
+                        .signal
+                        .as_ref()
+                        .map(|s| s.approval_timeout_secs)
+                        .unwrap_or(300),
                 });
 
                 println!("  {} Signal configured", style("✅").green().bold());
@@ -4761,6 +4775,9 @@ fn setup_channels(
                             .map(|w| w.group_mention_patterns.clone())
                             .unwrap_or_default(),
                         proxy_url: existing_wa.and_then(|w| w.proxy_url.clone()),
+                        approval_timeout_secs: existing_wa
+                            .map(|w| w.approval_timeout_secs)
+                            .unwrap_or(300),
                     });
 
                     println!(
@@ -4878,6 +4895,9 @@ fn setup_channels(
                         .map(|w| w.group_mention_patterns.clone())
                         .unwrap_or_default(),
                     proxy_url: existing_wa.and_then(|w| w.proxy_url.clone()),
+                    approval_timeout_secs: existing_wa
+                        .map(|w| w.approval_timeout_secs)
+                        .unwrap_or(300),
                 });
             }
             ChannelMenuChoice::Linq => {
