@@ -1774,12 +1774,14 @@ async fn main() -> Result<()> {
 
         Commands::Cron { cron_command } => cron::handle_command(cron_command, &config),
 
-        Commands::Models { model_command: _ } => {
-            bail!(
-                "`zeroclaw models` is temporarily disabled — \
-                 use `zeroclaw onboard providers` for the live model picker, \
-                 or check `providers.models.<name>.model` in your config.toml"
-            );
+        Commands::Models { model_command } => {
+            let provider = match &model_command {
+                ModelCommands::Refresh { provider, .. } | ModelCommands::List { provider } => {
+                    provider.as_deref()
+                }
+                _ => None,
+            };
+            doctor::run_models(&config, provider, false).await
         }
 
         Commands::Providers => {
