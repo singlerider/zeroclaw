@@ -527,6 +527,15 @@ impl Default for WorkspaceConfig {
     }
 }
 
+/// Used by `#[serde(skip_serializing_if)]` on plain `bool` fields to omit
+/// them from TOML output when they carry their struct-level default (`false`).
+/// Keeps fresh provider entries clean — a default-constructed
+/// `ModelProviderConfig` for one provider family shouldn't write flag fields
+/// that only apply to a different family.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Named provider profile definition.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable, Default)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
@@ -538,10 +547,10 @@ pub struct ModelProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
     /// Override the provider type label. Rarely needed — only useful when you run two profiles against the same provider type (e.g. two different OpenAI-compatible gateways) and want to tell them apart in logs.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// HTTPS endpoint the client hits. Override when pointing at a self-hosted gateway (LiteLLM, vLLM, Ollama), a regional endpoint, or a proxy; leave unset to use the provider's public endpoint.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     /// Path suffix appended to the base URL. Almost no one needs this — only touch it for custom reverse-proxy routing where your gateway mounts the API under a non-standard prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -561,10 +570,10 @@ pub struct ModelProviderConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub extra_headers: HashMap<String, String>,
     /// Wire protocol flavor: `"responses"` for OpenAI's Codex/Responses API, `"chat_completions"` for everything else (OpenAI chat, Anthropic, OpenRouter, Groq, local gateways). Auto-selected per provider — only override if you're forcing an unusual combination.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wire_api: Option<String>,
     /// When true, the client pulls credentials from `OPENAI_API_KEY` or `~/.codex/auth.json` instead of the `api_key` field above. Turn on only for the OpenAI Codex provider; leave off for standard API-key providers.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub requires_openai_auth: bool,
     /// Azure OpenAI resource name (the `<resource>` part of `<resource>.openai.azure.com`). Azure-only; ignore for OpenAI, Anthropic, and everything else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -579,7 +588,7 @@ pub struct ModelProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     /// Provider-specific quirk: fold the system prompt into the first user message instead of sending a separate system role. Only needed for models that reject (or mishandle) a standalone system role — e.g. certain older Mistral variants.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub merge_system_into_user: bool,
     /// Extra JSON parameters to include in API requests.
     /// Merged at the top level of the request body, allowing provider-specific
