@@ -9,9 +9,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use zeroclaw_api::channel::{Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage};
+use zeroclaw_api::channel::{
+    Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage,
+};
 
 #[derive(Clone)]
 struct CachedSlackDisplayName {
@@ -2860,8 +2862,7 @@ impl SlackChannel {
                     continue;
                 };
 
-                if let Some((token, response)) =
-                    crate::util::parse_approval_reply(&normalized_text)
+                if let Some((token, response)) = crate::util::parse_approval_reply(&normalized_text)
                 {
                     let mut map = self.pending_approvals.lock().await;
                     if let Some(ap_sender) = map.remove(&token) {
@@ -4137,18 +4138,14 @@ impl Channel for SlackChannel {
             return Err(err);
         }
 
-        let response = match tokio::time::timeout(
-            Duration::from_secs(self.approval_timeout_secs),
-            rx,
-        )
-        .await
-        {
-            Ok(Ok(resp)) => resp,
-            _ => {
-                self.pending_approvals.lock().await.remove(&token);
-                ChannelApprovalResponse::Deny
-            }
-        };
+        let response =
+            match tokio::time::timeout(Duration::from_secs(self.approval_timeout_secs), rx).await {
+                Ok(Ok(resp)) => resp,
+                _ => {
+                    self.pending_approvals.lock().await.remove(&token);
+                    ChannelApprovalResponse::Deny
+                }
+            };
         Ok(Some(response))
     }
 }
@@ -5216,12 +5213,7 @@ mod tests {
             .lock()
             .await
             .insert("abc123".to_string(), tx);
-        let sender = ch
-            .pending_approvals
-            .lock()
-            .await
-            .remove("abc123")
-            .unwrap();
+        let sender = ch.pending_approvals.lock().await.remove("abc123").unwrap();
         sender.send(ChannelApprovalResponse::AlwaysApprove).unwrap();
         assert_eq!(rx.await.unwrap(), ChannelApprovalResponse::AlwaysApprove);
     }
@@ -5234,8 +5226,7 @@ mod tests {
                 "actions": [{ "action_id": "approval_abc123_approve" }]
             }
         });
-        let (token, response) =
-            SlackChannel::try_parse_approval_block_action(&envelope).unwrap();
+        let (token, response) = SlackChannel::try_parse_approval_block_action(&envelope).unwrap();
         assert_eq!(token, "abc123");
         assert_eq!(response, ChannelApprovalResponse::Approve);
     }
@@ -5248,8 +5239,7 @@ mod tests {
                 "actions": [{ "action_id": "approval_xz9q1w_deny" }]
             }
         });
-        let (token, response) =
-            SlackChannel::try_parse_approval_block_action(&envelope).unwrap();
+        let (token, response) = SlackChannel::try_parse_approval_block_action(&envelope).unwrap();
         assert_eq!(token, "xz9q1w");
         assert_eq!(response, ChannelApprovalResponse::Deny);
     }

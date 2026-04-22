@@ -17445,9 +17445,10 @@ allowed_users = ["@u:m"]
             serde_json::from_str(r#"{"bot_token":"tok","enabled":true}"#).unwrap();
         assert_eq!(slack.approval_timeout_secs, 300);
 
-        let signal: SignalConfig =
-            serde_json::from_str(r#"{"http_url":"http://localhost","account":"+1","enabled":true}"#)
-                .unwrap();
+        let signal: SignalConfig = serde_json::from_str(
+            r#"{"http_url":"http://localhost","account":"+1","enabled":true}"#,
+        )
+        .unwrap();
         assert_eq!(signal.approval_timeout_secs, 300);
 
         let matrix: MatrixConfig = serde_json::from_str(
@@ -17462,14 +17463,16 @@ allowed_users = ["@u:m"]
 
     #[test]
     fn channel_approval_timeout_secs_explicit_override() {
-        let discord: DiscordConfig =
-            serde_json::from_str(r#"{"bot_token":"tok","enabled":true,"approval_timeout_secs":60}"#)
-                .unwrap();
+        let discord: DiscordConfig = serde_json::from_str(
+            r#"{"bot_token":"tok","enabled":true,"approval_timeout_secs":60}"#,
+        )
+        .unwrap();
         assert_eq!(discord.approval_timeout_secs, 60);
 
-        let slack: SlackConfig =
-            serde_json::from_str(r#"{"bot_token":"tok","enabled":true,"approval_timeout_secs":120}"#)
-                .unwrap();
+        let slack: SlackConfig = serde_json::from_str(
+            r#"{"bot_token":"tok","enabled":true,"approval_timeout_secs":120}"#,
+        )
+        .unwrap();
         assert_eq!(slack.approval_timeout_secs, 120);
 
         let signal: SignalConfig = serde_json::from_str(

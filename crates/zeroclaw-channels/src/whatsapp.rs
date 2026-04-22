@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, oneshot};
 use uuid::Uuid;
-use zeroclaw_api::channel::{Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage};
+use zeroclaw_api::channel::{
+    Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage,
+};
 
 /// `WhatsApp` channel — uses `WhatsApp` Business Cloud API
 ///

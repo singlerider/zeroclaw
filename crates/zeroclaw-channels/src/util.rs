@@ -276,17 +276,22 @@ mod tests {
             ("abc123 y", ChannelApprovalResponse::Approve),
             ("abc123 approve", ChannelApprovalResponse::Approve),
             ("ABC123 YES", ChannelApprovalResponse::Approve),
-            ("abc123 yes please go ahead", ChannelApprovalResponse::Approve),
+            (
+                "abc123 yes please go ahead",
+                ChannelApprovalResponse::Approve,
+            ),
             ("abc123 no", ChannelApprovalResponse::Deny),
             ("abc123 n", ChannelApprovalResponse::Deny),
             ("abc123 deny", ChannelApprovalResponse::Deny),
             ("abc123 always", ChannelApprovalResponse::AlwaysApprove),
         ];
         for (input, expected) in cases {
-            let (token, response) = super::parse_approval_reply(input).unwrap_or_else(|| {
-                panic!("expected Some for input {:?}", input)
-            });
-            assert_eq!(token, input.trim().to_lowercase().split(' ').next().unwrap());
+            let (token, response) = super::parse_approval_reply(input)
+                .unwrap_or_else(|| panic!("expected Some for input {:?}", input));
+            assert_eq!(
+                token,
+                input.trim().to_lowercase().split(' ').next().unwrap()
+            );
             assert_eq!(response, expected, "input: {input:?}");
         }
     }

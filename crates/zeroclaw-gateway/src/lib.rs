@@ -1726,7 +1726,8 @@ async fn handle_whatsapp_message(
         );
 
         // Route approval replies to pending approval requests before dispatching to agent
-        if let Some((token, response)) = zeroclaw_channels::util::parse_approval_reply(&msg.content) {
+        if let Some((token, response)) = zeroclaw_channels::util::parse_approval_reply(&msg.content)
+        {
             let mut map = wa.pending_approvals().lock().await;
             if let Some(sender) = map.remove(&token) {
                 let _ = sender.send(response);

@@ -5,9 +5,11 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use uuid::Uuid;
-use zeroclaw_api::channel::{Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage};
+use zeroclaw_api::channel::{
+    Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage,
+};
 
 const GROUP_TARGET_PREFIX: &str = "group:";
 
@@ -399,8 +401,7 @@ impl Channel for SignalChannel {
                                             if let Some((token, response)) =
                                                 crate::util::parse_approval_reply(&msg.content)
                                             {
-                                                let mut map =
-                                                    self.pending_approvals.lock().await;
+                                                let mut map = self.pending_approvals.lock().await;
                                                 if let Some(sender) = map.remove(&token) {
                                                     let _ = sender.send(response);
                                                     current_data.clear();
@@ -501,12 +502,7 @@ impl Channel for SignalChannel {
         let token = crate::util::new_approval_token();
         let text = format!(
             "APPROVAL REQUIRED [{}]\nTool: {}\nArgs: {}\n\nReply: \"{} yes\", \"{} no\", or \"{} always\"",
-            token,
-            request.tool_name,
-            request.arguments_summary,
-            token,
-            token,
-            token,
+            token, request.tool_name, request.arguments_summary, token, token, token,
         );
 
         let (tx, rx) = oneshot::channel();
@@ -527,18 +523,14 @@ impl Channel for SignalChannel {
             return Err(err);
         }
 
-        let response = match tokio::time::timeout(
-            Duration::from_secs(self.approval_timeout_secs),
-            rx,
-        )
-        .await
-        {
-            Ok(Ok(resp)) => resp,
-            _ => {
-                self.pending_approvals.lock().await.remove(&token);
-                ChannelApprovalResponse::Deny
-            }
-        };
+        let response =
+            match tokio::time::timeout(Duration::from_secs(self.approval_timeout_secs), rx).await {
+                Ok(Ok(resp)) => resp,
+                _ => {
+                    self.pending_approvals.lock().await.remove(&token);
+                    ChannelApprovalResponse::Deny
+                }
+            };
         Ok(Some(response))
     }
 }
@@ -1027,12 +1019,7 @@ mod tests {
             .await
             .insert("abc123".to_string(), tx);
         // simulate listen() routing
-        let sender = ch
-            .pending_approvals
-            .lock()
-            .await
-            .remove("abc123")
-            .unwrap();
+        let sender = ch.pending_approvals.lock().await.remove("abc123").unwrap();
         sender.send(ChannelApprovalResponse::Approve).unwrap();
         assert_eq!(rx.await.unwrap(), ChannelApprovalResponse::Approve);
     }

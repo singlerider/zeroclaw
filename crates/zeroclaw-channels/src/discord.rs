@@ -8,10 +8,12 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
-use zeroclaw_api::channel::{Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage};
+use zeroclaw_api::channel::{
+    Channel, ChannelApprovalRequest, ChannelApprovalResponse, ChannelMessage, SendMessage,
+};
 
 /// Discord channel — connects via Gateway WebSocket for real-time messages
 pub struct DiscordChannel {
@@ -1674,12 +1676,7 @@ impl Channel for DiscordChannel {
         let token = crate::util::new_approval_token();
         let text = format!(
             "APPROVAL REQUIRED [{}]\nTool: {}\nArgs: {}\n\nReply: \"{} yes\", \"{} no\", or \"{} always\"",
-            token,
-            request.tool_name,
-            request.arguments_summary,
-            token,
-            token,
-            token,
+            token, request.tool_name, request.arguments_summary, token, token, token,
         );
 
         let (tx, rx) = oneshot::channel();
@@ -1702,18 +1699,14 @@ impl Channel for DiscordChannel {
             return Err(err);
         }
 
-        let response = match tokio::time::timeout(
-            Duration::from_secs(self.approval_timeout_secs),
-            rx,
-        )
-        .await
-        {
-            Ok(Ok(resp)) => resp,
-            _ => {
-                self.pending_approvals.lock().await.remove(&token);
-                ChannelApprovalResponse::Deny
-            }
-        };
+        let response =
+            match tokio::time::timeout(Duration::from_secs(self.approval_timeout_secs), rx).await {
+                Ok(Ok(resp)) => resp,
+                _ => {
+                    self.pending_approvals.lock().await.remove(&token);
+                    ChannelApprovalResponse::Deny
+                }
+            };
         Ok(Some(response))
     }
 }
@@ -2549,12 +2542,7 @@ mod tests {
             .lock()
             .await
             .insert("abc123".to_string(), tx);
-        let sender = ch
-            .pending_approvals
-            .lock()
-            .await
-            .remove("abc123")
-            .unwrap();
+        let sender = ch.pending_approvals.lock().await.remove("abc123").unwrap();
         sender.send(ChannelApprovalResponse::Deny).unwrap();
         assert_eq!(rx.await.unwrap(), ChannelApprovalResponse::Deny);
     }
