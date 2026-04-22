@@ -396,21 +396,21 @@ impl Channel for SignalChannel {
                         if !current_data.is_empty() {
                             match serde_json::from_str::<SseEnvelope>(&current_data) {
                                 Ok(sse) => {
-                                    if let Some(ref envelope) = sse.envelope {
-                                        if let Some(msg) = self.process_envelope(envelope) {
-                                            if let Some((token, response)) =
-                                                crate::util::parse_approval_reply(&msg.content)
-                                            {
-                                                let mut map = self.pending_approvals.lock().await;
-                                                if let Some(sender) = map.remove(&token) {
-                                                    let _ = sender.send(response);
-                                                    current_data.clear();
-                                                    continue;
-                                                }
+                                    if let Some(ref envelope) = sse.envelope
+                                        && let Some(msg) = self.process_envelope(envelope)
+                                    {
+                                        if let Some((token, response)) =
+                                            crate::util::parse_approval_reply(&msg.content)
+                                        {
+                                            let mut map = self.pending_approvals.lock().await;
+                                            if let Some(sender) = map.remove(&token) {
+                                                let _ = sender.send(response);
+                                                current_data.clear();
+                                                continue;
                                             }
-                                            if tx.send(msg).await.is_err() {
-                                                return Ok(());
-                                            }
+                                        }
+                                        if tx.send(msg).await.is_err() {
+                                            return Ok(());
                                         }
                                     }
                                 }
@@ -433,19 +433,19 @@ impl Channel for SignalChannel {
             if !current_data.is_empty() {
                 match serde_json::from_str::<SseEnvelope>(&current_data) {
                     Ok(sse) => {
-                        if let Some(ref envelope) = sse.envelope {
-                            if let Some(msg) = self.process_envelope(envelope) {
-                                if let Some((token, response)) =
-                                    crate::util::parse_approval_reply(&msg.content)
-                                {
-                                    let mut map = self.pending_approvals.lock().await;
-                                    if let Some(sender) = map.remove(&token) {
-                                        let _ = sender.send(response);
-                                        continue;
-                                    }
+                        if let Some(ref envelope) = sse.envelope
+                            && let Some(msg) = self.process_envelope(envelope)
+                        {
+                            if let Some((token, response)) =
+                                crate::util::parse_approval_reply(&msg.content)
+                            {
+                                let mut map = self.pending_approvals.lock().await;
+                                if let Some(sender) = map.remove(&token) {
+                                    let _ = sender.send(response);
+                                    continue;
                                 }
-                                let _ = tx.send(msg).await;
                             }
+                            let _ = tx.send(msg).await;
                         }
                     }
                     Err(e) => {
@@ -511,14 +511,7 @@ impl Channel for SignalChannel {
             .await
             .insert(token.clone(), tx);
 
-        if let Err(err) = self
-            .send(&SendMessage {
-                recipient: recipient.to_string(),
-                content: text,
-                attachments: vec![],
-            })
-            .await
-        {
+        if let Err(err) = self.send(&SendMessage::new(text, recipient)).await {
             self.pending_approvals.lock().await.remove(&token);
             return Err(err);
         }

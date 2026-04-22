@@ -8352,6 +8352,7 @@ mod tests {
             ignore_attachments: false,
             ignore_stories: true,
             proxy_url: None,
+            approval_timeout_secs: 300,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -8442,6 +8443,7 @@ mod tests {
                 draft_update_interval_ms: 1500,
                 multi_message_delay_ms: 800,
                 stall_timeout_secs: 0,
+                approval_timeout_secs: 300,
             }),
             matrix: Some(MatrixConfig {
                 enabled: true,
@@ -8458,6 +8460,7 @@ mod tests {
                 recovery_key: None,
                 mention_only: false,
                 password: None,
+                approval_timeout_secs: 300,
             }),
             ..Default::default()
         };
@@ -8494,6 +8497,7 @@ mod tests {
                 recovery_key: Some("recovery-secret".into()),
                 mention_only: false,
                 password: None,
+                approval_timeout_secs: 300,
             }),
             ..Default::default()
         };

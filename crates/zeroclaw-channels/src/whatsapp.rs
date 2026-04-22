@@ -377,12 +377,7 @@ impl Channel for WhatsAppChannel {
             "APPROVAL REQUIRED [{}]\nTool: {}\nArgs: {}\n\nReply: \"{} yes\", \"{} no\", or \"{} always\"",
             token, request.tool_name, request.arguments_summary, token, token, token
         );
-        self.send(&SendMessage {
-            content: text,
-            recipient: recipient.to_string(),
-            thread_ts: None,
-        })
-        .await?;
+        self.send(&SendMessage::new(text, recipient)).await?;
 
         let timeout = std::time::Duration::from_secs(self.approval_timeout_secs);
         let response = match tokio::time::timeout(timeout, rx_approval).await {

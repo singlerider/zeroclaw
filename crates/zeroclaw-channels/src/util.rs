@@ -191,7 +191,7 @@ pub fn parse_approval_reply(
     if token.len() != 6 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
         return None;
     }
-    let action_word = parts.next()?.trim().split_whitespace().next()?;
+    let action_word = parts.next()?.split_whitespace().next()?;
     let response = match action_word {
         "yes" | "y" | "approve" => ChannelApprovalResponse::Approve,
         "no" | "n" | "deny" => ChannelApprovalResponse::Deny,

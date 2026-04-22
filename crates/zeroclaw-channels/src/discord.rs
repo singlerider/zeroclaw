@@ -1687,14 +1687,7 @@ impl Channel for DiscordChannel {
 
         // Strip thread suffix — approval message goes to the channel root.
         let channel_id = recipient.split(':').next().unwrap_or(recipient);
-        if let Err(err) = self
-            .send(&SendMessage {
-                recipient: channel_id.to_string(),
-                content: text,
-                attachments: vec![],
-            })
-            .await
-        {
+        if let Err(err) = self.send(&SendMessage::new(text, channel_id)).await {
             self.pending_approvals.lock().await.remove(&token);
             return Err(err);
         }

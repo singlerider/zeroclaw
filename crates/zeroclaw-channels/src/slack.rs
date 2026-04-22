@@ -4122,14 +4122,13 @@ impl Channel for SlackChannel {
                 .map(|_| ())
                 .map_err(anyhow::Error::from)
         } else {
-            self.send(&SendMessage {
-                recipient: recipient.to_string(),
-                content: format!(
+            self.send(&SendMessage::new(
+                format!(
                     "APPROVAL REQUIRED [{token}]\nTool: {}\nArgs: {}\n\nReply: \"{token} yes\", \"{token} no\", or \"{token} always\"",
                     request.tool_name, request.arguments_summary,
                 ),
-                attachments: vec![],
-            })
+                recipient,
+            ))
             .await
         };
 

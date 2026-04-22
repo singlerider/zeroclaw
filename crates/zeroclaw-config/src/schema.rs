@@ -17435,7 +17435,7 @@ allowed_users = ["@u:m"]
     }
 
     #[test]
-    fn channel_approval_timeout_secs_defaults_to_300() {
+    async fn channel_approval_timeout_secs_defaults_to_300() {
         // Omitting approval_timeout_secs from each config should deserialize to 300
         let discord: DiscordConfig =
             serde_json::from_str(r#"{"bot_token":"tok","enabled":true}"#).unwrap();
@@ -17462,7 +17462,7 @@ allowed_users = ["@u:m"]
     }
 
     #[test]
-    fn channel_approval_timeout_secs_explicit_override() {
+    async fn channel_approval_timeout_secs_explicit_override() {
         let discord: DiscordConfig = serde_json::from_str(
             r#"{"bot_token":"tok","enabled":true,"approval_timeout_secs":60}"#,
         )
