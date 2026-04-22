@@ -637,8 +637,39 @@ async fn offer_advanced_settings(
         Err(_) => Vec::new(),
     };
 
-    // Skipped: `model` (already via prompt_model), `api-key` (explicit auth phase).
-    prompt_fields_under(cfg, ui, prefix, &["model", "api-key"], &defaults).await
+    // Skipped: `model` (already via prompt_model), `api-key` (explicit auth
+    // phase), and fields that only apply to a different provider family
+    // (e.g. azure-openai-* when the user picked Anthropic).
+    let mut excludes: Vec<&str> = vec!["model", "api-key"];
+    excludes.extend(provider_family_excludes(provider));
+    prompt_fields_under(cfg, ui, prefix, &excludes, &defaults).await
+}
+
+/// Exclude fields that don't apply to the selected provider family.
+///
+/// A field absent from this filter is shown for every provider. Grow the
+/// list as provider-specific fields land on `ModelProviderConfig` — the
+/// goal is to keep the advanced walk focused on fields the user might
+/// reasonably want to override for the provider they picked.
+///
+/// Follow-up (#5960 deferral): a `#[configurable(family = "...")]`
+/// attribute on the schema struct would let the `Configurable` derive
+/// emit this filter automatically. This hardcoded list is a pragmatic
+/// stand-in until that lands.
+fn provider_family_excludes(provider: &str) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    // Azure-OpenAI-only deployment routing fields.
+    if provider != "azure_openai" {
+        out.push("azure-openai-resource");
+        out.push("azure-openai-deployment");
+        out.push("azure-openai-api-version");
+    }
+    // OpenAI wire-protocol flavor + Codex auth are OpenAI-family concerns.
+    if !matches!(provider, "openai" | "openai_codex") {
+        out.push("wire-api");
+        out.push("requires-openai-auth");
+    }
+    out
 }
 
 /// Prompt for the model field using the provider's live model catalog.
