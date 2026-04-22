@@ -37,7 +37,7 @@ pub struct WhatsAppChannel {
     dm_mention_patterns: Vec<Regex>,
     /// Compiled mention patterns for group-chat mention gating.
     group_mention_patterns: Vec<Regex>,
-    pub pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ChannelApprovalResponse>>>>,
+    pending_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<ChannelApprovalResponse>>>>,
     approval_timeout_secs: u64,
 }
 
@@ -64,6 +64,12 @@ impl WhatsAppChannel {
     pub fn with_approval_timeout_secs(mut self, secs: u64) -> Self {
         self.approval_timeout_secs = secs;
         self
+    }
+
+    pub fn pending_approvals(
+        &self,
+    ) -> &Arc<Mutex<HashMap<String, oneshot::Sender<ChannelApprovalResponse>>>> {
+        &self.pending_approvals
     }
 
     /// Set a per-channel proxy URL that overrides the global proxy config.
