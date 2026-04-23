@@ -19,6 +19,9 @@ enum Cmd {
         /// Re-translate all entries (quality pass, costs more)
         #[arg(long)]
         force: bool,
+        /// Provider name from [providers.models.<name>] in config.toml (e.g. my-ollama)
+        #[arg(long)]
+        provider: Option<String>,
     },
     /// Show translation coverage per locale
     Stats,
@@ -30,7 +33,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Scan                   => cmd::fluent::scan::run(),
-        Cmd::Fill { locale, force } => cmd::fluent::fill::run(locale.as_deref(), force),
+        Cmd::Fill { locale, force, provider } => cmd::fluent::fill::run(locale.as_deref(), force, provider.as_deref()),
         Cmd::Stats                  => cmd::fluent::stats::run(),
         Cmd::Check                  => cmd::fluent::check::run(),
     }

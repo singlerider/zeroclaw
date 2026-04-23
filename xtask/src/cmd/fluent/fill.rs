@@ -2,9 +2,37 @@ use crate::util::*;
 use std::path::{Path, PathBuf};
 
 const BATCH_SIZE: usize = 50;
-const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
+const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-4-5-20251001";
 
-pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
+enum Backend {
+    Anthropic { api_key: String, model: String },
+    OpenAiCompat { base_url: String, model: String, api_key: Option<String> },
+}
+
+fn resolve_backend(provider: Option<&str>) -> anyhow::Result<Option<Backend>> {
+    if let Some(provider_name) = provider {
+        let cfg = read_provider_config(provider_name)?;
+        let model = cfg.model
+            .ok_or_else(|| anyhow::anyhow!("No model set for provider '{provider_name}' — add `model = \"...\"` to [providers.models.{provider_name}] in config.toml"))?;
+        return Ok(Some(Backend::OpenAiCompat {
+            base_url: cfg.base_url,
+            model,
+            api_key: cfg.api_key,
+        }));
+    }
+
+    let api_key = std::env::var("ANTHROPIC_API_TOKEN")
+        .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+        .unwrap_or_default();
+    if !api_key.is_empty() {
+        let model = std::env::var("FILL_MODEL").unwrap_or_else(|_| DEFAULT_ANTHROPIC_MODEL.to_string());
+        return Ok(Some(Backend::Anthropic { api_key, model }));
+    }
+
+    Ok(None)
+}
+
+pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>) -> anyhow::Result<()> {
     let root = repo_root();
     let locales_dir = fluent_locales_dir(&root);
     let en_dir = locales_dir.join("en");
@@ -18,6 +46,14 @@ pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
         None => locales().iter().copied().filter(|&l| l != "en").collect(),
     };
 
+    let backend = match resolve_backend(provider)? {
+        Some(b) => b,
+        None => {
+            println!("No translation backend configured. Use ANTHROPIC_API_TOKEN or --provider <name>.");
+            return Ok(());
+        }
+    };
+
     for target_locale in &targets {
         let target_dir = locales_dir.join(target_locale);
         std::fs::create_dir_all(&target_dir)?;
@@ -26,7 +62,7 @@ pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
             let filename = ftl_path.file_name().unwrap();
             let target_ftl = target_dir.join(filename);
 
-            fill_ftl_file(&ftl_path, &target_ftl, target_locale, force)?;
+            fill_ftl_file(&ftl_path, &target_ftl, target_locale, force, &backend)?;
         }
     }
 
@@ -38,6 +74,7 @@ fn fill_ftl_file(
     target_path: &PathBuf,
     locale: &str,
     force: bool,
+    backend: &Backend,
 ) -> anyhow::Result<()> {
     let en_entries = parse_ftl(&std::fs::read_to_string(en_path)?);
     let mut target_entries: Vec<(String, String)> = if target_path.exists() {
@@ -60,29 +97,16 @@ fn fill_ftl_file(
         return Ok(());
     }
 
-    let api_key = std::env::var("ANTHROPIC_API_TOKEN")
-        .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-        .unwrap_or_default();
-    if api_key.is_empty() {
-        println!(
-            "==> {locale}/{}: {} entries need translation (set ANTHROPIC_API_TOKEN to auto-fill)",
-            en_path.file_name().unwrap().to_string_lossy(),
-            to_translate.len()
-        );
-        return Ok(());
-    }
-
     println!(
         "==> {locale}/{}: AI-filling {} entries",
         en_path.file_name().unwrap().to_string_lossy(),
         to_translate.len()
     );
 
-    let model = std::env::var("FILL_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     let locale_name = locale_display_name(locale);
 
     for chunk in to_translate.chunks(BATCH_SIZE) {
-        let translated = call_api(&api_key, &model, locale_name, chunk)?;
+        let translated = call_api(backend, locale_name, chunk)?;
 
         // Merge: update existing or append new
         for (key, value) in translated {
@@ -102,8 +126,7 @@ fn fill_ftl_file(
 }
 
 fn call_api(
-    api_key: &str,
-    model: &str,
+    backend: &Backend,
     locale_name: &str,
     entries: &[(String, String)],
 ) -> anyhow::Result<Vec<(String, String)>> {
@@ -119,52 +142,69 @@ fn call_api(
          Do not translate proper nouns, technical identifiers, or code examples."
     );
 
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": 8192,
-        "system": system,
-        "messages": [
-            {
-                "role": "user",
-                "content": serde_json::to_string(&input_obj)?
-            }
-        ]
-    });
-
-    let (auth_name, auth_value) = if api_key.starts_with("sk-ant-oat") {
-        ("Authorization", format!("Bearer {api_key}"))
-    } else {
-        ("x-api-key", api_key.to_string())
-    };
-
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
     let (status, text) = rt.block_on(async {
         let client = reqwest::Client::new();
-        let response = client
-            .post("https://api.anthropic.com/v1/messages")
-            .header(auth_name, auth_value)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await?;
+        let user_content = serde_json::to_string(&input_obj)?;
+
+        let response = match backend {
+            Backend::Anthropic { api_key, model } => {
+                let (auth_name, auth_value) = if api_key.starts_with("sk-ant-oat") {
+                    ("Authorization", format!("Bearer {api_key}"))
+                } else {
+                    ("x-api-key", api_key.to_string())
+                };
+                let body = serde_json::json!({
+                    "model": model,
+                    "max_tokens": 8192,
+                    "system": system,
+                    "messages": [{"role": "user", "content": user_content}]
+                });
+                client.post("https://api.anthropic.com/v1/messages")
+                    .header(auth_name, auth_value)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+                    .send()
+                    .await?
+            }
+            Backend::OpenAiCompat { base_url, model, api_key } => {
+                let body = serde_json::json!({
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_content}
+                    ]
+                });
+                let mut req = client.post(format!("{base_url}/v1/chat/completions"))
+                    .json(&body);
+                if let Some(key) = api_key {
+                    req = req.header("Authorization", format!("Bearer {key}"));
+                }
+                req.send().await?
+            }
+        };
+
         let status = response.status();
         let text = response.text().await?;
-        Ok::<_, reqwest::Error>((status, text))
+        Ok::<_, anyhow::Error>((status, text))
     })?;
 
     if !status.is_success() {
-        anyhow::bail!("Anthropic API error {status}: {text}");
+        anyhow::bail!("API error {status}: {text}");
     }
 
     let parsed: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| anyhow::anyhow!("Failed to parse API response: {e}\n{text}"))?;
 
-    let content = parsed["content"][0]["text"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No text in API response: {text}"))?;
+    let content = match backend {
+        Backend::Anthropic { .. } => parsed["content"][0]["text"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("No text in Anthropic response: {text}"))?,
+        Backend::OpenAiCompat { .. } => parsed["choices"][0]["message"]["content"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("No content in OpenAI-compat response: {text}"))?,
+    };
 
     // Strip markdown code fences if present
     let json_str = content
