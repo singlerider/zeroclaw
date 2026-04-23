@@ -221,11 +221,17 @@ fn parse_ftl(src: &str) -> Vec<(String, String)> {
             continue;
         }
 
-        // New `key = value` line
-        if let Some((key, value)) = trimmed.split_once(" = ") {
+        // New `key = value` or `key =` (multi-line) line
+        let parsed_kv = if let Some((k, v)) = trimmed.split_once(" = ") {
+            Some((k.trim(), v.trim()))
+        } else if let Some(k) = trimmed.strip_suffix(" =") {
+            Some((k.trim(), ""))
+        } else {
+            None
+        };
+        if let Some((key, value)) = parsed_kv {
             flush_entry(&mut entries, &mut current_key, &mut current_lines);
-            current_key = Some(key.trim().to_string());
-            let value = value.trim();
+            current_key = Some(key.to_string());
             if !value.is_empty() {
                 current_lines.push(value.to_string());
             }
