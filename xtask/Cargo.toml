@@ -6,8 +6,12 @@ license.workspace = true
 publish = false
 
 [[bin]]
-name = "xtask"
-path = "src/main.rs"
+name = "mdbook"
+path = "src/bin/mdbook.rs"
+
+[[bin]]
+name = "fluent"
+path = "src/bin/fluent.rs"
 
 [dependencies]
 anyhow = "1.0"

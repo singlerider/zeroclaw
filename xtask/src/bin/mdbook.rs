@@ -1,10 +1,8 @@
-mod cmd;
-mod util;
-
+use xtask::cmd;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "docs", about = "ZeroClaw documentation tooling")]
+#[command(name = "mdbook", about = "ZeroClaw documentation tooling")]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
