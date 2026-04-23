@@ -3984,6 +3984,13 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .bot_token
                 .clone()
                 .context("Mattermost bot_token is required")?;
+            if mm.channel_ids.len() > 1 {
+                tracing::warn!(
+                    "Mattermost channel_ids has {} entries; only the first is used — \
+                     multi-channel Mattermost is not yet supported",
+                    mm.channel_ids.len()
+                );
+            }
             Ok(Arc::new(MattermostChannel::new(
                 mm.url.clone(),
                 bot_token,
@@ -4455,6 +4462,13 @@ fn collect_configured_channels(
     if let Some(ref mm) = config.channels.mattermost {
         if mm.enabled {
             if let Some(bot_token) = mm.bot_token.clone() {
+                if mm.channel_ids.len() > 1 {
+                    tracing::warn!(
+                        "Mattermost channel_ids has {} entries; only the first is used — \
+                         multi-channel Mattermost is not yet supported",
+                        mm.channel_ids.len()
+                    );
+                }
                 channels.push(ConfiguredChannel {
                     display_name: "Mattermost",
                     channel: Arc::new(

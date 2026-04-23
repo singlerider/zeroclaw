@@ -400,6 +400,36 @@ channel_id = "town-square"
     }
 
     #[test]
+    fn prepare_table_migrates_mattermost_channel_id_under_legacy_channels_config_key() {
+        // V1-era config using the legacy `channels_config` top-level key.
+        // The rename-first step in prepare_table must normalize this to
+        // `channels` so migrate_v2_to_v3 can find and migrate the scalar field.
+        let mut table: toml::Table = toml::from_str(
+            r#"
+[channels_config.mattermost]
+enabled = true
+url = "https://mattermost.example.com"
+bot_token = "tok"
+channel_id = "town-square"
+"#,
+        )
+        .unwrap();
+        prepare_table(&mut table);
+        assert!(
+            !table.contains_key("channels_config"),
+            "channels_config should be renamed to channels"
+        );
+        let mattermost = table["channels"]["mattermost"].as_table().unwrap();
+        assert!(
+            !mattermost.contains_key("channel_id"),
+            "channel_id should be removed"
+        );
+        let channel_ids = mattermost["channel_ids"].as_array().unwrap();
+        assert_eq!(channel_ids.len(), 1);
+        assert_eq!(channel_ids[0].as_str(), Some("town-square"));
+    }
+
+    #[test]
     fn prepare_table_mattermost_channel_id_not_duplicated_when_channel_ids_already_present() {
         let mut table: toml::Table = toml::from_str(
             r#"
