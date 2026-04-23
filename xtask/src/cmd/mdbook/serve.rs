@@ -23,18 +23,15 @@ pub fn run(locale: &str) -> anyhow::Result<()> {
     let book = book_dir(&root);
     let out_dir = book.join("book");
 
-    // Initial build
-    run_cmd(Command::new("mdbook")
-        .args(["build", "-d", "book"])
-        .env("MDBOOK_BOOK__LANGUAGE", locale)
-        .current_dir(&book))?;
-    let api_dest = out_dir.join("api");
-    let _ = std::fs::remove_dir_all(&api_dest);
-    copy_dir_all(root.join("target/doc"), &api_dest)?;
+    // Build all locales into book/{locale}/ so the URL has a locale segment
+    // and the language switcher renders correctly — mirrors production layout.
+    println!("==> Building all locales for serve...");
+    crate::cmd::mdbook::build::build_locales(&root)?;
+    crate::cmd::mdbook::build::assemble(&root)?;
 
-    // Watch for source changes in background
+    // Watch the selected locale for live-reload (rebuilds book/{locale}/ on change)
     let mut watch = Command::new("mdbook")
-        .args(["watch", "-d", "book"])
+        .args(["watch", "-d", &format!("book/{locale}")])
         .env("MDBOOK_BOOK__LANGUAGE", locale)
         .current_dir(&book)
         .stdout(Stdio::null())
@@ -59,8 +56,11 @@ pub fn run(locale: &str) -> anyhow::Result<()> {
     });
 
     let url = format!("http://localhost:{PORT}");
-    println!("==> Serving locale '{locale}' at {url}");
-    println!("    API reference: {url}/api/index.html");
+    println!("==> Serving all locales at {url}");
+    println!("    English:        {url}/en/");
+    println!("    Japanese:       {url}/ja/");
+    println!("    API reference:  {url}/api/index.html");
+    println!("    Live-reload:    watching locale '{locale}'");
     println!("    Press Ctrl-C to stop.");
 
     let _ = Command::new("xdg-open").arg(&url).spawn()
