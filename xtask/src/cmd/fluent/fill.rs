@@ -129,28 +129,29 @@ fn call_api(
         ]
     });
 
-    let auth_header = if api_key.starts_with("sk-ant-oat") {
-        format!("Bearer {api_key}")
+    let (auth_name, auth_value) = if api_key.starts_with("sk-ant-oat") {
+        ("Authorization", format!("Bearer {api_key}"))
     } else {
-        api_key.to_string()
-    };
-    let auth_header_name = if api_key.starts_with("sk-ant-oat") {
-        "Authorization"
-    } else {
-        "x-api-key"
+        ("x-api-key", api_key.to_string())
     };
 
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header(auth_header_name, auth_header)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
 
-    let status = response.status();
-    let text = response.text()?;
+    let (status, text) = rt.block_on(async {
+        let client = reqwest::Client::new();
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header(auth_name, auth_value)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status();
+        let text = response.text().await?;
+        Ok::<_, reqwest::Error>((status, text))
+    })?;
 
     if !status.is_success() {
         anyhow::bail!("Anthropic API error {status}: {text}");
