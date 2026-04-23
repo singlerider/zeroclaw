@@ -9,9 +9,12 @@ just docs              # serve English at http://localhost:3000 with auto-reload
 just docs ja           # same, but in Japanese
 just docs-build        # static build of every locale into docs/book/book/
 just docs-refs         # regenerate the auto-generated reference pages
+just docs-sync         # after editing English source: re-extract + AI-fill delta
+just docs-translate-stats   # show translated/fuzzy/untranslated counts per locale
+just docs-translate-check   # validate .po format (run before a translation PR)
 ```
 
-These wrap `scripts/docs.sh`, which you can also call directly:
+These wrap `scripts/docs.sh` and `scripts/sync-translations.sh`, which you can also call directly:
 
 ```bash
 ./scripts/docs.sh                  # serve English
@@ -30,6 +33,8 @@ The script will fail fast and tell you what's missing, but for reference:
 | [`mdbook-i18n-helpers`](https://github.com/google/mdbook-i18n-helpers) | `cargo install mdbook-i18n-helpers --locked` |
 | [`json-schema-for-humans`](https://github.com/coveooss/json-schema-for-humans) | `pipx install json-schema-for-humans` |
 | `cargo` | <https://rustup.rs> |
+| `gettext` (msgfmt, msgmerge, msginit) | `apt install gettext` / `brew install gettext` |
+| `polib` + `anthropic` (Python) | `pip install polib anthropic` (for `docs-sync` AI step) |
 
 ## What gets built where
 
@@ -42,20 +47,47 @@ The script will fail fast and tell you what's missing, but for reference:
 
 The two `reference/*.md` files are generated from the actual `clap` derives and JSON schema in the code — never edit them by hand. Edit the `///` doc comments on the relevant Rust types instead.
 
+## How translations stay current
+
+English markdown is the only source maintained by humans. Translations are stored in `docs/book/po/<locale>.po` files, which act as a cache — not as copies of the docs.
+
+When English source changes, `just docs-sync` runs two stages:
+
+1. **Extract**: `mdbook-xgettext` regenerates `po/messages.pot` from the current English source
+2. **Merge**: `msgmerge` updates each locale's `.po` file — new strings get an empty `msgstr ""`; changed strings get marked `#, fuzzy` with the old translation preserved as a starting point
+
+Then the script counts fuzzy + untranslated entries. If there's a delta and `ANTHROPIC_API_KEY` is set, `fill-translations.py` translates only those entries via Claude. **Unchanged strings cost nothing** — the `.po` file cache means re-running against unchanged source is a no-op.
+
+Without `ANTHROPIC_API_KEY`, `docs-sync` still runs extract + merge and reports how many entries need translation. Strings without a `msgstr` fall back to English at render time — partial translations are valid.
+
 ## Adding a new locale
 
-Translations use the gettext PO format via [`mdbook-i18n-helpers`](https://github.com/google/mdbook-i18n-helpers). To add a new locale `xx`:
+1. Run `just docs-sync` to ensure `docs/book/po/messages.pot` is current.
 
-1. Copy `docs/book/po/ja.po` → `docs/book/po/xx.po`.
-2. Update the `Language:` and `Plural-Forms:` headers for your locale.
-3. Translate each `msgstr` (leave `msgid` exactly as it is — those are the lookup keys).
-4. Add `xx` to the `LOCALES` array in `scripts/docs.sh` and the workflow `.github/workflows/docs-deploy.yml`.
-5. Rebuild: `./scripts/docs.sh build`.
+2. Bootstrap the new locale's `.po` file:
+   ```bash
+   msginit --no-translator --locale=xx \
+     --input=docs/book/po/messages.pot \
+     --output=docs/book/po/xx.po
+   ```
 
-If a `msgid` has no `msgstr`, the English source is used as a fallback — partial translations are valid.
+3. Set `ANTHROPIC_API_KEY` and run `just docs-sync` to fill all entries for the new locale.
+
+4. Update LOCALES in all four places — they must stay in sync:
+   - `scripts/docs.sh` — bash array `LOCALES=(en ja xx)`
+   - `scripts/sync-translations.sh` — default `LOCALES="${LOCALES:-en ja xx}"`
+   - `docs/book/theme/lang-switcher.js` — add `{ code: "xx", label: "Language Name" }`
+   - `.github/workflows/docs-deploy.yml` — `LOCALES: en ja xx`
+
+5. Validate and preview:
+   ```bash
+   just docs-translate-check   # exits non-zero on format errors
+   just docs-translate-stats   # show coverage counts
+   just docs ja                # replace ja with your locale
+   ```
 
 ## Tips
 
 - **Fast iteration on prose:** use `just docs` (mdbook's serve mode auto-rebuilds on save). Skip `docs-refs` unless you've changed CLI flags or config schema.
-- **Fast iteration on translations:** edit `po/<locale>.po` and reload the browser — no rebuild needed.
+- **Fast iteration on translations:** edit `po/<locale>.po` and reload the browser — mdbook serve detects `.po` changes and rebuilds automatically.
 - **Cleaning up:** `rm -rf docs/book/book target/doc` removes everything generated.

@@ -4,8 +4,9 @@
 // matches one of LOCALES, then renders a globe-icon dropdown linking to the
 // same page in every other locale.
 //
-// Mirror the LOCALES list in .github/workflows/docs-deploy.yml (env.LOCALES)
-// and the po/ directory. All three must stay in sync.
+// Mirror the LOCALES list in: scripts/docs.sh (LOCALES array),
+// scripts/sync-translations.sh (LOCALES default), po/ directory,
+// and .github/workflows/docs-deploy.yml (env.LOCALES). All four must stay in sync.
 (function () {
   const LOCALES = [
     { code: "en", label: "English" },

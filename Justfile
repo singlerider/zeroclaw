@@ -65,6 +65,26 @@ docs-build:
 docs-refs:
     ./scripts/docs.sh refs
 
+# Sync .po files with English source; AI-fills delta if ANTHROPIC_API_KEY is set
+docs-sync:
+    ./scripts/sync-translations.sh
+
+# Show translation status: translated/fuzzy/untranslated counts per locale
+docs-translate-stats:
+    @for po in docs/book/po/*.po; do \
+        locale=$$(basename "$$po" .po); \
+        printf "%-8s " "$$locale"; \
+        LANG=C msgfmt --statistics "$$po" -o /dev/null; \
+    done
+
+# Validate .po format for all locales (exits non-zero on format errors)
+docs-translate-check:
+    @ok=0; \
+    for po in docs/book/po/*.po; do \
+        msgfmt --check-format "$$po" -o /dev/null || ok=1; \
+    done; \
+    exit $$ok
+
 # Update dependencies
 update:
     cargo update
