@@ -48,7 +48,7 @@ Run this before a release to AI-fill any untranslated or fuzzy strings in the `.
 | `force` | true / false | false | Re-translate everything, not just the delta |
 | `model` | haiku / sonnet / opus | `claude-haiku-4-5-20251001` | Haiku is fast and cheap for delta fills; use sonnet or opus for release quality passes |
 
-Requires the `ANTHROPIC_API_KEY` repository secret to be set.
+Requires the `ANTHROPIC_API_KEY` repository secret to be set (CI uses Anthropic; local fills use `--provider`).
 
 **Expected output:** the workflow commits a `chore(i18n): sync translations via <model>` commit and pushes it. If all strings were already translated, it exits cleanly with "No translation changes".
 

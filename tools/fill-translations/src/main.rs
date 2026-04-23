@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(about = "Fill empty/fuzzy .po entries via Anthropic API")]
+#[command(about = "Fill empty/fuzzy .po entries via a configured provider")]
 struct Args {
     #[arg(long)]
     po: PathBuf,
@@ -15,9 +15,39 @@ struct Args {
     /// Entries per API call
     #[arg(long, default_value = "50")]
     batch: usize,
-    /// Model override (env FILL_MODEL also works)
+    /// Provider name from [providers.models.<name>] in config.toml
     #[arg(long)]
-    model: Option<String>,
+    provider: String,
+}
+
+struct ProviderConfig {
+    base_url: String,
+    model: String,
+    api_key: Option<String>,
+}
+
+fn read_provider_config(provider_name: &str) -> anyhow::Result<ProviderConfig> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_default());
+    let candidates = [
+        format!("{home}/.zeroclaw/config.toml"),
+        format!("{home}/.config/zeroclaw/config.toml"),
+    ];
+    let raw = candidates.iter()
+        .find_map(|p| std::fs::read_to_string(p).ok())
+        .ok_or_else(|| anyhow::anyhow!("config.toml not found (tried ~/.zeroclaw/config.toml)"))?;
+    let table: toml::Table = raw.parse()?;
+    let provider = table
+        .get("providers").and_then(|v| v.get("models")).and_then(|v| v.get(provider_name))
+        .ok_or_else(|| anyhow::anyhow!("[providers.models.{provider_name}] not found in config.toml"))?;
+    let model = provider.get("model").and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("No model set for provider '{provider_name}' — add `model = \"...\"` to [providers.models.{provider_name}]"))?
+        .to_string();
+    Ok(ProviderConfig {
+        base_url: provider.get("base_url").and_then(|v| v.as_str())
+            .unwrap_or("http://localhost:11434").to_string(),
+        model,
+        api_key: provider.get("api_key").and_then(|v| v.as_str()).map(str::to_string),
+    })
 }
 
 /// A parsed .po entry, carrying line positions so we can rewrite in place.
@@ -221,8 +251,7 @@ fn write_po(
 
 async fn translate_batch(
     client: &reqwest::Client,
-    api_key: &str,
-    model: &str,
+    provider: &ProviderConfig,
     locale: &str,
     batch: &[&str],
 ) -> anyhow::Result<Vec<String>> {
@@ -242,31 +271,22 @@ async fn translate_batch(
     );
 
     let body = serde_json::json!({
-        "model": model,
-        "max_tokens": 8192,
+        "model": provider.model,
         "messages": [{"role": "user", "content": prompt}]
     });
 
-    let (auth_name, auth_value) = if api_key.starts_with("sk-ant-oat") {
-        ("Authorization", format!("Bearer {api_key}"))
-    } else {
-        ("x-api-key", api_key.to_string())
-    };
+    let mut req = client
+        .post(format!("{}/v1/chat/completions", provider.base_url))
+        .json(&body);
+    if let Some(key) = &provider.api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
 
-    let resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header(auth_name, auth_value)
-        .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<serde_json::Value>()
-        .await?;
+    let resp = req.send().await?.error_for_status()?.json::<serde_json::Value>().await?;
 
-    let text = resp["content"][0]["text"]
+    let text = resp["choices"][0]["message"]["content"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("no text in response"))?;
+        .ok_or_else(|| anyhow::anyhow!("no content in response: {resp}"))?;
 
     // Extract the JSON array — find first '[' and last ']'
     let start = text.find('[').ok_or_else(|| anyhow::anyhow!("no JSON array in response"))?;
@@ -280,14 +300,7 @@ async fn translate_batch(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
-
-    let model = args
-        .model
-        .or_else(|| std::env::var("FILL_MODEL").ok())
-        .unwrap_or_else(|| "claude-haiku-4-5-20251001".to_string());
+    let provider = read_provider_config(&args.provider)?;
 
     let raw = std::fs::read_to_string(&args.po)?;
     let lines: Vec<String> = raw.lines().map(str::to_owned).collect();
@@ -331,9 +344,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     println!(
-        "==> {} to translate, {} fuzzy accepted as-is, model={model}",
+        "==> {} to translate, {} fuzzy accepted as-is, provider={}, model={}",
         to_translate.len(),
-        to_accept.len()
+        to_accept.len(),
+        args.provider,
+        provider.model,
     );
 
     let client = reqwest::Client::new();
@@ -344,7 +359,7 @@ async fn main() -> anyhow::Result<()> {
         let msgids: Vec<&str> = chunk.iter().map(|e| e.msgid.as_str()).collect();
         println!("==> Chunk {}/{total_chunks} ({} entries)", chunk_idx + 1, chunk.len());
 
-        match translate_batch(&client, &api_key, &model, &args.locale, &msgids).await {
+        match translate_batch(&client, &provider, &args.locale, &msgids).await {
             Ok(translated) => {
                 for (entry, text) in chunk.iter().zip(translated.iter()) {
                     // If msgid ends with \n, msgstr must too — gettext requires it.

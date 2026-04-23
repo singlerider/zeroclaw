@@ -2,34 +2,18 @@ use crate::util::*;
 use std::path::{Path, PathBuf};
 
 const BATCH_SIZE: usize = 50;
-const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-4-5-20251001";
 
-enum Backend {
-    Anthropic { api_key: String, model: String },
-    OpenAiCompat { base_url: String, model: String, api_key: Option<String> },
+struct Backend {
+    base_url: String,
+    model: String,
+    api_key: Option<String>,
 }
 
-fn resolve_backend(provider: Option<&str>) -> anyhow::Result<Option<Backend>> {
-    if let Some(provider_name) = provider {
-        let cfg = read_provider_config(provider_name)?;
-        let model = cfg.model
-            .ok_or_else(|| anyhow::anyhow!("No model set for provider '{provider_name}' — add `model = \"...\"` to [providers.models.{provider_name}] in config.toml"))?;
-        return Ok(Some(Backend::OpenAiCompat {
-            base_url: cfg.base_url,
-            model,
-            api_key: cfg.api_key,
-        }));
-    }
-
-    let api_key = std::env::var("ANTHROPIC_API_TOKEN")
-        .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-        .unwrap_or_default();
-    if !api_key.is_empty() {
-        let model = std::env::var("FILL_MODEL").unwrap_or_else(|_| DEFAULT_ANTHROPIC_MODEL.to_string());
-        return Ok(Some(Backend::Anthropic { api_key, model }));
-    }
-
-    Ok(None)
+fn resolve_backend(provider: &str) -> anyhow::Result<Backend> {
+    let cfg = read_provider_config(provider)?;
+    let model = cfg.model
+        .ok_or_else(|| anyhow::anyhow!("No model set for provider '{provider}' — add `model = \"...\"` to [providers.models.{provider}] in config.toml"))?;
+    Ok(Backend { base_url: cfg.base_url, model, api_key: cfg.api_key })
 }
 
 pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>) -> anyhow::Result<()> {
@@ -46,13 +30,8 @@ pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>) -> anyhow:
         None => locales().iter().copied().filter(|&l| l != "en").collect(),
     };
 
-    let backend = match resolve_backend(provider)? {
-        Some(b) => b,
-        None => {
-            println!("No translation backend configured. Use ANTHROPIC_API_TOKEN or --provider <name>.");
-            return Ok(());
-        }
-    };
+    let provider_name = provider.ok_or_else(|| anyhow::anyhow!("--provider <name> is required (configured in [providers.models.<name>] in config.toml)"))?;
+    let backend = resolve_backend(provider_name)?;
 
     for target_locale in &targets {
         let target_dir = locales_dir.join(target_locale);
@@ -150,42 +129,19 @@ fn call_api(
         let client = reqwest::Client::new();
         let user_content = serde_json::to_string(&input_obj)?;
 
-        let response = match backend {
-            Backend::Anthropic { api_key, model } => {
-                let (auth_name, auth_value) = if api_key.starts_with("sk-ant-oat") {
-                    ("Authorization", format!("Bearer {api_key}"))
-                } else {
-                    ("x-api-key", api_key.to_string())
-                };
-                let body = serde_json::json!({
-                    "model": model,
-                    "max_tokens": 8192,
-                    "system": system,
-                    "messages": [{"role": "user", "content": user_content}]
-                });
-                client.post("https://api.anthropic.com/v1/messages")
-                    .header(auth_name, auth_value)
-                    .header("anthropic-version", "2023-06-01")
-                    .json(&body)
-                    .send()
-                    .await?
-            }
-            Backend::OpenAiCompat { base_url, model, api_key } => {
-                let body = serde_json::json!({
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user_content}
-                    ]
-                });
-                let mut req = client.post(format!("{base_url}/v1/chat/completions"))
-                    .json(&body);
-                if let Some(key) = api_key {
-                    req = req.header("Authorization", format!("Bearer {key}"));
-                }
-                req.send().await?
-            }
-        };
+        let body = serde_json::json!({
+            "model": backend.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_content}
+            ]
+        });
+        let mut req = client.post(format!("{}/v1/chat/completions", backend.base_url))
+            .json(&body);
+        if let Some(key) = &backend.api_key {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        let response = req.send().await?;
 
         let status = response.status();
         let text = response.text().await?;
@@ -199,12 +155,9 @@ fn call_api(
     let parsed: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| anyhow::anyhow!("Failed to parse API response: {e}\n{text}"))?;
 
-    let content = match backend {
-        Backend::Anthropic { .. } => parsed["content"][0]["text"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("No text in Anthropic response: {text}"))?,
-        Backend::OpenAiCompat { .. } => parsed["choices"][0]["message"]["content"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("No content in OpenAI-compat response: {text}"))?,
-    };
+    let content = parsed["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No content in response: {text}"))?;
 
     // Strip markdown code fences if present
     let json_str = content

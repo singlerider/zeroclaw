@@ -2,7 +2,7 @@ use crate::util::*;
 use std::path::Path;
 use std::process::Command;
 
-pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
+pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>) -> anyhow::Result<()> {
     let root = repo_root();
     require_tool("mdbook-xgettext", "cargo install mdbook-i18n-helpers --locked")?;
     require_tool("msgmerge", "apt install gettext / brew install gettext")?;
@@ -64,20 +64,20 @@ pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
         }
 
         if force {
-            if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+            if let Some(p) = provider {
                 println!("==> {locale}: --force: re-translating all entries");
-                fill(&root, &po_file, locale, true)?;
+                fill(&root, &po_file, locale, true, p)?;
             } else {
-                println!("==> {locale}: --force requested but ANTHROPIC_API_KEY not set — skipping AI step");
+                println!("==> {locale}: --force requested but no --provider specified — skipping AI step");
             }
         } else {
             let delta = count_delta(&po_file)?;
             if delta > 0 {
-                if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                if let Some(p) = provider {
                     println!("==> {locale}: AI-filling {delta} entries");
-                    fill(&root, &po_file, locale, false)?;
+                    fill(&root, &po_file, locale, false, p)?;
                 } else {
-                    println!("==> {locale}: {delta} entries need translation (set ANTHROPIC_API_KEY to auto-fill)");
+                    println!("==> {locale}: {delta} entries need translation (use --provider <name> to auto-fill)");
                 }
             } else {
                 println!("==> {locale}: up to date, skipping AI step");
@@ -101,7 +101,7 @@ pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fill(root: &Path, po_file: &Path, locale: &str, force: bool) -> anyhow::Result<()> {
+fn fill(root: &Path, po_file: &Path, locale: &str, force: bool, provider: &str) -> anyhow::Result<()> {
     let manifest = root.join("tools/fill-translations/Cargo.toml");
     let mut cmd = Command::new("cargo");
     cmd.args(["run", "--release", "-q", "--manifest-path"])
@@ -109,7 +109,8 @@ fn fill(root: &Path, po_file: &Path, locale: &str, force: bool) -> anyhow::Resul
         .arg("--")
         .args(["--po"])
         .arg(po_file)
-        .args(["--locale", locale]);
+        .args(["--locale", locale])
+        .args(["--provider", provider]);
     if force {
         cmd.arg("--force");
     }

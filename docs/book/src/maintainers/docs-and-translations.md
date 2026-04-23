@@ -17,22 +17,23 @@ They are filled separately and stored separately. Both use Claude as the transla
 
 App strings live in `crates/zeroclaw-runtime/locales/`. English is the source of truth and is embedded at compile time. Non-English locales are loaded from `~/.zeroclaw/workspace/locales/` at runtime.
 
-```bash
-cargo fluent stats                        # coverage per locale
-cargo fluent check                        # validate .ftl syntax
-cargo fluent fill --locale ja             # fill missing keys via Anthropic API
-cargo fluent fill --locale ja --force     # retranslate everything (quality pass)
-cargo fluent fill --locale ja --provider ollama  # use a local Ollama provider instead
-cargo fluent scan                         # find stale or missing keys vs Rust source
-```
-
-`cargo fluent fill` reads `ANTHROPIC_API_TOKEN` for the Anthropic backend. For a local model, configure a provider in `config.toml` and pass `--provider <name>`:
+Configure a provider in `config.toml` once:
 
 ```toml
 [providers.models.ollama]
 name = "ollama"
 base_url = "http://localhost:11434"
 model = "llama3.2"
+```
+
+Then:
+
+```bash
+cargo fluent stats                                      # coverage per locale
+cargo fluent check                                      # validate .ftl syntax
+cargo fluent fill --locale ja --provider ollama         # fill missing keys
+cargo fluent fill --locale ja --provider ollama --force # retranslate everything
+cargo fluent scan                                       # find stale or missing keys vs Rust source
 ```
 
 After filling, copy the updated `.ftl` file to your workspace and rebuild the binary to pick up the changes:
@@ -43,13 +44,11 @@ cp crates/zeroclaw-runtime/locales/ja/cli.ftl ~/.zeroclaw/workspace/locales/ja/c
 
 ## Filling doc translations (gettext)
 
-Doc translations live in `docs/book/po/`. `cargo mdbook sync` runs extract → merge → AI-fill in one step.
-
-The fill step calls `ANTHROPIC_API_TOKEN` (or `ANTHROPIC_API_KEY`). Without a key, sync still runs extract + merge and reports how many strings need translation — partial translations are valid and fall back to English at render time.
+Doc translations live in `docs/book/po/`. `cargo mdbook sync` runs extract → merge → AI-fill in one step. Without `--provider`, sync still runs extract + merge and reports how many strings need translation — partial translations fall back to English at render time.
 
 ```bash
-ANTHROPIC_API_TOKEN=sk-ant-... cargo mdbook sync
-ANTHROPIC_API_TOKEN=sk-ant-... FILL_MODEL=claude-sonnet-4-6 cargo mdbook sync --force
+cargo mdbook sync --provider ollama
+cargo mdbook sync --provider ollama --force
 ```
 
 ## Adding a new locale

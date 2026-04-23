@@ -26,6 +26,9 @@ enum Cmd {
         /// Re-translate all entries (quality pass, costs more)
         #[arg(long)]
         force: bool,
+        /// Provider name from [providers.models.<name>] in config.toml
+        #[arg(long)]
+        provider: Option<String>,
     },
     /// Show translation statistics per locale
     Stats,
@@ -39,7 +42,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Serve { locale }       => cmd::mdbook::serve::run(&locale),
         Cmd::Build                  => cmd::mdbook::build::run(),
         Cmd::Refs                   => cmd::mdbook::refs::run(),
-        Cmd::Sync { locale, force } => cmd::mdbook::sync::run(locale.as_deref(), force),
+        Cmd::Sync { locale, force, provider } => cmd::mdbook::sync::run(locale.as_deref(), force, provider.as_deref()),
         Cmd::Stats                  => cmd::mdbook::stats::run(),
         Cmd::Check                  => cmd::mdbook::check::run(),
     }

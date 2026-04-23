@@ -48,15 +48,15 @@ When English source changes, `cargo mdbook sync` runs two stages:
 1. **Extract**: `mdbook-xgettext` regenerates `po/messages.pot` from the current English source
 2. **Merge**: `msgmerge` updates each locale's `.po` file — new strings get an empty `msgstr ""`; changed strings get marked `#, fuzzy` with the old translation preserved as a starting point
 
-Then the command counts fuzzy + untranslated entries. If there's a delta and `ANTHROPIC_API_TOKEN` is set, the `fill-translations` tool translates only those entries via Claude. **Unchanged strings cost nothing** — the `.po` file cache means re-running against unchanged source is a no-op.
+Then the command counts fuzzy + untranslated entries. If there's a delta and `--provider` is given, the `fill-translations` tool translates only those entries. **Unchanged strings cost nothing** — the `.po` file cache means re-running against unchanged source is a no-op.
 
-Without `ANTHROPIC_API_TOKEN`, `cargo mdbook sync` still runs extract + merge and reports how many entries need translation. Strings without a `msgstr` fall back to English at render time — partial translations are valid.
+Without `--provider`, `cargo mdbook sync` still runs extract + merge and reports how many strings need translation. Strings without a `msgstr` fall back to English at render time — partial translations are valid.
 
 ## Adding a new locale
 
-1. Set `ANTHROPIC_API_TOKEN` and run `cargo mdbook sync --locale xx` — if the `.po` file doesn't exist it bootstraps it automatically, then fills all entries:
+1. Run `cargo mdbook sync --locale xx --provider <name>` — if the `.po` file doesn't exist it bootstraps it automatically, then fills all entries:
    ```bash
-   ANTHROPIC_API_TOKEN=sk-ant-... cargo mdbook sync --locale xx
+   cargo mdbook sync --locale xx --provider ollama
    ```
 
 4. Update LOCALES in all four places — they must stay in sync:
@@ -80,19 +80,17 @@ You can do this locally or via the GitHub Actions manual trigger.
 ### Local (recommended)
 
 ```bash
-export ANTHROPIC_API_TOKEN=sk-ant-...
+# Fast delta pass (only new or changed strings since last release)
+cargo mdbook sync --provider ollama
 
-# Fast/cheap delta pass (only new or changed strings since last release)
-cargo mdbook sync
-
-# OR: quality pass — re-translate everything with a stronger model
-FILL_MODEL=claude-opus-4-7 cargo mdbook sync --force
+# OR: quality pass — re-translate everything
+cargo mdbook sync --provider ollama --force
 
 cargo mdbook check   # validate before committing
 cargo mdbook stats   # review coverage
 ```
 
-The `FILL_MODEL` environment variable overrides the default model (`claude-haiku-4-5-20251001`). `claude-sonnet-4-6` is a good middle-ground for release quality at reasonable cost.
+The model used is whatever is configured in `[providers.models.<name>]` in `config.toml`.
 
 ### Via GitHub Actions (`.github/workflows/docs-translate.yml`)
 
@@ -105,7 +103,7 @@ Go to **Actions → Translate docs (manual) → Run workflow**:
 | `model` | `claude-haiku-4-5-20251001` (default), `claude-sonnet-4-6`, or `claude-opus-4-7` |
 
 The workflow commits updated `.po` files back to the branch automatically.
-Requires the `ANTHROPIC_API_KEY` repository secret.
+Requires the `ANTHROPIC_API_KEY` repository secret (used by the CI runner; configure your own provider locally).
 
 ## Tips
 
