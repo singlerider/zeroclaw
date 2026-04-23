@@ -178,6 +178,29 @@ impl V1Compat {
 /// struct and moving its value elsewhere).
 ///
 /// Called on the raw `toml::Table` before it is deserialized into `V1Compat`.
+/// V2 → V3 field migrations applied to the raw TOML table before deserialization.
+///
+/// Breaking changes in this step:
+/// - `channels.mattermost.channel_id: String` → `channels.mattermost.channel_ids: Vec<String>`
+pub fn migrate_v2_to_v3(table: &mut toml::Table) {
+    if let Some(toml::Value::Table(channels)) = table.get_mut("channels")
+        && let Some(toml::Value::Table(mattermost)) = channels.get_mut("mattermost")
+        && let Some(toml::Value::String(channel_id)) = mattermost.remove("channel_id")
+        && !channel_id.is_empty()
+        && channel_id != "*"
+    {
+        let ids = mattermost
+            .entry("channel_ids")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        if let toml::Value::Array(arr) = ids {
+            let already_present = arr.iter().any(|v| v.as_str() == Some(channel_id.as_str()));
+            if !already_present {
+                arr.push(toml::Value::String(channel_id));
+            }
+        }
+    }
+}
+
 pub fn prepare_table(table: &mut toml::Table) {
     // Migrate channels_config.matrix.room_id → channels_config.matrix.allowed_rooms
     for key in &["channels_config", "channels"] {
@@ -218,25 +241,7 @@ pub fn prepare_table(table: &mut toml::Table) {
         }
     }
 
-    // Migrate channels.mattermost.channel_id → channels.mattermost.channel_ids
-    for key in &["channels_config", "channels"] {
-        if let Some(toml::Value::Table(channels)) = table.get_mut(*key)
-            && let Some(toml::Value::Table(mattermost)) = channels.get_mut("mattermost")
-            && let Some(toml::Value::String(channel_id)) = mattermost.remove("channel_id")
-            && !channel_id.is_empty()
-            && channel_id != "*"
-        {
-            let ids = mattermost
-                .entry("channel_ids")
-                .or_insert_with(|| toml::Value::Array(Vec::new()));
-            if let toml::Value::Array(arr) = ids {
-                let already_present = arr.iter().any(|v| v.as_str() == Some(channel_id.as_str()));
-                if !already_present {
-                    arr.push(toml::Value::String(channel_id));
-                }
-            }
-        }
-    }
+    migrate_v2_to_v3(table);
 
     // Rename legacy `channels_config` key to `channels`
     if table.contains_key("channels_config")
