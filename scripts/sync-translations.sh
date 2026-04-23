@@ -71,14 +71,17 @@ fi
 
 # ── Step 2 + 3: per-locale merge + AI fill ───────────────────────────────────
 
-# Count delta without bc (just sum numbers with Python, available everywhere)
+# Count untranslated + fuzzy entries. msgfmt exits non-zero on errors, so capture
+# output separately with || true to prevent the || echo 0 fallback from misfiring.
 count_delta() {
     local po_file="$1"
-    LANG=C msgfmt --statistics "$po_file" -o /dev/null 2>&1 \
-        | grep -oE '[0-9]+ (untranslated|fuzzy) message' \
-        | grep -oE '^[0-9]+' \
-        | python3 -c 'import sys; print(sum(int(l) for l in sys.stdin))' 2>/dev/null \
-        || echo 0
+    local stats
+    stats=$(LANG=C msgfmt --statistics "$po_file" -o /dev/null 2>&1 || true)
+    local total=0
+    while IFS= read -r n; do
+        total=$(( total + n ))
+    done < <(printf '%s\n' "$stats" | grep -oE '[0-9]+ (untranslated|fuzzy) message' | grep -oE '^[0-9]+')
+    echo "$total"
 }
 
 for locale in $locales_to_sync; do

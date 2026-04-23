@@ -60,6 +60,29 @@ fn decode_po_string(lines: &[String]) -> String {
     out
 }
 
+/// Replace invalid JSON escape sequences (e.g. `\[`, `\(`) with their literal characters.
+fn sanitize_json_escapes(s: &str) -> String {
+    let valid = ['\"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'];
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some(&next) if valid.contains(&next) => {
+                    out.push(c);
+                }
+                Some(_) => {
+                    // Invalid escape — drop the backslash, keep the character
+                }
+                None => { out.push(c); }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Encode a plain string into a single-line po `msgstr "..."` value.
 fn encode_po_string(s: &str) -> String {
     let mut out = String::new();
@@ -153,6 +176,49 @@ fn parse_po(lines: &[String]) -> Vec<Entry> {
     entries
 }
 
+fn write_po(
+    lines: &[String],
+    raw: &str,
+    translations: &HashMap<usize, String>,
+    translated_entries: &[&Entry],
+    to_accept: &[&Entry],
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    // Remove fuzzy flags for entries we translated + entries accepted as-is
+    let fuzzy_lines_to_remove: std::collections::HashSet<usize> = translated_entries
+        .iter()
+        .filter(|e| e.fuzzy_line.is_some() && translations.contains_key(&e.msgstr_line))
+        .chain(to_accept.iter())
+        .filter_map(|e| e.fuzzy_line)
+        .collect();
+
+    let mut output_lines: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if fuzzy_lines_to_remove.contains(&i) {
+            i += 1;
+            continue;
+        }
+        if let Some(translated) = translations.get(&i) {
+            output_lines.push(format!("msgstr \"{}\"", encode_po_string(translated)));
+            i += 1;
+            while i < lines.len() && lines[i].trim_start().starts_with('"') {
+                i += 1;
+            }
+            continue;
+        }
+        output_lines.push(lines[i].clone());
+        i += 1;
+    }
+
+    let mut out = output_lines.join("\n");
+    if raw.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(path, out)?;
+    Ok(())
+}
+
 async fn translate_batch(
     client: &reqwest::Client,
     api_key: &str,
@@ -199,7 +265,9 @@ async fn translate_batch(
     // Extract the JSON array — find first '[' and last ']'
     let start = text.find('[').ok_or_else(|| anyhow::anyhow!("no JSON array in response"))?;
     let end   = text.rfind(']').ok_or_else(|| anyhow::anyhow!("no closing ] in response"))?;
-    let arr: Vec<String> = serde_json::from_str(&text[start..=end])?;
+    let raw_json = &text[start..=end];
+    let arr: Vec<String> = serde_json::from_str(raw_json)
+        .or_else(|_| serde_json::from_str(&sanitize_json_escapes(raw_json)))?;
     Ok(arr)
 }
 
@@ -220,24 +288,51 @@ async fn main() -> anyhow::Result<()> {
 
     let entries = parse_po(&lines);
 
+    let mut translations: HashMap<usize, String> = HashMap::new();
+
+    // Repair entries where msgid ends with \n but msgstr doesn't — corrupted by
+    // interrupted runs. Pre-populate into translations so write_po fixes them inline.
+    let mut repaired = 0;
+    for entry in &entries {
+        if !entry.msgstr.is_empty()
+            && entry.msgid.ends_with('\n')
+            && !entry.msgstr.ends_with('\n')
+        {
+            translations.insert(entry.msgstr_line, format!("{}\n", entry.msgstr));
+            repaired += 1;
+        }
+    }
+    if repaired > 0 {
+        println!("==> Repairing {repaired} entries missing trailing \\n");
+    }
+
+    // Entries with empty msgstr need AI translation.
+    // Fuzzy entries already have a translation — accept it as-is, just drop the flag.
+    // --force retranslates everything regardless.
     let to_translate: Vec<&Entry> = entries
         .iter()
-        .filter(|e| args.force || e.msgstr.is_empty() || e.fuzzy_line.is_some())
+        .filter(|e| args.force || e.msgstr.is_empty())
         .collect();
 
-    if to_translate.is_empty() {
+    let to_accept: Vec<&Entry> = entries
+        .iter()
+        .filter(|e| !args.force && e.fuzzy_line.is_some() && !e.msgstr.is_empty())
+        .collect();
+
+    if to_translate.is_empty() && to_accept.is_empty() && repaired == 0 {
         println!("Nothing to translate.");
         return Ok(());
     }
 
-    let total = to_translate.len();
-    let total_chunks = total.div_ceil(args.batch);
-    println!("==> {total} entries to translate, batch={}, model={model}", args.batch);
+    println!(
+        "==> {} to translate, {} fuzzy accepted as-is, model={model}",
+        to_translate.len(),
+        to_accept.len()
+    );
 
     let client = reqwest::Client::new();
-
-    // Map from msgstr line index -> translated text
-    let mut translations: HashMap<usize, String> = HashMap::new();
+    let total = to_translate.len();
+    let total_chunks = total.div_ceil(args.batch).max(1);
 
     for (chunk_idx, chunk) in to_translate.chunks(args.batch).enumerate() {
         let msgids: Vec<&str> = chunk.iter().map(|e| e.msgid.as_str()).collect();
@@ -246,8 +341,15 @@ async fn main() -> anyhow::Result<()> {
         match translate_batch(&client, &api_key, &model, &args.locale, &msgids).await {
             Ok(translated) => {
                 for (entry, text) in chunk.iter().zip(translated.iter()) {
-                    translations.insert(entry.msgstr_line, text.clone());
+                    // If msgid ends with \n, msgstr must too — gettext requires it.
+                    let text = if entry.msgid.ends_with('\n') && !text.ends_with('\n') {
+                        format!("{text}\n")
+                    } else {
+                        text.clone()
+                    };
+                    translations.insert(entry.msgstr_line, text);
                 }
+                write_po(&lines, &raw, &translations, &to_translate, &to_accept, &args.po)?;
             }
             Err(e) => {
                 eprintln!("  warning: chunk {} failed: {e}", chunk_idx + 1);
@@ -255,42 +357,8 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Collect fuzzy lines to remove (only for entries we successfully translated)
-    let fuzzy_lines_to_remove: std::collections::HashSet<usize> = to_translate
-        .iter()
-        .filter(|e| e.fuzzy_line.is_some() && translations.contains_key(&e.msgstr_line))
-        .filter_map(|e| e.fuzzy_line)
-        .collect();
-
-    let mut output_lines: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        // Skip old fuzzy flags for translated entries
-        if fuzzy_lines_to_remove.contains(&i) {
-            i += 1;
-            continue;
-        }
-
-        if let Some(translated) = translations.get(&i) {
-            output_lines.push(format!("msgstr \"{}\"", encode_po_string(translated)));
-            i += 1;
-            // Skip any continuation lines that were part of the old msgstr
-            while i < lines.len() && lines[i].trim_start().starts_with('"') {
-                i += 1;
-            }
-            continue;
-        }
-
-        output_lines.push(lines[i].clone());
-        i += 1;
-    }
-
-    let mut out = output_lines.join("\n");
-    if raw.ends_with('\n') {
-        out.push('\n');
-    }
-    std::fs::write(&args.po, out)?;
-
+    // Final write — handles to_accept fuzzy removals even when to_translate is empty
+    write_po(&lines, &raw, &translations, &to_translate, &to_accept, &args.po)?;
     println!("==> Done: {}/{total} entries translated.", translations.len());
     Ok(())
 }
