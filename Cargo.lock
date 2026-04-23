@@ -12861,6 +12861,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde_json",
  "tokio",
+ "toml 0.8.2",
  "tower-http",
 ]
 
