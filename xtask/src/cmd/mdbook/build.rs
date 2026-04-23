@@ -1,4 +1,4 @@
-use crate::cmd::refs::{build_api, build_refs};
+use crate::cmd::mdbook::refs::{build_api, build_refs};
 use crate::util::*;
 use std::process::Command;
 

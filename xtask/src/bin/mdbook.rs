@@ -36,11 +36,11 @@ enum Cmd {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Serve { locale }       => cmd::serve::run(&locale),
-        Cmd::Build                  => cmd::build::run(),
-        Cmd::Refs                   => cmd::refs::run(),
-        Cmd::Sync { locale, force } => cmd::sync::run(locale.as_deref(), force),
-        Cmd::Stats                  => cmd::stats::run(),
-        Cmd::Check                  => cmd::check::run(),
+        Cmd::Serve { locale }       => cmd::mdbook::serve::run(&locale),
+        Cmd::Build                  => cmd::mdbook::build::run(),
+        Cmd::Refs                   => cmd::mdbook::refs::run(),
+        Cmd::Sync { locale, force } => cmd::mdbook::sync::run(locale.as_deref(), force),
+        Cmd::Stats                  => cmd::mdbook::stats::run(),
+        Cmd::Check                  => cmd::mdbook::check::run(),
     }
 }
