@@ -247,9 +247,15 @@ async fn translate_batch(
         "messages": [{"role": "user", "content": prompt}]
     });
 
+    let (auth_name, auth_value) = if api_key.starts_with("sk-ant-oat") {
+        ("Authorization", format!("Bearer {api_key}"))
+    } else {
+        ("x-api-key", api_key.to_string())
+    };
+
     let resp = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
+        .header(auth_name, auth_value)
         .header("anthropic-version", "2023-06-01")
         .json(&body)
         .send()

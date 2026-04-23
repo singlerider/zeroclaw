@@ -129,10 +129,21 @@ fn call_api(
         ]
     });
 
+    let auth_header = if api_key.starts_with("sk-ant-oat") {
+        format!("Bearer {api_key}")
+    } else {
+        api_key.to_string()
+    };
+    let auth_header_name = if api_key.starts_with("sk-ant-oat") {
+        "Authorization"
+    } else {
+        "x-api-key"
+    };
+
     let client = reqwest::blocking::Client::new();
     let response = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
+        .header(auth_header_name, auth_header)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .json(&body)
