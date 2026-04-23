@@ -54,6 +54,12 @@
 - [Extension examples](./developing/extension-examples.md)
 - [Building the docs locally](./developing/building-docs.md)
 
+# Maintainers
+
+- [Overview](./maintainers/index.md)
+- [Docs & Translations](./maintainers/docs-and-translations.md)
+- [CI & Actions](./maintainers/ci-and-actions.md)
+
 # Reference
 
 - [CLI](./reference/cli.md)
