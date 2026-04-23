@@ -149,6 +149,8 @@ mod tui;
 mod tunnel;
 #[cfg(feature = "agent-runtime")]
 mod util;
+#[cfg(feature = "schema-export")]
+mod schema_markdown;
 #[cfg(feature = "agent-runtime")]
 mod verifiable_intent;
 
@@ -980,7 +982,7 @@ async fn main() -> Result<()> {
             #[cfg(feature = "schema-export")]
             {
                 let schema = schemars::schema_for!(config::Config);
-                println!("{}", serde_json::to_string_pretty(&schema)?);
+                print!("{}", schema_markdown::generate(&schema.to_value()));
                 return Ok(());
             }
             #[cfg(not(feature = "schema-export"))]

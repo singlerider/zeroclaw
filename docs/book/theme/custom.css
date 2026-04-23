@@ -1,0 +1,11 @@
+/* Always stretch tables to full content width */
+.content table {
+    width: 100%;
+}
+
+/* Prevent Key/Type/Default columns from wrapping; let Description flex */
+.content table td:nth-child(1),
+.content table td:nth-child(2),
+.content table td:nth-child(3) {
+    white-space: nowrap;
+}

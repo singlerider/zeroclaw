@@ -6,12 +6,13 @@ language = "en"
 src = "src"
 
 [output.html]
-default-theme = "navy"
-preferred-dark-theme = "navy"
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
 git-repository-url = "https://github.com/singlerider/zeroclaw"
 edit-url-template = "https://github.com/singlerider/zeroclaw/edit/master/docs/book/{path}"
 site-url = "/"
 additional-js = ["theme/lang-switcher.js"]
+additional-css = ["theme/custom.css"]
 
 [output.html.search]
 enable = true

@@ -31,7 +31,6 @@ The script will fail fast and tell you what's missing, but for reference:
 |---|---|
 | [`mdbook`](https://rust-lang.github.io/mdBook/) | `cargo install mdbook --locked` |
 | [`mdbook-i18n-helpers`](https://github.com/google/mdbook-i18n-helpers) | `cargo install mdbook-i18n-helpers --locked` |
-| [`json-schema-for-humans`](https://github.com/coveooss/json-schema-for-humans) | `pipx install json-schema-for-humans` |
 | `cargo` | <https://rustup.rs> |
 | `gettext` (msgfmt, msgmerge, msginit) | `apt install gettext` / `brew install gettext` |
 | `polib` + `anthropic` (Python) | `pip install polib anthropic` (for `docs-sync` AI step) |

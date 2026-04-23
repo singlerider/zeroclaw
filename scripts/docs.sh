@@ -31,22 +31,27 @@ require() {
     fi
 }
 
-check_tools() {
+check_tools_serve() {
     local missing=0
-    require mdbook            "https://rust-lang.github.io/mdBook/guide/installation.html (or 'cargo install mdbook --locked')" || missing=1
+    require mdbook            "cargo install mdbook --locked" || missing=1
     require mdbook-xgettext   "cargo install mdbook-i18n-helpers --locked" || missing=1
     require mdbook-gettext    "cargo install mdbook-i18n-helpers --locked" || missing=1
-    require generate-schema-doc "pipx install json-schema-for-humans" || missing=1
     require cargo             "https://rustup.rs" || missing=1
+    [[ $missing -eq 0 ]]
+}
+
+check_tools_refs() {
+    local missing=0
+    require cargo "https://rustup.rs" || missing=1
     [[ $missing -eq 0 ]]
 }
 
 build_refs() {
     echo "==> Generating reference/cli.md and reference/config.md from code"
     mkdir -p "$REF_DIR"
-    (cd "$REPO_ROOT" && cargo run "${CARGO_FLAGS[@]}" -- markdown-help > "$REF_DIR/cli.md")
-    (cd "$REPO_ROOT" && cargo run "${CARGO_FLAGS[@]}" -- markdown-schema > /tmp/zc-config.schema.json)
-    generate-schema-doc --config template_name=md /tmp/zc-config.schema.json "$REF_DIR/config.md"
+    (cd "$REPO_ROOT" && cargo run "${CARGO_FLAGS[@]}" -- markdown-help) \
+        | sed 's/^###### //' > "$REF_DIR/cli.md"
+    (cd "$REPO_ROOT" && cargo run "${CARGO_FLAGS[@]}" -- markdown-schema > "$REF_DIR/config.md")
 }
 
 build_api() {
@@ -75,7 +80,8 @@ HTML
 }
 
 cmd_build() {
-    check_tools
+    check_tools_serve
+    check_tools_refs
     build_refs
     build_api
     build_locales
@@ -84,13 +90,13 @@ cmd_build() {
 }
 
 cmd_refs() {
-    check_tools
+    check_tools_refs
     build_refs
 }
 
 cmd_serve() {
     local locale="$1"
-    check_tools
+    check_tools_serve
     if [[ ! -f "$REF_DIR/cli.md" ]] || [[ ! -f "$REF_DIR/config.md" ]]; then
         build_refs
     fi

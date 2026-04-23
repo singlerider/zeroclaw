@@ -52,19 +52,15 @@ jobs:
           shared-key: docs-deploy
           cache-all-crates: true
 
-      - name: Install json-schema-for-humans
-        run: pipx install json-schema-for-humans
-
       - name: Install mdbook-i18n-helpers
         run: cargo install --locked mdbook-i18n-helpers
 
       - name: Generate reference pages from code
         run: |
           mkdir -p "$REF_DIR"
-          cargo run $CARGO_FLAGS -- markdown-help    > "$REF_DIR/cli.md"
-          cargo run $CARGO_FLAGS -- markdown-schema  > /tmp/config.schema.json
-          generate-schema-doc --config template_name=md \
-            /tmp/config.schema.json "$REF_DIR/config.md"
+          cargo run $CARGO_FLAGS -- markdown-help \
+            | sed 's/^###### //' > "$REF_DIR/cli.md"
+          cargo run $CARGO_FLAGS -- markdown-schema > "$REF_DIR/config.md"
 
       - name: Generate API reference (rustdoc)
         run: cargo doc --no-deps --workspace --exclude zeroclaw-desktop
