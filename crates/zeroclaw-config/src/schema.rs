@@ -5070,6 +5070,30 @@ impl Default for StorageProviderConfig {
 /// and memory snapshot/hydration.
 /// Configuration for Qdrant vector database backend (`[memory.qdrant]`).
 /// Used when `[memory].backend = "qdrant"`.
+/// PostgreSQL memory backend configuration (`[memory.postgres]` section).
+/// Used when `[memory].backend = "postgres"`.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "memory.postgres"]
+pub struct PostgresMemoryConfig {
+    /// Enable pgvector extension for hybrid vector+keyword recall.
+    #[serde(default)]
+    pub pgvector_enabled: bool,
+
+    /// Vector dimensions for pgvector embeddings (default: 1536).
+    #[serde(default = "default_pgvector_dimensions")]
+    pub pgvector_dimensions: usize,
+}
+
+impl Default for PostgresMemoryConfig {
+    fn default() -> Self {
+        Self {
+            pgvector_enabled: false,
+            pgvector_dimensions: default_pgvector_dimensions(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "memory.qdrant"]
@@ -5247,15 +5271,11 @@ pub struct MemoryConfig {
     pub qdrant: QdrantConfig,
 
     // ── PostgreSQL backend options ─────────────────────────────
-    /// Enable pgvector extension for hybrid vector+keyword recall.
+    /// Configuration for PostgreSQL memory backend (`[memory.postgres]`).
     /// Only used when `backend = "postgres"`.
     #[serde(default)]
-    pub pgvector_enabled: bool,
-
-    /// Vector dimensions for pgvector embeddings (default: 1536).
-    /// Only used when `backend = "postgres"` and `pgvector_enabled = true`.
-    #[serde(default = "default_pgvector_dimensions")]
-    pub pgvector_dimensions: usize,
+    #[nested]
+    pub postgres: PostgresMemoryConfig,
 }
 
 /// Memory policy configuration (`[memory.policy]` section).
@@ -5383,8 +5403,7 @@ impl Default for MemoryConfig {
             policy: MemoryPolicyConfig::default(),
             sqlite_open_timeout_secs: None,
             qdrant: QdrantConfig::default(),
-            pgvector_enabled: false,
-            pgvector_dimensions: default_pgvector_dimensions(),
+            postgres: PostgresMemoryConfig::default(),
         }
     }
 }
@@ -11634,33 +11653,34 @@ auto_save = true
     #[test]
     async fn memory_config_pgvector_defaults() {
         let memory = MemoryConfig::default();
-        assert!(!memory.pgvector_enabled);
-        assert_eq!(memory.pgvector_dimensions, 1536);
+        assert!(!memory.postgres.pgvector_enabled);
+        assert_eq!(memory.postgres.pgvector_dimensions, 1536);
     }
 
     #[test]
     async fn memory_config_pgvector_roundtrip() {
         let toml = r#"
             backend = "postgres"
+            [postgres]
             pgvector_enabled = true
             pgvector_dimensions = 768
         "#;
         let parsed: MemoryConfig = toml::from_str(toml).unwrap();
-        assert!(parsed.pgvector_enabled);
-        assert_eq!(parsed.pgvector_dimensions, 768);
+        assert!(parsed.postgres.pgvector_enabled);
+        assert_eq!(parsed.postgres.pgvector_dimensions, 768);
 
         let serialized = toml::to_string(&parsed).unwrap();
         let reparsed: MemoryConfig = toml::from_str(&serialized).unwrap();
-        assert!(reparsed.pgvector_enabled);
-        assert_eq!(reparsed.pgvector_dimensions, 768);
+        assert!(reparsed.postgres.pgvector_enabled);
+        assert_eq!(reparsed.postgres.pgvector_dimensions, 768);
     }
 
     #[test]
     async fn memory_config_pgvector_defaults_when_omitted() {
         let toml = r#"backend = "postgres""#;
         let parsed: MemoryConfig = toml::from_str(toml).unwrap();
-        assert!(!parsed.pgvector_enabled);
-        assert_eq!(parsed.pgvector_dimensions, 1536);
+        assert!(!parsed.postgres.pgvector_enabled);
+        assert_eq!(parsed.postgres.pgvector_dimensions, 1536);
     }
 
     #[test]
