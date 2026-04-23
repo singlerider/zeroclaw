@@ -20,7 +20,7 @@ These wrap `scripts/docs.sh` and `scripts/sync-translations.sh`, which you can a
 ./scripts/docs.sh                  # serve English
 ./scripts/docs.sh --locale ja      # serve Japanese
 ./scripts/docs.sh build            # static build of all locales
-./scripts/docs.sh refs             # regenerate cli.md + config.md
+./scripts/docs.sh refs             # regenerate cli.md, config.md, and rustdoc API
 ```
 
 ## Required tools
@@ -41,7 +41,7 @@ The script will fail fast and tell you what's missing, but for reference:
 |---|---|---|
 | `docs/book/src/**/*.md` (hand-written) | `docs/book/book/<locale>/` | `mdbook build` |
 | `docs/book/src/reference/cli.md` | (same path; **gitignored**) | `cargo run -- markdown-help` |
-| `docs/book/src/reference/config.md` | (same path; **gitignored**) | `cargo run -- markdown-schema` → `generate-schema-doc` |
+| `docs/book/src/reference/config.md` | (same path; **gitignored**) | `cargo run -- markdown-schema` |
 | `target/doc/` (rustdoc) | `docs/book/book/api/` | `cargo doc --no-deps --workspace` |
 
 The two `reference/*.md` files are generated from the actual `clap` derives and JSON schema in the code — never edit them by hand. Edit the `///` doc comments on the relevant Rust types instead.

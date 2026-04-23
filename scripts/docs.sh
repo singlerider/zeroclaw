@@ -5,7 +5,7 @@
 #   scripts/docs.sh                 # serve English on http://localhost:3000 (auto-rebuild on edit)
 #   scripts/docs.sh --locale ja     # serve Japanese instead
 #   scripts/docs.sh build           # static build of all locales into docs/book/book/
-#   scripts/docs.sh refs            # regenerate reference/cli.md + reference/config.md
+#   scripts/docs.sh refs            # regenerate cli.md, config.md, and rustdoc API reference
 #   scripts/docs.sh --help
 
 set -euo pipefail
@@ -92,6 +92,11 @@ cmd_build() {
 cmd_refs() {
     check_tools_refs
     build_refs
+    build_api
+    mkdir -p "$BOOK_DIR/book"
+    rm -rf "$BOOK_DIR/book/api"
+    cp -r "$REPO_ROOT/target/doc" "$BOOK_DIR/book/api"
+    echo "==> API reference: $BOOK_DIR/book/api/index.html"
 }
 
 cmd_serve() {
@@ -99,6 +104,11 @@ cmd_serve() {
     check_tools_serve
     if [[ ! -f "$REF_DIR/cli.md" ]] || [[ ! -f "$REF_DIR/config.md" ]]; then
         build_refs
+    fi
+    if [[ ! -d "$BOOK_DIR/book/api" ]]; then
+        build_api
+        mkdir -p "$BOOK_DIR/book"
+        cp -r "$REPO_ROOT/target/doc" "$BOOK_DIR/book/api"
     fi
     echo "==> Serving locale '$locale' at http://localhost:3000"
     (cd "$BOOK_DIR" && MDBOOK_BOOK__LANGUAGE="$locale" mdbook serve --open)
