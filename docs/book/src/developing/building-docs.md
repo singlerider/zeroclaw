@@ -54,16 +54,10 @@ Without `ANTHROPIC_API_TOKEN`, `cargo mdbook sync` still runs extract + merge an
 
 ## Adding a new locale
 
-1. Run `cargo mdbook sync` to ensure `docs/book/po/messages.pot` is current.
-
-2. Bootstrap the new locale's `.po` file:
+1. Set `ANTHROPIC_API_TOKEN` and run `cargo mdbook sync --locale xx` — if the `.po` file doesn't exist it bootstraps it automatically, then fills all entries:
    ```bash
-   msginit --no-translator --locale=xx \
-     --input=docs/book/po/messages.pot \
-     --output=docs/book/po/xx.po
+   ANTHROPIC_API_TOKEN=sk-ant-... cargo mdbook sync --locale xx
    ```
-
-3. Set `ANTHROPIC_API_TOKEN` and run `cargo mdbook sync --locale xx` to fill all entries for the new locale.
 
 4. Update LOCALES in all four places — they must stay in sync:
    - `xtask/src/util.rs` — `locales()` slice
