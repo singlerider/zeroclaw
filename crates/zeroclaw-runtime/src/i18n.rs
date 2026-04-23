@@ -57,18 +57,9 @@ fn format_ftl_messages(ftl_source: &str, locale: &str) -> HashMap<String, String
 }
 
 fn load_ftl_from_disk(locale: &str, filename: &str) -> Option<String> {
-    let search_paths = [
-        directories::BaseDirs::new().map(|base| {
-            base.config_dir()
-                .join("zeroclaw/locales")
-                .join(locale)
-                .join(filename)
-        }),
-        std::env::current_exe().ok().and_then(|exe| {
-            exe.parent()
-                .map(|p| p.join("locales").join(locale).join(filename))
-        }),
-    ];
+    let workspace_path = workspace_dir_from_config()
+        .map(|d| d.join("locales").join(locale).join(filename));
+    let search_paths = [workspace_path];
     for path in search_paths.into_iter().flatten() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             tracing::debug!(path = %path.display(), "loaded locale FTL from disk");
@@ -78,23 +69,35 @@ fn load_ftl_from_disk(locale: &str, filename: &str) -> Option<String> {
     None
 }
 
-/// Detect locale: ZEROCLAW_LOCALE → LANG → LC_ALL → "en".
+/// Detect locale: config.toml → "en".
 pub fn detect_locale() -> String {
-    if let Ok(val) = std::env::var("ZEROCLAW_LOCALE") {
-        let trimmed = val.trim().to_string();
-        if !trimmed.is_empty() {
-            return normalize_locale(&trimmed);
-        }
+    locale_from_config().unwrap_or_else(|| "en".to_string())
+}
+
+fn read_config_table() -> Option<toml::Table> {
+    let config_path = directories::BaseDirs::new()?
+        .config_dir()
+        .join("zeroclaw/config.toml");
+    let contents = std::fs::read_to_string(config_path).ok()?;
+    contents.parse().ok()
+}
+
+fn locale_from_config() -> Option<String> {
+    let table = read_config_table()?;
+    let locale = table.get("locale")?.as_str()?.trim().to_string();
+    if locale.is_empty() { return None; }
+    Some(normalize_locale(&locale))
+}
+
+fn workspace_dir_from_config() -> Option<std::path::PathBuf> {
+    if let Some(dir) = read_config_table()
+        .as_ref()
+        .and_then(|t| t.get("workspace_dir"))
+        .and_then(|v| v.as_str())
+    {
+        return Some(std::path::PathBuf::from(dir));
     }
-    for var in &["LANG", "LC_ALL"] {
-        if let Ok(val) = std::env::var(var) {
-            let locale = normalize_locale(&val);
-            if locale != "C" && locale != "POSIX" && !locale.is_empty() {
-                return locale;
-            }
-        }
-    }
-    "en".to_string()
+    Some(directories::BaseDirs::new()?.home_dir().join(".zeroclaw/workspace"))
 }
 
 /// Normalize "zh_CN.UTF-8" → "zh-CN".
