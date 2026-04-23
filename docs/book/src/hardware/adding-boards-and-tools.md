@@ -26,25 +26,7 @@ zeroclaw daemon --host 127.0.0.1 --port 42617
 
 ## Manual Config
 
-Edit `~/.zeroclaw/config.toml`:
-
-```toml
-[peripherals]
-enabled = true
-datasheet_dir = "docs/datasheets" # optional: RAG for "turn on red led" → pin 13
-
-[[peripherals.boards]]
-board = "nucleo-f401re"
-transport = "serial"
-path = "/dev/ttyACM0"
-baud = 115200
-
-[[peripherals.boards]]
-board = "arduino-uno"
-transport = "serial"
-path = "/dev/cu.usbmodem12345"
-baud = 115200
-```
+Boards are configured under `[peripherals]` and `[[peripherals.boards]]` in `~/.zeroclaw/config.toml`. See the [Config reference](../reference/config.md) for the full field index, including `datasheet_dir` (RAG source).
 
 ## Adding a Datasheet (RAG)
 
@@ -88,26 +70,19 @@ Place PDFs in the datasheet directory. They are extracted and chunked for RAG.
 
 1. **Create a datasheet** — `docs/datasheets/my-board.md` with pin aliases and GPIO info.
 2. **Add to config** — `zeroclaw peripheral add my-board /dev/ttyUSB0`
-3. **Implement a peripheral** (optional) — For custom protocols, implement the `Peripheral` trait in `src/peripherals/` and register in `create_peripheral_tools`.
+3. **Implement a peripheral** (optional) — For custom protocols, implement the `Peripheral` trait in `crates/zeroclaw-hardware/src/peripherals/` and register in `create_peripheral_tools`.
 
 See [`docs/hardware/hardware-peripherals-design.md`](../hardware/hardware-peripherals-design.md) for the full design.
 
 ## Adding a Custom Tool
 
-1. Implement the `Tool` trait in `src/tools/`.
+1. Implement the `Tool` trait in `crates/zeroclaw-tools/src/`.
 2. Register in `create_peripheral_tools` (for hardware tools) or the agent tool registry.
-3. Add a tool description to the agent's `tool_descs` in `src/agent/loop_.rs`.
+3. Add a tool description to the agent's `tool_descs` in `crates/zeroclaw-runtime/src/agent/loop_.rs`.
 
 ## CLI Reference
 
-| Command | Description |
-|---------|-------------|
-| `zeroclaw peripheral list` | List configured boards |
-| `zeroclaw peripheral add <board> <path>` | Add board (writes config) |
-| `zeroclaw peripheral flash` | Flash Arduino firmware |
-| `zeroclaw peripheral flash-nucleo` | Flash Nucleo firmware |
-| `zeroclaw hardware discover` | List USB devices |
-| `zeroclaw hardware info` | Chip info via probe-rs |
+See the [generated CLI reference](../reference/cli.md) for `zeroclaw peripheral` and `zeroclaw hardware` subcommands.
 
 ## Troubleshooting
 

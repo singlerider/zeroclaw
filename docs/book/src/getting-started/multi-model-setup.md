@@ -2,8 +2,6 @@
 
 This guide introduces multi-model concepts in ZeroClaw, including fallback provider chains, model-level fallbacks, and API key rotation for resilience.
 
-**Last verified: March 28, 2026**
-
 ## When to Use Multi-Model Setup
 
 Multi-model configuration is useful for:
@@ -36,10 +34,10 @@ Some models may not be available in all regions, or you might want to use a fast
 
 ```toml
 [reliability]
-model_fallbacks = { "claude-opus-4-20250514" = ["claude-sonnet-4-20250514", "gpt-4o"] }
+model_fallbacks = { "claude-opus-4-7" = ["claude-sonnet-4-6", "gpt-4o"] }
 ```
 
-If `claude-opus-4-20250514` fails or is unavailable, ZeroClaw tries the fallback models in order while staying within the same provider (unless a provider-level fallback is also configured).
+If `claude-opus-4-7` fails or is unavailable, ZeroClaw tries the fallback models in order while staying within the same provider (unless a provider-level fallback is also configured).
 
 ### API Key Rotation
 
@@ -64,15 +62,7 @@ provider_backoff_ms = 500     # Initial backoff in milliseconds
 
 ## Configuration Structure
 
-The `[reliability]` section in `config.toml`:
-
-| Key | Type | Default | Purpose |
-|---|---|---|---|
-| `fallback_providers` | `[string]` | `[]` | Ordered list of fallback provider IDs |
-| `model_fallbacks` | `{string: [string]}` | `{}` | Map of model → list of fallback models |
-| `api_keys` | `[string]` | `[]` | Additional API keys for rate-limit rotation |
-| `provider_retries` | `u32` | `2` | Retry attempts per provider before failover |
-| `provider_backoff_ms` | `u64` | `500` | Initial backoff delay in milliseconds |
+All multi-model behavior lives under the `[reliability]` section of `config.toml`. See the [Config reference](../reference/config.md) for the full field index and defaults.
 
 ## Example Configurations
 
@@ -136,10 +126,10 @@ Use an expensive reasoning model for complex tasks, but fall back to a faster mo
 
 ```toml
 default_provider = "anthropic"
-default_model = "claude-opus-4-20250514"
+default_model = "claude-opus-4-7"
 
 [reliability]
-model_fallbacks = { "claude-opus-4-20250514" = ["claude-sonnet-4-20250514"] }
+model_fallbacks = { "claude-opus-4-7" = ["claude-sonnet-4-6"] }
 ```
 
 **Behavior**: When Opus is rate-limited or slow, automatically use Sonnet (typically 2–3x faster and cheaper).
@@ -151,7 +141,7 @@ For organizations with multi-region deployments:
 ```toml
 # Primary US region
 default_provider = "anthropic"
-default_model = "claude-sonnet-4-20250514"
+default_model = "claude-sonnet-4-6"
 
 [reliability]
 # Fall back to EU region provider if US Anthropic is down
@@ -171,13 +161,6 @@ export AWS_SECRET_ACCESS_KEY="..."
 ## Hot Reload Behavior
 
 The `[reliability]` section is hot-reloadable. While a channel or gateway is running, updates to `config.toml` take effect on the next inbound message without requiring a restart.
-
-Updated fields:
-- `fallback_providers`
-- `model_fallbacks`
-- `api_keys`
-- `provider_retries`
-- `provider_backoff_ms`
 
 ## Error Handling and Fallback Triggers
 
@@ -257,6 +240,4 @@ export GROQ_API_KEY="gsk-..."
 
 ## Related Documentation
 
-- [Config Reference: Reliability Section](/docs/reference/api/config-reference.md#reliability)
-- [Providers Reference: Fallback Provider Chains](/docs/reference/api/providers-reference.md#fallback-provider-chains)
-- [Observability and Debugging](/docs/ops/observability.md)
+- [Config reference](../reference/config.md) — generated config field index

@@ -2,8 +2,6 @@
 
 This page documents supported update and uninstall procedures for ZeroClaw on macOS (OS X).
 
-Last verified: **February 22, 2026**.
-
 ## 1) Check current install method
 
 ```bash
@@ -100,5 +98,5 @@ pkill -f zeroclaw
 ## Related docs
 
 - [One-Click Bootstrap](one-click-bootstrap.md)
-- [Commands Reference](../reference/cli/commands-reference.md)
+- [CLI reference](../reference/cli.md)
 - [Troubleshooting](../ops/troubleshooting.md)

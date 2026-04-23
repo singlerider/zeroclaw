@@ -10,30 +10,11 @@ This guide covers native Nextcloud Talk integration for ZeroClaw.
 
 ## 2. Configuration
 
-Add this section in `~/.zeroclaw/config.toml`:
+Configure under `[channels_config.nextcloud_talk]` in `~/.zeroclaw/config.toml`. See the [Config reference](../reference/config.md) for the full field index.
 
-```toml
-[channels_config.nextcloud_talk]
-base_url = "https://cloud.example.com"
-app_token = "nextcloud-talk-app-token"
-webhook_secret = "optional-webhook-secret"
-allowed_users = ["*"]
-# bot_name is the Nextcloud Talk display name of the bot (e.g. "zeroclaw").
-# Used to ignore the bot's own messages and prevent feedback loops.
-# bot_name = "zeroclaw"
-```
+Set `bot_name` to the Talk display name of the bot — when set, messages from that actor name are ignored to prevent feedback loops.
 
-Field reference:
-
-- `base_url`: Nextcloud base URL.
-- `app_token`: Bot app token used as `Authorization: Bearer <token>` for OCS send API.
-- `webhook_secret`: Shared secret for verifying `X-Nextcloud-Talk-Signature`.
-- `allowed_users`: Allowed Nextcloud actor IDs (`[]` denies all, `"*"` allows all).
-- `bot_name`: Display name of the bot in Nextcloud Talk. When set, messages from this actor name are silently ignored to prevent feedback loops.
-
-Environment override:
-
-- `ZEROCLAW_NEXTCLOUD_TALK_WEBHOOK_SECRET` overrides `webhook_secret` when set.
+Environment override: `ZEROCLAW_NEXTCLOUD_TALK_WEBHOOK_SECRET` overrides `webhook_secret` when set.
 
 ## 3. Gateway endpoint
 
@@ -42,7 +23,7 @@ Run the daemon or gateway and expose the webhook endpoint:
 ```bash
 zeroclaw daemon
 # or
-zeroclaw gateway --host 127.0.0.1 --port 3000
+zeroclaw gateway start --host 127.0.0.1 --port 3000
 ```
 
 Configure your Nextcloud Talk bot webhook URL to:

@@ -10,15 +10,9 @@ Based on: Basu, A. (2026). "Tool Receipts, Not Zero-Knowledge Proofs: Practical 
 
 ---
 
-## Configuration
+## Status
 
-```toml
-[agent.tool_receipts]
-enabled = true           # Generate HMAC receipts for tool executions (default: false)
-show_in_response = true  # Append receipts to user-visible messages (default: false)
-```
-
-Both options default to `false` — no behavioral change for existing users.
+Receipts are controlled programmatically via the `ReceiptGenerator` API. The `[agent.tool_receipts]` config section is **not yet wired** — config-driven activation and system-prompt injection are tracked as a follow-up.
 
 ---
 
@@ -114,6 +108,4 @@ The LLM may independently include a `Tool receipts:` block in its response text 
 
 ## Related docs
 
-- [Audit Logging](audit-logging.md) — broader audit trail proposal
-- [Agnostic Security](agnostic-security.md) — security model overview
-- [Config Reference](../reference/api/config-reference.md) — full config options
+- [Config reference](../reference/config.md) — generated config options

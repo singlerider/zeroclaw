@@ -15,15 +15,7 @@ ZeroClaw can read chip info from the Nucleo over USB **without flashing any firm
 
 The agent uses the `hardware_board_info` tool to return chip name, architecture, and memory map. With the `probe` feature, it reads live data via USB/SWD; otherwise it returns static datasheet info.
 
-**Config:** Add Nucleo to `config.toml` first (so the agent knows which board to query):
-
-```toml
-[[peripherals.boards]]
-board = "nucleo-f401re"
-transport = "serial"
-path = "/dev/ttyACM0"
-baud = 115200
-```
+**Config:** Add Nucleo to `config.toml` first under `[[peripherals.boards]]` (`board = "nucleo-f401re"`, `transport = "serial"`, your serial `path`). See the [Config reference](../reference/config.md) for all fields.
 
 **CLI alternative:**
 
@@ -42,7 +34,7 @@ ZeroClaw includes everything for Nucleo-F401RE:
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Firmware | `firmware/nucleo/` | Embassy Rust — USART2 (115200), gpio_read, gpio_write |
-| Serial peripheral | `src/peripherals/serial.rs` | JSON-over-serial protocol (same as Arduino/ESP32) |
+| Serial peripheral | `crates/zeroclaw-hardware/src/peripherals/serial.rs` | JSON-over-serial protocol (same as Arduino/ESP32) |
 | Flash command | `zeroclaw peripheral flash-nucleo` | Builds firmware, flashes via probe-rs |
 
 Protocol: newline-delimited JSON. Request: `{"id":"1","cmd":"gpio_write","args":{"pin":13,"value":1}}`. Response: `{"id":"1","ok":true,"result":"done"}`.
@@ -95,18 +87,7 @@ USART2 (PA2/PA3) is bridged to the ST-Link's virtual COM port, so the host sees 
 
 ## Phase 3: Configure ZeroClaw
 
-Add to `~/.zeroclaw/config.toml`:
-
-```toml
-[peripherals]
-enabled = true
-
-[[peripherals.boards]]
-board = "nucleo-f401re"
-transport = "serial"
-path = "/dev/cu.usbmodem101"   # adjust to your port
-baud = 115200
-```
+Enable `[peripherals]` and add a `[[peripherals.boards]]` entry for the Nucleo (`board = "nucleo-f401re"`, `transport = "serial"`, `path = "/dev/cu.usbmodem101"` — adjust to your serial port). See the [Config reference](../reference/config.md) for all fields.
 
 ---
 

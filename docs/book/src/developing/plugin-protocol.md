@@ -254,25 +254,8 @@ zeroclaw plugin install /path/to/my-plugin/
 cp -r my-plugin/ ~/.zeroclaw/plugins/my-plugin/
 ```
 
-## Reference implementation
-
-See `plugins/image-gen-wasm/` in the repository for a complete example that
-generates images via the fal.ai API using `zc_http_request` and `zc_env_read`.
-
 ## Configuration
 
-Enable the plugin system in your ZeroClaw config:
+Enable the plugin system via the `[plugins]` and `[plugins.security]` sections of `config.toml` — see the [Config reference](../reference/config.md) for all fields, defaults, and the `signature_mode` enum.
 
-```toml
-[plugins]
-enabled = true
-plugins_dir = "~/.zeroclaw/plugins"
-auto_discover = true
-
-[plugins.security]
-signature_mode = "disabled"  # or "permissive", "strict"
-trusted_publisher_keys = []
-```
-
-The `plugins-wasm` feature flag must be enabled at compile time (included in the
-default `ci-all` feature set).
+The `plugins-wasm` feature flag must be enabled at compile time (included in the default `ci-all` feature set).

@@ -34,24 +34,7 @@ Before testing message flow, make sure all of the following are true:
 
 ## 2. Configuration
 
-Use `~/.zeroclaw/config.toml`:
-
-```toml
-[channels_config.matrix]
-homeserver = "https://matrix.example.com"
-access_token = "syt_your_token"
-
-# Optional but recommended for E2EE stability:
-user_id = "@zeroclaw:matrix.example.com"
-device_id = "DEVICEID123"
-
-# Room ID or alias
-room_id = "!xtHhdHIIVEZbDPvTvZ:matrix.example.com"
-# room_id = "#ops:matrix.example.com"
-
-# Use ["*"] during initial verification, then tighten.
-allowed_users = ["*"]
-```
+Configure under `[channels_config.matrix]` in `~/.zeroclaw/config.toml`. Required: `homeserver`, `access_token`, `room_id`. Strongly recommended for E2EE: `user_id` + `device_id` (see below). See the [Config reference](../reference/config.md) for the full field index.
 
 ### About `user_id` and `device_id`
 
@@ -185,45 +168,51 @@ device_id = "ABCDEF1234"
 
 Keep `device_id` stable — changing it forces a new device registration, which breaks existing key sharing and device verification.
 
-### H. One-time key (OTK) upload conflict
+### H. One-time key (OTK) upload conflict — recovery after crypto store deletion
 
 **Symptom:** ZeroClaw logs `Matrix one-time key upload conflict detected; stopping sync to avoid infinite retry loop.` and the Matrix channel becomes unavailable.
 
-**Cause:** The bot's local crypto store was reset (e.g., deleted data directory, reinstalled) without deregistering the old device on the homeserver. The homeserver still has old one-time keys for this device, and the SDK fails to upload new ones.
+**Cause:** The local crypto store was deleted while the old device still had one-time keys registered on the homeserver. The SDK can't upload new keys because the old keys still exist server-side, causing an infinite OTK conflict loop.
 
 #### Fix
 
+A fresh login creates a new device with a new `device_id`, sidestepping the OTK conflict entirely — no UIA-gated device deletion required.
+
 1. Stop ZeroClaw.
 
-2. Deregister the stale device. From a session with admin access to the bot account:
+2. Get a fresh access token and `device_id` in one step:
 
 ```bash
-# List devices
-curl -sS -H "Authorization: Bearer $MATRIX_TOKEN" \
-  "https://your.homeserver/_matrix/client/v3/devices"
-
-# Delete the stale device (requires UIA — interactive auth)
-curl -sS -X DELETE -H "Authorization: Bearer $MATRIX_TOKEN" \
+curl -sS -X POST "https://your.homeserver/_matrix/client/v3/login" \
   -H "Content-Type: application/json" \
-  "https://your.homeserver/_matrix/client/v3/devices/STALE_DEVICE_ID" \
-  -d '{"auth": {"type": "m.login.password", "user": "@bot:example.com", "password": "..."}}'
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"YOUR_BOT_USERNAME"},"password":"...","initial_device_display_name":"ZeroClaw"}'
 ```
 
-3. Delete the local crypto store. The log message includes the store path, typically:
+Save the returned `access_token` and `device_id` from the response.
 
+3. Delete the local crypto store:
+
+```bash
+rm -rf ~/.zeroclaw/state/matrix/
 ```
-~/.zeroclaw/state/matrix/
+
+4. Update config with the new credentials:
+
+```bash
+zeroclaw config set channels.matrix.access-token <new_token>
+zeroclaw config set channels.matrix.device-id <new_device_id>
 ```
 
-Delete this directory.
+5. Restart ZeroClaw.
 
-4. Re-login to get a fresh `device_id` and `access_token` (see section 4G, Option 2).
+#### What to expect on first restart
 
-5. Update `config.toml` with the new `access_token` and `device_id`.
+- `Our own device might have been deleted` — harmless; the old device is gone.
+- `Failed to decrypt a room event` — old messages from before the reset; unrecoverable.
+- `Matrix E2EE recovery successful` — room keys restored from server backup (only if `recovery_key` is set; see section I).
+- New messages decrypt and work normally.
 
-6. Restart ZeroClaw.
-
-**Prevention:** Do not delete the local state directory without also deregistering the device. If you need a fresh start, always deregister first.
+**Prevention:** Don't delete the local state directory without planning a fresh login. If you need a fresh start, get new credentials first, then delete the store, then update config.
 
 ### I. Recovery key (recommended for E2EE)
 
@@ -318,8 +307,5 @@ RUST_LOG=zeroclaw::channels::matrix=debug,matrix_sdk_crypto=debug zeroclaw daemo
 
 ## 7. Related Docs
 
-- [Channels Reference](../reference/api/channels-reference.md)
-- [Operations log keyword appendix](../reference/api/channels-reference.md#7-operations-appendix-log-keywords-matrix)
-- [Network Deployment](../ops/network-deployment.md)
-- [Agnostic Security](./agnostic-security.md)
-- [Reviewer Playbook](../contributing/reviewer-playbook.md)
+- [Network deployment](../ops/network-deployment.md)
+- [Config reference](../reference/config.md) (generated)

@@ -83,7 +83,7 @@ Drop(handle)
 
 ### Layer 2 — `AardvarkTransport` (the bridge)
 
-**File:** `src/hardware/aardvark.rs`
+**File:** `crates/zeroclaw-hardware/src/aardvark.rs`
 
 The rest of ZeroClaw speaks a single language: `ZcCommand` → `ZcResponse`.
 `AardvarkTransport` translates between that protocol and the aardvark-sys calls above.
@@ -133,7 +133,7 @@ send(ZcCommand) → ZcResponse
 
 ### Layer 3 — Tools (what the agent calls)
 
-**File:** `src/hardware/aardvark_tools.rs`
+**File:** `crates/zeroclaw-hardware/src/aardvark_tools.rs`
 
 Each tool is a thin wrapper. It:
 1. Validates the agent's JSON input
@@ -183,7 +183,7 @@ DatasheetTool.call(args)
 
 ### Layer 4 — Device Registry (the address book)
 
-**File:** `src/hardware/device.rs`
+**File:** `crates/zeroclaw-hardware/src/device.rs`
 
 The registry is a runtime map of every connected device.
 Each entry stores: alias, kind, capabilities, transport handle.
@@ -211,7 +211,7 @@ resolve_aardvark_device(args)
 
 ### Layer 5 — `boot()` (startup wiring)
 
-**File:** `src/hardware/mod.rs`
+**File:** `crates/zeroclaw-hardware/src/lib.rs`
 
 `boot()` runs once at startup. For Aardvark:
 
@@ -236,7 +236,7 @@ boot()
 
 ### Layer 6 — Tool Registry (the loader)
 
-**File:** `src/hardware/tool_registry.rs`
+**File:** `crates/zeroclaw-hardware/src/tool_registry.rs`
 
 After `boot()`, the tool registry checks what hardware is present and loads
 only the relevant tools:

@@ -36,11 +36,10 @@ graph LR
 
 ## 3. Getting Started
 
-1. Enable SOP subsystem in `config.toml`:
+1. (Optional) Override the SOP directory in `config.toml`:
 
    ```toml
    [sop]
-   enabled = true
    sops_dir = "sops"  # defaults to <workspace>/sops when omitted
    ```
 

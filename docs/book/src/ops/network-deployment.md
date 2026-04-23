@@ -39,32 +39,7 @@ cargo build --release --features hardware
 
 ### 2.3 Config
 
-Edit `~/.zeroclaw/config.toml`:
-
-```toml
-[peripherals]
-enabled = true
-
-[[peripherals.boards]]
-board = "rpi-gpio"
-transport = "native"
-
-# Or Arduino over USB
-[[peripherals.boards]]
-board = "arduino-uno"
-transport = "serial"
-path = "/dev/ttyACM0"
-baud = 115200
-
-[channels_config.telegram]
-bot_token = "YOUR_BOT_TOKEN"
-allowed_users = []
-
-[gateway]
-host = "127.0.0.1"
-port = 42617
-allow_public_bind = false
-```
+Configure peripherals (`[peripherals]` + `[[peripherals.boards]]`), Telegram (`[channels_config.telegram]`), and gateway bind (`[gateway]`) in `~/.zeroclaw/config.toml`. See the [Config reference](../reference/config.md) for all fields and defaults.
 
 ### 2.4 Run Daemon (Local Only)
 
@@ -84,12 +59,7 @@ To allow other devices on your LAN to hit the gateway (e.g. for pairing or webho
 
 ### 3.1 Option A: Explicit Opt-In
 
-```toml
-[gateway]
-host = "0.0.0.0"
-port = 42617
-allow_public_bind = true
-```
+Set `[gateway].host = "0.0.0.0"` + `allow_public_bind = true` in config, then:
 
 ```bash
 zeroclaw daemon --host 0.0.0.0 --port 42617
@@ -106,12 +76,7 @@ If you need a **public URL** (e.g. WhatsApp webhook, external clients):
    zeroclaw daemon --host 127.0.0.1 --port 42617
    ```
 
-2. Start a tunnel:
-   ```toml
-   [tunnel]
-   provider = "tailscale"   # or "ngrok", "cloudflare"
-   ```
-   Or use `zeroclaw tunnel` (see tunnel docs).
+2. Start a tunnel by configuring the `[tunnel]` section (`provider = "tailscale" | "ngrok" | "cloudflare"`), or use `zeroclaw tunnel`.
 
 3. ZeroClaw will refuse `0.0.0.0` unless `allow_public_bind = true` or a tunnel is active.
 
@@ -125,15 +90,7 @@ Telegram uses **long-polling** by default:
 - No inbound port or public IP needed
 - Works behind NAT, on RPi, in a home lab
 
-**Config:**
-
-```toml
-[channels_config.telegram]
-bot_token = "YOUR_BOT_TOKEN"
-allowed_users = []            # deny-by-default, bind identities explicitly
-```
-
-Run `zeroclaw daemon` — Telegram channel starts automatically.
+Set `[channels_config.telegram].bot_token` (and `allowed_users = []` for deny-by-default), then run `zeroclaw daemon` — the Telegram channel starts automatically.
 
 To approve one Telegram account at runtime:
 
@@ -164,21 +121,11 @@ Webhook-based channels need a **public URL** so Meta (WhatsApp) or your client c
 
 ### 5.1 Tailscale Funnel
 
-```toml
-[tunnel]
-provider = "tailscale"
-```
-
-Tailscale Funnel exposes your gateway via a `*.ts.net` URL. No port forwarding.
+Set `[tunnel].provider = "tailscale"`. Tailscale Funnel exposes your gateway via a `*.ts.net` URL — no port forwarding required.
 
 ### 5.2 ngrok
 
-```toml
-[tunnel]
-provider = "ngrok"
-```
-
-Or run ngrok manually:
+Set `[tunnel].provider = "ngrok"`, or run ngrok manually:
 ```bash
 ngrok http 42617
 # Use the HTTPS URL for your webhook
@@ -299,7 +246,7 @@ sudo zeroclaw service uninstall
 
 ## 8. References
 
-- [channels-reference.md](../reference/api/channels-reference.md) — Channel configuration overview
-- [matrix-e2ee-guide.md](../security/matrix-e2ee-guide.md) — Matrix setup and encrypted-room troubleshooting
-- [hardware-peripherals-design.md](../hardware/hardware-peripherals-design.md) — Peripherals design
-- [adding-boards-and-tools.md](../contributing/adding-boards-and-tools.md) — Hardware setup and adding boards
+- [Config reference](../reference/config.md) — generated config field index
+- [Matrix](../channels/matrix.md) — Matrix setup and encrypted-room troubleshooting
+- [Hardware peripherals design](../hardware/hardware-peripherals-design.md) — peripherals design
+- [Adding boards and tools](../hardware/adding-boards-and-tools.md) — hardware setup and adding boards

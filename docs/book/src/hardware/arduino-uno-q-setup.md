@@ -11,8 +11,8 @@ ZeroClaw includes everything needed for Arduino Uno Q. **Clone the repo and foll
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Bridge app | `firmware/uno-q-bridge/` | MCU sketch + Python socket server (port 9999) for GPIO |
-| Bridge tools | `src/peripherals/uno_q_bridge.rs` | `gpio_read` / `gpio_write` tools that talk to the Bridge over TCP |
-| Setup command | `src/peripherals/uno_q_setup.rs` | `zeroclaw peripheral setup-uno-q` deploys the Bridge via scp + arduino-app-cli |
+| Bridge tools | `crates/zeroclaw-hardware/src/peripherals/uno_q_bridge.rs` | `gpio_read` / `gpio_write` tools that talk to the Bridge over TCP |
+| Setup command | `crates/zeroclaw-hardware/src/peripherals/uno_q_setup.rs` | `zeroclaw peripheral setup-uno-q` deploys the Bridge via scp + arduino-app-cli |
 | Config schema | `board = "arduino-uno-q"`, `transport = "bridge"` | Supported in `config.toml` |
 
 Build with `--features hardware` to include Uno Q support.
@@ -113,29 +113,9 @@ mkdir -p ~/.zeroclaw/workspace
 nano ~/.zeroclaw/config.toml
 ```
 
-### 3.2 Minimal config.toml
+### 3.2 Minimal config
 
-```toml
-api_key = "YOUR_OPENROUTER_API_KEY"
-default_provider = "openrouter"
-default_model = "anthropic/claude-sonnet-4-6"
-
-[peripherals]
-enabled = false
-# GPIO via Bridge requires Phase 4
-
-[channels_config.telegram]
-bot_token = "YOUR_TELEGRAM_BOT_TOKEN"
-allowed_users = ["*"]
-
-[gateway]
-host = "127.0.0.1"
-port = 42617
-allow_public_bind = false
-
-[agent]
-compact_context = true
-```
+At minimum, set `api_key` / `default_provider` / `default_model`, plus `[channels_config.telegram]` with your `bot_token`. Leave `[peripherals]` disabled until Phase 4 below. See the [Config reference](../reference/config.md) for all fields.
 
 ---
 
@@ -170,16 +150,9 @@ zeroclaw peripheral setup-uno-q
 
 This copies the Bridge app to `~/ArduinoApps/uno-q-bridge` and starts it.
 
-### 5.2 Add to config.toml
+### 5.2 Add to config
 
-```toml
-[peripherals]
-enabled = true
-
-[[peripherals.boards]]
-board = "arduino-uno-q"
-transport = "bridge"
-```
+Enable `[peripherals]` and add a `[[peripherals.boards]]` entry with `board = "arduino-uno-q"` and `transport = "bridge"`.
 
 ### 5.3 Run ZeroClaw
 

@@ -135,44 +135,7 @@ ZeroClaw on Pi; GPIO via rppal or sysfs. No separate firmware.
 
 ## 5. CLI and Config
 
-### CLI Flags
-
-```bash
-# Edge-Native: run on device (ESP32, RPi)
-zeroclaw agent --mode edge
-
-# Host-Mediated: connect to USB/J-Link target
-zeroclaw agent --peripheral nucleo-f401re:/dev/ttyACM0
-zeroclaw agent --probe jlink
-
-# Hardware introspection
-zeroclaw hardware discover
-zeroclaw hardware introspect /dev/ttyACM0
-```
-
-### Config (config.toml)
-
-```toml
-[peripherals]
-enabled = true
-mode = "host"  # "edge" | "host"
-datasheet_dir = "docs/datasheets"  # RAG: board-specific docs for LLM context
-
-[[peripherals.boards]]
-board = "nucleo-f401re"
-transport = "serial"
-path = "/dev/ttyACM0"
-baud = 115200
-
-[[peripherals.boards]]
-board = "rpi-gpio"
-transport = "native"
-
-[[peripherals.boards]]
-board = "esp32"
-transport = "wifi"
-# Edge-Native: ZeroClaw runs on ESP32
-```
+See the [CLI reference](../reference/cli.md) for `zeroclaw hardware` / `zeroclaw peripheral` subcommands and the [Config reference](../reference/config.md) for the `[peripherals]` and `[[peripherals.boards]]` fields.
 
 ## 6. Architecture: Peripheral as Extension Point
 
@@ -304,7 +267,7 @@ Simple JSON over serial for boards without gRPC support:
 
 ## 12. Related Documents
 
-- [adding-boards-and-tools.md](../contributing/adding-boards-and-tools.md) — How to add boards and datasheets
+- [adding-boards-and-tools.md](adding-boards-and-tools.md) — How to add boards and datasheets
 - [network-deployment.md](../ops/network-deployment.md) — RPi and network deployment
 
 ## 13. References

@@ -2,8 +2,6 @@
 
 This runbook is for operators who maintain availability, security posture, and incident response.
 
-Last verified: **February 18, 2026**.
-
 ## Scope
 
 Use this document for day-2 operations:
@@ -13,16 +11,7 @@ Use this document for day-2 operations:
 - safe rollout and rollback
 - incident triage and recovery
 
-For first-time installation, start from [one-click-bootstrap.md](../setup-guides/one-click-bootstrap.md).
-
-## Runtime Modes
-
-| Mode | Command | When to use |
-|---|---|---|
-| Foreground runtime | `zeroclaw daemon` | local debugging, short-lived sessions |
-| Foreground gateway only | `zeroclaw gateway` | webhook endpoint testing |
-| User service | `zeroclaw service install && zeroclaw service start` | persistent operator-managed runtime |
-| Docker / Podman | `docker compose up -d` | containerized deployment |
+For first-time installation, start from [one-click-bootstrap.md](../setup/one-click-bootstrap.md). For runtime mode commands (`daemon` / `gateway` / `service install` / etc.), see the [CLI reference](../reference/cli.md).
 
 ## Docker / Podman Runtime
 
@@ -79,7 +68,7 @@ For Podman, add `--userns keep-id --user "$(id -u):$(id -g)"` and append `:Z` to
 Re-running `install.sh --docker` rebuilds the image and re-runs onboarding. To simply
 restart, use `docker start`, `docker compose up -d`, or `podman start`.
 
-For full setup instructions, see [one-click-bootstrap.md](../setup-guides/one-click-bootstrap.md#stopping-and-restarting-a-dockerpodman-container).
+For full setup instructions, see [one-click-bootstrap.md](../setup/one-click-bootstrap.md#stopping-and-restarting-a-dockerpodman-container).
 
 ## Baseline Operator Checklist
 
@@ -112,12 +101,7 @@ zeroclaw service status
 
 ## Health and State Signals
 
-| Signal | Command / File | Expected |
-|---|---|---|
-| Config validity | `zeroclaw doctor` | no critical errors |
-| Channel connectivity | `zeroclaw channel doctor` | configured channels healthy |
-| Runtime summary | `zeroclaw status` | expected provider/model/channels |
-| Daemon heartbeat/state | `~/.zeroclaw/daemon_state.json` | file updates periodically |
+Run `zeroclaw doctor` (config validity), `zeroclaw channel doctor` (channel connectivity), and `zeroclaw status` (runtime summary). The daemon also writes a heartbeat to `~/.zeroclaw/daemon_state.json` that updates periodically.
 
 ## Logs and Diagnostics
 
@@ -180,7 +164,7 @@ If a rollout regresses behavior:
 
 ## Related Docs
 
-- [one-click-bootstrap.md](../setup-guides/one-click-bootstrap.md)
+- [one-click-bootstrap.md](../setup/one-click-bootstrap.md)
 - [troubleshooting.md](./troubleshooting.md)
-- [config-reference.md](../reference/api/config-reference.md)
-- [commands-reference.md](../reference/cli/commands-reference.md)
+- [Config reference](../reference/config.md)
+- [CLI reference](../reference/cli.md)

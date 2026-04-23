@@ -18,28 +18,7 @@ ZeroClaw supports native integration with Mattermost via its REST API v4. This i
 
 ## Configuration
 
-Add the following to your `config.toml` under the `[channels_config]` section:
-
-```toml
-[channels_config.mattermost]
-url = "https://mm.your-domain.com"
-bot_token = "your-bot-access-token"
-channel_id = "your-channel-id"
-allowed_users = ["user-id-1", "user-id-2"]
-thread_replies = true
-mention_only = true
-```
-
-### Configuration Fields
-
-| Field | Description |
-|---|---|
-| `url` | The base URL of your Mattermost server. |
-| `bot_token` | The Personal Access Token for the bot account. |
-| `channel_id` | (Optional) The ID of the channel to listen to. Required for `listen` mode. |
-| `allowed_users` | (Optional) A list of Mattermost User IDs permitted to interact with the bot. Use `["*"]` to allow everyone. |
-| `thread_replies` | (Optional) Whether top-level user messages should be answered in a thread. Default: `true`. Existing thread replies always remain in-thread. |
-| `mention_only` | (Optional) When `true`, only messages that explicitly mention the bot username (for example `@zeroclaw-bot`) are processed. Default: `false`. |
+Configure the Mattermost channel via the `[channels_config.mattermost]` section. See the [Config reference](../reference/config.md) for the full field index and defaults.
 
 ## Threaded Conversations
 

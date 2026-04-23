@@ -2,8 +2,6 @@
 
 This guide focuses on common setup/runtime failures and fast resolution paths.
 
-Last verified: **February 20, 2026**.
-
 ## Installation / Bootstrap
 
 ### `cargo` not found
@@ -237,6 +235,6 @@ Also include OS, install method, and sanitized config snippets (no secrets).
 ## Related Docs
 
 - [operations-runbook.md](operations-runbook.md)
-- [one-click-bootstrap.md](../setup-guides/one-click-bootstrap.md)
-- [channels-reference.md](../reference/api/channels-reference.md)
+- [one-click-bootstrap.md](../setup/one-click-bootstrap.md)
+- [Config reference](../reference/config.md)
 - [network-deployment.md](network-deployment.md)

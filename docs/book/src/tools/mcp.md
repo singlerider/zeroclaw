@@ -11,38 +11,9 @@ MCP servers can be connected via three transport types:
 
 ## Configuration
 
-MCP servers are configured in the `[mcp]` section of your `config.toml`.
+MCP servers are configured under `[mcp]` and `[[mcp.servers]]` in `config.toml`. The display `name` (used as the tool prefix `name__tool_name`) is required, plus `transport` (`stdio` | `sse` | `http`) and the transport-specific fields. See the [Config reference](../reference/config.md) for the full field index and defaults.
 
-```toml
-[mcp]
-enabled = true
-deferred_loading = true # Recommended: only load tool schemas when needed
-
-[[mcp.servers]]
-name = "my_local_tool"
-transport = "stdio"
-command = "node"
-args = ["/path/to/server.js"]
-env = { "API_KEY" = "secret_value" }
-
-[[mcp.servers]]
-name = "my_remote_tool"
-transport = "sse"
-url = "https://mcp.example.com/sse"
-```
-
-### Server Configuration Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | String | **Required**. Display name used as a tool prefix (`name__tool_name`). |
-| `transport` | String | `stdio`, `sse`, or `http`. Default: `stdio`. |
-| `command` | String | (stdio only) Executable to run. |
-| `args` | List | (stdio only) Command line arguments. |
-| `env` | Map | (stdio only) Environment variables. |
-| `url` | String | (sse/http only) Server endpoint URL. |
-| `headers` | Map | (sse/http only) Custom HTTP headers (e.g., for auth). |
-| `tool_timeout_secs` | Integer | Per-call timeout for tools from this server. |
+Keep `deferred_loading = true` (the default) to load tool schemas on demand — this minimizes initial token overhead.
 
 ## Security and Auto-Approval
 

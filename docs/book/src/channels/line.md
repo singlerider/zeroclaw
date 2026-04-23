@@ -6,11 +6,7 @@ ZeroClaw supports LINE via the Messaging API — receiving messages through an e
 
 1. A [LINE Developers Console](https://developers.line.biz) account.
 2. A public HTTPS endpoint reachable from LINE's servers (or ngrok for local development).
-3. ZeroClaw built with the `channel-line` feature:
-
-```bash
-cargo build --release --features channel-line
-```
+3. ZeroClaw built with LINE channel support enabled (the `channel-line` feature on the `zeroclaw-channels` crate).
 
 ---
 
@@ -27,35 +23,7 @@ cargo build --release --features channel-line
 
 ## 2. Configure ZeroClaw
 
-Add the following to your `zeroclaw.toml`:
-
-```toml
-[channels_config.line]
-enabled = true
-channel_access_token = "your-channel-access-token"
-channel_secret = "your-channel-secret"
-
-# DM (1:1 chat) access policy. Default: pairing.
-# open      — respond to everyone
-# pairing   — require one-time /bind <code> handshake on first contact
-# allowlist — respond only to LINE user IDs listed in allowed_users
-dm_policy = "pairing"
-
-# Group / multi-person chat policy. Default: mention.
-# open     — respond to every message
-# mention  — respond only when @mentioned
-# disabled — ignore all group messages
-group_policy = "mention"
-
-# TCP port the embedded webhook server listens on. Default: 8443.
-webhook_port = 8443
-
-# Optional: restrict DMs to specific LINE user IDs (used with dm_policy = allowlist).
-# allowed_users = ["Uabc123", "Udef456"]
-
-# Optional: per-channel proxy (overrides global [proxy] if set).
-# proxy_url = "socks5://127.0.0.1:1080"
-```
+Configure the LINE channel under `[channels_config.line]` with at minimum `channel_access_token` and `channel_secret`. See the [Config reference](../reference/config.md) for the full field index, defaults, and the `dm_policy` / `group_policy` enums (whose user-facing semantics are also covered in §6 below).
 
 ### Using environment variables instead of config file
 
@@ -89,7 +57,7 @@ Copy the `https://` URL ngrok provides (e.g. `https://abc123.ngrok.io`).
 ## 4. Register the Webhook in LINE Developers Console
 
 1. Go to your channel → **Messaging API** tab → **Webhook settings**.
-2. Set **Webhook URL** to `https://your-domain.com/webhook`.
+2. Set **Webhook URL** to `https://your-domain.com/line/webhook`.
 3. Toggle **Use webhook** to on.
 4. Click **Verify** — LINE will send a test request. ZeroClaw must be running for verification to succeed.
 
@@ -110,7 +78,7 @@ zeroclaw daemon
 **Startup log signal:**
 
 ```
-LINE webhook server listening on 0.0.0.0:8443
+LINE: webhook server listening on http://0.0.0.0:8443/line/webhook
 ```
 
 ---
@@ -143,28 +111,7 @@ LINE webhook server listening on 0.0.0.0:8443
 
 ## 7. Audio / Voice Message Transcription (optional)
 
-When transcription is enabled, LINE `audio` message events are automatically downloaded from the LINE Content API and transcribed before being passed to the model.
-
-```toml
-[transcription]
-enabled = true
-default_provider = "openai"   # openai | local_whisper | deepgram | assemblyai | google
-api_key = "sk-..."
-model = "whisper-1"
-```
-
-For local transcription without a cloud API:
-
-```toml
-[transcription]
-enabled = true
-default_provider = "local_whisper"
-
-[transcription.local_whisper]
-url = "http://localhost:8080/v1/transcribe"
-max_audio_bytes = 26214400   # 25 MB
-timeout_secs = 300
-```
+When transcription is enabled (via the global `[transcription]` config — see [Config reference](../reference/config.md)), LINE `audio` message events are automatically downloaded from the LINE Content API and transcribed before being passed to the model.
 
 The maximum accepted audio size is 25 MB. Larger files are silently skipped with a log warning.
 
@@ -184,7 +131,7 @@ The maximum accepted audio size is 25 MB. Larger files are silently skipped with
 
 | Signal | Log message |
 |---|---|
-| Startup healthy | `LINE webhook server listening on 0.0.0.0:<port>` |
+| Startup healthy | `LINE: webhook server listening on http://0.0.0.0:<port>/line/webhook` |
 | Signature rejected | `LINE: invalid X-Line-Signature` |
 | Unauthorized DM | `LINE: DM from <userId> rejected by policy` |
 | Pairing required | `LINE: unpaired user <userId>; ignoring until /bind` |
@@ -195,6 +142,5 @@ The maximum accepted audio size is 25 MB. Larger files are silently skipped with
 
 ## See also
 
-- [Channels Reference](../reference/api/channels-reference.md) — delivery modes and allowlist semantics for all channels
-- [Config Reference](../reference/api/config-reference.md) — full config field index
+- [Config reference](../reference/config.md) — full config field index
 - [LINE Developers Documentation](https://developers.line.biz/en/docs/messaging-api/)

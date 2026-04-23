@@ -107,7 +107,5 @@ See the `docker-compose.yml` at the repository root for containerized deployment
 
 ## Related docs
 
-- [README.md](../../README.md)
-- [commands-reference.md](../reference/cli/commands-reference.md)
-- [providers-reference.md](../reference/api/providers-reference.md)
-- [channels-reference.md](../reference/api/channels-reference.md)
+- [CLI reference](../reference/cli.md)
+- [Config reference](../reference/config.md)

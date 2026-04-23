@@ -22,8 +22,6 @@
 # Providers
 
 - [Custom Providers](./providers/custom.md)
-- [Z.AI GLM](./providers/zai-glm.md)
-- [OpenAI Temperature Compatibility](./providers/openai-temperature-compatibility.md)
 
 # Tools
 
@@ -35,13 +33,9 @@
 - [Operations runbook](./ops/operations-runbook.md)
 - [Troubleshooting](./ops/troubleshooting.md)
 - [Network deployment](./ops/network-deployment.md)
-- [Resource limits](./ops/resource-limits.md)
-- [Proxy agent playbook](./ops/proxy-agent-playbook.md)
 
 # Security
 
-- [Sandboxing](./security/sandboxing.md)
-- [Audit logging](./security/audit-logging.md)
 - [Tool receipts](./security/tool-receipts.md)
 
 # Hardware
@@ -53,16 +47,11 @@
 - [Arduino Uno Q](./hardware/arduino-uno-q-setup.md)
 - [STM32 Nucleo](./hardware/nucleo-setup.md)
 - [Aardvark](./hardware/aardvark.md)
-- [Datasheet: Arduino Uno](./hardware/datasheets/arduino-uno.md)
-- [Datasheet: ESP32](./hardware/datasheets/esp32.md)
-- [Datasheet: Nucleo F401RE](./hardware/datasheets/nucleo-f401re.md)
 
 # Developing
 
 - [Plugin protocol](./developing/plugin-protocol.md)
 - [Extension examples](./developing/extension-examples.md)
-- [Change playbooks](./developing/change-playbooks.md)
-- [Architecture diagrams](./developing/architecture-diagrams.md)
 
 # Reference
 

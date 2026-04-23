@@ -85,7 +85,7 @@ cargo build --release --locked --features channel-matrix,channel-lark --target x
 1. **Restart your terminal** for PATH changes to take effect
 2. **Initialize ZeroClaw:**
    ```cmd
-   zeroclaw init
+   zeroclaw onboard
    ```
 3. **Configure your API key** in `%USERPROFILE%\.zeroclaw\config.toml`
 

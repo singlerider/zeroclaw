@@ -24,18 +24,7 @@ Key behaviors:
 
 ### 2.1 Configuration
 
-Configure broker access in `config.toml`:
-
-```toml
-[channels_config.mqtt]
-broker_url = "mqtts://broker.example.com:8883"  # use mqtt:// for plaintext
-client_id = "zeroclaw-agent-1"
-topics = ["sensors/alert", "ops/deploy/#"]
-qos = 1
-username = "mqtt-user"      # optional
-password = "mqtt-password"  # optional
-use_tls = true              # must match scheme (mqtts:// => true)
-```
+Configure broker access under `[channels_config.mqtt]` in `config.toml` — see the [Config reference](../config.md). The `use_tls` flag must match the scheme of `broker_url` (`mqtts://` ⇒ `true`, `mqtt://` ⇒ `false`).
 
 ### 2.2 Trigger Definition
 

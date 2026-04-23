@@ -27,25 +27,7 @@ agent-browser install              # macOS/Windows
 
 ### 2. Verify ZeroClaw Config
 
-The browser tool is enabled by default. To verify or customize, edit
-`~/.zeroclaw/config.toml`:
-
-```toml
-[browser]
-enabled = true              # default: true
-allowed_domains = ["*"]     # default: ["*"] (all public hosts)
-backend = "agent_browser"   # default: "agent_browser"
-native_headless = true      # default: true
-```
-
-To restrict domains or disable the browser tool:
-
-```toml
-[browser]
-enabled = false                              # disable entirely
-# or restrict to specific domains:
-allowed_domains = ["example.com", "docs.example.com"]
-```
+The browser tool is enabled by default with `allowed_domains = ["*"]`. To restrict domains or disable it, edit the `[browser]` section of `~/.zeroclaw/config.toml`. See the [Config reference](../reference/config.md) for all fields and defaults.
 
 ### 3. Test
 
@@ -211,5 +193,4 @@ agent-browser get text body
 ## Related
 
 - [agent-browser Documentation](https://github.com/vercel-labs/agent-browser)
-- [ZeroClaw Configuration Reference](./config-reference.md)
-- [Skills Documentation](../skills/)
+- [Config reference](../reference/config.md)
