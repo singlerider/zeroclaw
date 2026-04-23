@@ -55,48 +55,40 @@ doc:
 
 # Serve the docs site locally (English by default; pass LOCALE=ja for Japanese)
 docs LOCALE="en":
-    ./scripts/docs.sh serve --locale {{LOCALE}}
+    cargo docs serve --locale {{LOCALE}}
 
 # Build the full docs site (all locales) to docs/book/book/
 docs-build:
-    ./scripts/docs.sh build
+    cargo docs build
 
-# Regenerate reference/cli.md and reference/config.md from code
+# Regenerate reference/cli.md, reference/config.md, and rustdoc API reference
 docs-refs:
-    ./scripts/docs.sh refs
+    cargo docs refs
 
 # Sync .po files with English source; AI-fills delta if ANTHROPIC_API_KEY is set
 docs-sync:
-    ./scripts/sync-translations.sh
+    cargo docs sync
 
 # Sync a single locale (e.g.: just docs-sync-locale ja)
 docs-sync-locale LOCALE:
-    ./scripts/sync-translations.sh --locale {{LOCALE}}
+    cargo docs sync --locale {{LOCALE}}
 
 # Force-retranslate everything for a quality pass (costs more — use before a release)
 # Optionally override model: FILL_MODEL=claude-opus-4-7 just docs-translate-force
 docs-translate-force:
-    ./scripts/sync-translations.sh --force
+    cargo docs sync --force
 
 # Force-retranslate a single locale
 docs-translate-force-locale LOCALE:
-    ./scripts/sync-translations.sh --locale {{LOCALE}} --force
+    cargo docs sync --locale {{LOCALE}} --force
 
 # Show translation status: translated/fuzzy/untranslated counts per locale
 docs-translate-stats:
-    @for po in docs/book/po/*.po; do \
-        locale=$$(basename "$$po" .po); \
-        printf "%-8s " "$$locale"; \
-        LANG=C msgfmt --statistics "$$po" -o /dev/null; \
-    done
+    cargo docs stats
 
 # Validate .po format for all locales (exits non-zero on format errors)
 docs-translate-check:
-    @ok=0; \
-    for po in docs/book/po/*.po; do \
-        msgfmt --check-format "$$po" -o /dev/null || ok=1; \
-    done; \
-    exit $$ok
+    cargo docs check
 
 # Update dependencies
 update:
