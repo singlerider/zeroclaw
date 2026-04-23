@@ -29,9 +29,9 @@ enum Cmd {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Scan                   => cmd::fluent_scan::run(),
-        Cmd::Fill { locale, force } => cmd::fluent_fill::run(locale.as_deref(), force),
-        Cmd::Stats                  => cmd::fluent_stats::run(),
-        Cmd::Check                  => cmd::fluent_check::run(),
+        Cmd::Scan                   => cmd::fluent::scan::run(),
+        Cmd::Fill { locale, force } => cmd::fluent::fill::run(locale.as_deref(), force),
+        Cmd::Stats                  => cmd::fluent::stats::run(),
+        Cmd::Check                  => cmd::fluent::check::run(),
     }
 }
