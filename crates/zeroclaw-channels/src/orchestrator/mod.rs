@@ -3980,10 +3980,14 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 .mattermost
                 .as_ref()
                 .context("Mattermost channel is not configured")?;
+            let bot_token = mm
+                .bot_token
+                .clone()
+                .context("Mattermost bot_token is required")?;
             Ok(Arc::new(MattermostChannel::new(
                 mm.url.clone(),
-                mm.bot_token.clone(),
-                mm.channel_id.clone(),
+                bot_token,
+                mm.channel_ids.first().cloned(),
                 mm.allowed_users.clone(),
                 mm.thread_replies.unwrap_or(true),
                 mm.mention_only.unwrap_or(false),
@@ -4450,21 +4454,25 @@ fn collect_configured_channels(
 
     if let Some(ref mm) = config.channels.mattermost {
         if mm.enabled {
-            channels.push(ConfiguredChannel {
-                display_name: "Mattermost",
-                channel: Arc::new(
-                    MattermostChannel::new(
-                        mm.url.clone(),
-                        mm.bot_token.clone(),
-                        mm.channel_id.clone(),
-                        mm.allowed_users.clone(),
-                        mm.thread_replies.unwrap_or(true),
-                        mm.mention_only.unwrap_or(false),
-                    )
-                    .with_proxy_url(mm.proxy_url.clone())
-                    .with_transcription(config.transcription.clone()),
-                ),
-            });
+            if let Some(bot_token) = mm.bot_token.clone() {
+                channels.push(ConfiguredChannel {
+                    display_name: "Mattermost",
+                    channel: Arc::new(
+                        MattermostChannel::new(
+                            mm.url.clone(),
+                            bot_token,
+                            mm.channel_ids.first().cloned(),
+                            mm.allowed_users.clone(),
+                            mm.thread_replies.unwrap_or(true),
+                            mm.mention_only.unwrap_or(false),
+                        )
+                        .with_proxy_url(mm.proxy_url.clone())
+                        .with_transcription(config.transcription.clone()),
+                    ),
+                });
+            } else {
+                tracing::warn!("Mattermost channel is enabled but bot_token is not set — skipping");
+            }
         } else {
             tracing::info!("Mattermost channel configured but disabled (enabled = false)");
         }
@@ -10407,8 +10415,8 @@ This is an example JSON object for profile settings."#;
         config.channels.mattermost = Some(zeroclaw_config::schema::MattermostConfig {
             enabled: true,
             url: "https://mattermost.example.com".to_string(),
-            bot_token: "test-token".to_string(),
-            channel_id: Some("channel-1".to_string()),
+            bot_token: Some("test-token".to_string()),
+            channel_ids: vec!["channel-1".to_string()],
             allowed_users: vec![],
             thread_replies: Some(true),
             mention_only: Some(false),

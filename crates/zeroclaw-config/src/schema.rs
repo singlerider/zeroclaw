@@ -7059,10 +7059,14 @@ pub struct MattermostConfig {
     /// Mattermost server URL (e.g. `"https://mattermost.example.com"`).
     pub url: String,
     /// Mattermost bot access token.
+    /// Changed from `String` to `Option<String>` in schema v3 to support login-based auth.
+    #[serde(default)]
     #[secret]
-    pub bot_token: String,
-    /// Optional channel ID to restrict the bot to a single channel.
-    pub channel_id: Option<String>,
+    pub bot_token: Option<String>,
+    /// Channel IDs to restrict the bot to. Empty = listen on all visible channels.
+    /// Replaces the v2 scalar `channel_id` field — migrated automatically on first load.
+    #[serde(default)]
+    pub channel_ids: Vec<String>,
     /// Allowed Mattermost user IDs. Empty = deny all.
     #[serde(default)]
     pub allowed_users: Vec<String>,

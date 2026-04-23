@@ -17,7 +17,7 @@ use toml_edit::DocumentMut;
 
 use super::schema::ModelProviderConfig;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Top-level keys from V1 that are consumed by V1Compat during migration.
 /// Used by the unknown-key detector to suppress false "unknown key" warnings.
@@ -218,6 +218,26 @@ pub fn prepare_table(table: &mut toml::Table) {
         }
     }
 
+    // Migrate channels.mattermost.channel_id → channels.mattermost.channel_ids
+    for key in &["channels_config", "channels"] {
+        if let Some(toml::Value::Table(channels)) = table.get_mut(*key)
+            && let Some(toml::Value::Table(mattermost)) = channels.get_mut("mattermost")
+            && let Some(toml::Value::String(channel_id)) = mattermost.remove("channel_id")
+            && !channel_id.is_empty()
+            && channel_id != "*"
+        {
+            let ids = mattermost
+                .entry("channel_ids")
+                .or_insert_with(|| toml::Value::Array(Vec::new()));
+            if let toml::Value::Array(arr) = ids {
+                let already_present = arr.iter().any(|v| v.as_str() == Some(channel_id.as_str()));
+                if !already_present {
+                    arr.push(toml::Value::String(channel_id));
+                }
+            }
+        }
+    }
+
     // Rename legacy `channels_config` key to `channels`
     if table.contains_key("channels_config")
         && !table.contains_key("channels")
@@ -347,5 +367,118 @@ fn toml_to_edit_value(v: &toml::Value) -> toml_edit::Value {
             }
             toml_edit::Value::InlineTable(inline)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_table_migrates_mattermost_channel_id_to_channel_ids() {
+        let mut table: toml::Table = toml::from_str(
+            r#"
+[channels.mattermost]
+enabled = true
+url = "https://mattermost.example.com"
+bot_token = "tok"
+channel_id = "town-square"
+"#,
+        )
+        .unwrap();
+        prepare_table(&mut table);
+        let mattermost = table["channels"]["mattermost"].as_table().unwrap();
+        assert!(
+            !mattermost.contains_key("channel_id"),
+            "channel_id should be removed"
+        );
+        let channel_ids = mattermost["channel_ids"].as_array().unwrap();
+        assert_eq!(channel_ids.len(), 1);
+        assert_eq!(channel_ids[0].as_str(), Some("town-square"));
+    }
+
+    #[test]
+    fn prepare_table_mattermost_channel_id_not_duplicated_when_channel_ids_already_present() {
+        let mut table: toml::Table = toml::from_str(
+            r#"
+[channels.mattermost]
+channel_id = "town-square"
+channel_ids = ["town-square", "off-topic"]
+"#,
+        )
+        .unwrap();
+        prepare_table(&mut table);
+        let mattermost = table["channels"]["mattermost"].as_table().unwrap();
+        let channel_ids = mattermost["channel_ids"].as_array().unwrap();
+        assert_eq!(channel_ids.len(), 2, "no duplicate should be inserted");
+    }
+
+    #[test]
+    fn prepare_table_mattermost_empty_channel_id_is_skipped() {
+        let mut table: toml::Table = toml::from_str(
+            r#"
+[channels.mattermost]
+channel_id = ""
+"#,
+        )
+        .unwrap();
+        prepare_table(&mut table);
+        let mattermost = table["channels"]["mattermost"].as_table().unwrap();
+        assert!(!mattermost.contains_key("channel_id"));
+        assert!(!mattermost.contains_key("channel_ids"));
+    }
+
+    #[test]
+    fn prepare_table_mattermost_wildcard_channel_id_is_skipped() {
+        let mut table: toml::Table = toml::from_str(
+            r#"
+[channels.mattermost]
+channel_id = "*"
+"#,
+        )
+        .unwrap();
+        prepare_table(&mut table);
+        let mattermost = table["channels"]["mattermost"].as_table().unwrap();
+        assert!(!mattermost.contains_key("channel_ids"));
+    }
+
+    #[test]
+    fn schema_version_bumped_to_three_on_v2_config() {
+        let raw = r#"
+schema_version = 2
+
+[channels.mattermost]
+enabled = true
+url = "https://mattermost.example.com"
+bot_token = "tok"
+channel_id = "town-square"
+"#;
+        let result = migrate_file(raw).unwrap().expect("should migrate");
+        let doc: toml::Table = toml::from_str(&result).unwrap();
+        assert_eq!(
+            doc["schema_version"].as_integer(),
+            Some(CURRENT_SCHEMA_VERSION as i64)
+        );
+        let channel_ids = doc["channels"]["mattermost"]["channel_ids"]
+            .as_array()
+            .unwrap();
+        assert_eq!(channel_ids[0].as_str(), Some("town-square"));
+    }
+
+    #[test]
+    fn bot_token_string_round_trips_as_option_string() {
+        let mut table: toml::Table = toml::from_str(
+            r#"
+[channels.mattermost]
+bot_token = "mytoken"
+"#,
+        )
+        .unwrap();
+        prepare_table(&mut table);
+        let serialized = toml::to_string(&table).unwrap();
+        let compat: V1Compat = toml::from_str(&serialized).unwrap();
+        let config = compat.into_config();
+        let mm = config.channels.mattermost.unwrap();
+        assert_eq!(mm.bot_token, Some("mytoken".to_string()));
     }
 }

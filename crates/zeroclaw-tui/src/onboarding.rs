@@ -884,8 +884,8 @@ fn apply_tui_selections_to_config(app: &App, config: &mut Config) {
                 config.channels.mattermost = Some(MattermostConfig {
                     enabled: true,
                     url: String::from("https://mattermost.example.com"),
-                    bot_token: String::from("YOUR_MATTERMOST_BOT_TOKEN"),
-                    channel_id: None,
+                    bot_token: Some(String::from("YOUR_MATTERMOST_BOT_TOKEN")),
+                    channel_ids: vec![],
                     allowed_users: vec![],
                     thread_replies: None,
                     mention_only: None,
