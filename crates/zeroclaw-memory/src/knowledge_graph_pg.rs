@@ -122,6 +122,7 @@ impl PgKnowledgeGraph {
         }
     }
 
+    #[cfg(test)]
     fn parse_relation(s: &str) -> Relation {
         match s {
             "uses" => Relation::Uses,

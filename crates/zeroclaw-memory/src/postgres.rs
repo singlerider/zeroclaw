@@ -19,8 +19,6 @@ const POSTGRES_CONNECT_TIMEOUT_CAP_SECS: u64 = 300;
 pub struct PostgresMemory {
     client: Arc<Mutex<Client>>,
     qualified_table: String,
-    pgvector_enabled: bool,
-    pgvector_dimensions: usize,
 }
 
 impl PostgresMemory {
@@ -63,15 +61,11 @@ impl PostgresMemory {
             Ok(Self {
                 client: client_ref,
                 qualified_table,
-                pgvector_enabled: ext_ok,
-                pgvector_dimensions,
             })
         } else {
             Ok(Self {
                 client: Arc::new(Mutex::new(client)),
                 qualified_table,
-                pgvector_enabled: false,
-                pgvector_dimensions,
             })
         }
     }
@@ -103,11 +97,9 @@ impl PostgresMemory {
             })
             .context("failed to spawn PostgreSQL initializer thread")?;
 
-        let init_result = init_handle
+        init_handle
             .join()
-            .map_err(|_| anyhow::anyhow!("PostgreSQL initializer thread panicked"))?;
-
-        init_result
+            .map_err(|_| anyhow::anyhow!("PostgreSQL initializer thread panicked"))?
     }
 
     fn init_schema(client: &mut Client, schema_ident: &str, qualified_table: &str) -> Result<()> {
