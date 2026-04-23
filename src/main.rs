@@ -624,6 +624,14 @@ Examples:
         shell: CompletionShell,
     },
 
+    /// Print the full CLI reference as Markdown (used by the docs pipeline).
+    #[command(hide = true)]
+    MarkdownHelp,
+
+    /// Print the config JSON Schema (used by the docs pipeline).
+    #[command(hide = true)]
+    MarkdownSchema,
+
     /// Launch or install the companion desktop app
     #[command(long_about = "\
 Launch the ZeroClaw companion desktop app.
@@ -962,6 +970,25 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Docs-pipeline subcommands: stdout-only, no config load, no logging init.
+    match &cli.command {
+        Commands::MarkdownHelp => {
+            clap_markdown::print_help_markdown::<Cli>();
+            return Ok(());
+        }
+        Commands::MarkdownSchema => {
+            #[cfg(feature = "schema-export")]
+            {
+                let schema = schemars::schema_for!(config::Config);
+                println!("{}", serde_json::to_string_pretty(&schema)?);
+                return Ok(());
+            }
+            #[cfg(not(feature = "schema-export"))]
+            anyhow::bail!("zeroclaw was built without the 'schema-export' feature");
+        }
+        _ => {}
+    }
+
     // Initialize logging - respects RUST_LOG env var, defaults to INFO.
     // For the ACP command, we default to WARN to avoid INFO logs corrupting the stdio protocol.
     // We also always redirect logs to stderr so stdout remains clean for data.
@@ -1205,7 +1232,9 @@ async fn main() -> Result<()> {
                 }
                 return Ok(());
             }
-            Commands::Completions { shell } => unreachable!(),
+            Commands::Completions { .. } | Commands::MarkdownHelp | Commands::MarkdownSchema => {
+                unreachable!()
+            }
             _ => {
                 anyhow::bail!(
                     "This command requires the full runtime. Rebuild with default features:\n  cargo build --release"
@@ -1216,7 +1245,10 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "agent-runtime")]
     match cli.command {
-        Commands::Onboard { .. } | Commands::Completions { .. } => unreachable!(),
+        Commands::Onboard { .. }
+        | Commands::Completions { .. }
+        | Commands::MarkdownHelp
+        | Commands::MarkdownSchema => unreachable!(),
 
         Commands::Agent {
             message,

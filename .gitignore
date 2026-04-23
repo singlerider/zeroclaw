@@ -1,5 +1,7 @@
 /target
 /target-*/
+/docs/book/book/
+/docs/book/src/reference/*.md
 firmware/*/target
 web/dist/*
 !web/dist/.gitkeep
