@@ -1,5 +1,9 @@
 pub mod build;
 pub mod check;
+pub mod fluent_check;
+pub mod fluent_fill;
+pub mod fluent_scan;
+pub mod fluent_stats;
 pub mod refs;
 pub mod serve;
 pub mod stats;

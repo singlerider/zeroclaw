@@ -2038,8 +2038,7 @@ pub fn build_tool_instructions(tools_registry: &[Box<dyn Tool>]) -> String {
     instructions.push_str("### Available Tools\n\n");
 
     for tool in tools_registry {
-        let i18n_description = crate::i18n::get_tool_description(tool.name());
-        let desc = i18n_description.unwrap_or_else(|| tool.description());
+        let desc = tool.description();
         let _ = writeln!(
             instructions,
             "**{}**: {}\nParameters: `{}`\n",

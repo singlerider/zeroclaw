@@ -52,6 +52,35 @@ pub fn run_cmd(cmd: &mut Command) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn fluent_locales_dir(root: &Path) -> PathBuf {
+    root.join("crates/zeroclaw-runtime/locales")
+}
+
+pub fn fluent_locales(root: &Path) -> anyhow::Result<Vec<String>> {
+    let dir = fluent_locales_dir(root);
+    let mut out = vec![];
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            out.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+pub fn ftl_files_in(locale_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut out = vec![];
+    for entry in std::fs::read_dir(locale_dir)? {
+        let entry = entry?;
+        if entry.path().extension().map_or(false, |e| e == "ftl") {
+            out.push(entry.path());
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<()> {
     std::fs::create_dir_all(&dst)?;
     for entry in std::fs::read_dir(&src)? {

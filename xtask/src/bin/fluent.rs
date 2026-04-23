@@ -1,3 +1,4 @@
+use xtask::cmd;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -9,12 +10,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Scan Rust source for user-facing strings and generate en.ftl
+    /// Scan Rust source for user-facing strings and report en.ftl coverage
     Scan,
     /// AI-fill missing translations in non-English .ftl files
     Fill {
         #[arg(long)]
         locale: Option<String>,
+        /// Re-translate all entries (quality pass, costs more)
         #[arg(long)]
         force: bool,
     },
@@ -27,9 +29,9 @@ enum Cmd {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Scan => anyhow::bail!("not yet implemented"),
-        Cmd::Fill { .. } => anyhow::bail!("not yet implemented"),
-        Cmd::Stats => anyhow::bail!("not yet implemented"),
-        Cmd::Check => anyhow::bail!("not yet implemented"),
+        Cmd::Scan                   => cmd::fluent_scan::run(),
+        Cmd::Fill { locale, force } => cmd::fluent_fill::run(locale.as_deref(), force),
+        Cmd::Stats                  => cmd::fluent_stats::run(),
+        Cmd::Check                  => cmd::fluent_check::run(),
     }
 }
