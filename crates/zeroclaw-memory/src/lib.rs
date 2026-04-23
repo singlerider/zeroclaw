@@ -121,7 +121,15 @@ where
             Ok(Box::new(LucidMemory::new(workspace_dir, local)))
         }
         MemoryBackendKind::Postgres => {
-            build_postgres_memory(&MemoryConfig::default(), &StorageProviderConfig::default())
+            // Postgres requires a real MemoryConfig + StorageProviderConfig, which this
+            // builder-only entry point does not receive. All supported call paths go
+            // through `create_memory_with_storage_and_routes`, which handles postgres via
+            // an early return. Fail loudly if a caller ever reaches this arm, rather than
+            // pretending to work with default configs that can never connect.
+            anyhow::bail!(
+                "postgres backend requires storage config; \
+                 call create_memory_with_storage_and_routes instead of create_memory_with_builders"
+            )
         }
         MemoryBackendKind::Qdrant | MemoryBackendKind::Markdown => {
             Ok(Box::new(MarkdownMemory::new(workspace_dir)))

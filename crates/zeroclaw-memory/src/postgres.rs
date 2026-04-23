@@ -168,20 +168,22 @@ impl PostgresMemory {
     }
 
     fn row_to_entry(row: &Row) -> Result<MemoryEntry> {
-        let timestamp: DateTime<Utc> = row.get(4);
+        // Named access is used throughout so row_to_entry is immune to SELECT
+        // column reordering and does not depend on matching the DDL ordering.
+        let timestamp: DateTime<Utc> = row.get("created_at");
 
         Ok(MemoryEntry {
-            id: row.get(0),
-            key: row.get(1),
-            content: row.get(2),
-            category: Self::parse_category(&row.get::<_, String>(3)),
+            id: row.get("id"),
+            key: row.get("key"),
+            content: row.get("content"),
+            category: Self::parse_category(&row.get::<_, String>("category")),
             timestamp: timestamp.to_rfc3339(),
-            session_id: row.get(5),
-            score: row.try_get(6).ok(),
+            session_id: row.get("session_id"),
+            score: row.try_get("score").ok(),
             namespace: row
-                .try_get::<_, String>(7)
+                .try_get::<_, String>("namespace")
                 .unwrap_or_else(|_| "default".into()),
-            importance: row.try_get(8).ok(),
+            importance: row.try_get("importance").ok(),
             superseded_by: None,
         })
     }
