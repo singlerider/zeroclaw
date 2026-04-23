@@ -13,19 +13,10 @@ pub fn run(locale: Option<&str>, force: bool) -> anyhow::Result<()> {
         anyhow::bail!("English locale dir not found: {}", en_dir.display());
     }
 
-    let targets: Vec<String> = match locale {
-        Some(l) => vec![l.to_string()],
-        None => {
-            let mut all = fluent_locales(&root)?;
-            all.retain(|l| l != "en");
-            all
-        }
+    let targets: Vec<&str> = match locale {
+        Some(l) => vec![l],
+        None => locales().iter().copied().filter(|&l| l != "en").collect(),
     };
-
-    if targets.is_empty() {
-        println!("No non-English locales found. Add a locale dir under {}", locales_dir.display());
-        return Ok(());
-    }
 
     for target_locale in &targets {
         let target_dir = locales_dir.join(target_locale);
