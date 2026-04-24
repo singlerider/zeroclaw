@@ -2,6 +2,7 @@
 /target-*/
 /docs/book/book/
 /docs/book/po/messages.pot
+/docs/book/po/*.failures.log
 /docs/book/po-extract/
 /docs/book/src/reference/cli.md
 /docs/book/src/reference/config.md
