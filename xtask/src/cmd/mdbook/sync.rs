@@ -8,6 +8,7 @@ pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>, batch: Opt
     require_tool("msgmerge", "apt install gettext / brew install gettext")?;
     require_tool("msginit", "apt install gettext / brew install gettext")?;
     require_tool("msgfmt", "apt install gettext / brew install gettext")?;
+    require_tool("msgattrib", "apt install gettext / brew install gettext")?;
 
     let book = book_dir(&root);
     let po_dir = po_dir(&root);
@@ -58,9 +59,14 @@ pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>, batch: Opt
         } else {
             println!("==> {locale}: msgmerge");
             run_cmd(Command::new("msgmerge")
-                .args(["--update", "--backup=none", "--no-fuzzy-matching", "--no-obsolete"])
+                .args(["--update", "--backup=none", "--no-fuzzy-matching"])
                 .arg(&po_file)
                 .arg(&pot))?;
+            // Strip obsolete (#~) entries that msgmerge leaves behind for removed source strings.
+            run_cmd(Command::new("msgattrib")
+                .arg("--no-obsolete")
+                .arg("--output-file").arg(&po_file)
+                .arg(&po_file))?;
         }
 
         if force {
@@ -102,12 +108,14 @@ pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>, batch: Opt
 }
 
 fn fill(root: &Path, po_file: &Path, locale: &str, force: bool, provider: &str, batch: Option<usize>) -> anyhow::Result<()> {
-    let manifest = root.join("tools/fill-translations/Cargo.toml");
-    let mut cmd = Command::new("cargo");
-    cmd.args(["run", "--release", "-q", "--manifest-path"])
-        .arg(&manifest)
-        .arg("--")
-        .args(["--po"])
+    // Build and invoke the binary directly — `cargo run` wraps the child in a way that
+    // breaks Ctrl-C propagation, leaving the translator orphaned in the terminal.
+    let bin = root.join("target/release/fill-translations");
+    run_cmd(Command::new("cargo")
+        .args(["build", "--release", "-q", "--manifest-path"])
+        .arg(root.join("tools/fill-translations/Cargo.toml")))?;
+    let mut cmd = Command::new(&bin);
+    cmd.args(["--po"])
         .arg(po_file)
         .args(["--locale", locale])
         .args(["--provider", provider]);
