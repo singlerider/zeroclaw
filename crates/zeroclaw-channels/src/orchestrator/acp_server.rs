@@ -224,13 +224,20 @@ impl AcpServer {
     // ── Method handlers ──────────────────────────────────────────
 
     fn handle_initialize(&self, _params: &Value) -> RpcResult {
-        let default_model: Value = self
+        let default_model = self
             .config
             .providers
             .fallback_provider()
-            .and_then(|e| e.model.clone())
-            .map(|m| serde_json::json!(m))
-            .unwrap_or(Value::Null);
+            .and_then(|e| e.model.clone());
+
+        let mut capabilities = serde_json::json!({
+            "streaming": true,
+            "maxSessions": self.acp_config.max_sessions,
+            "sessionTimeoutSecs": self.acp_config.session_timeout_secs,
+        });
+        if let Some(model) = default_model {
+            capabilities["defaultModel"] = serde_json::json!(model);
+        }
 
         Ok(serde_json::json!({
             "protocolVersion": "1.0",
@@ -238,12 +245,7 @@ impl AcpServer {
                 "name": "zeroclaw-acp",
                 "version": env!("CARGO_PKG_VERSION"),
             },
-            "capabilities": {
-                "streaming": true,
-                "maxSessions": self.acp_config.max_sessions,
-                "sessionTimeoutSecs": self.acp_config.session_timeout_secs,
-                "defaultModel": default_model,
-            },
+            "capabilities": capabilities,
             "methods": [
                 "initialize",
                 "session/new",
@@ -741,12 +743,12 @@ mod tests {
     }
 
     #[test]
-    fn handle_initialize_default_model_null_when_unconfigured() {
+    fn handle_initialize_default_model_absent_when_unconfigured() {
         let server = AcpServer::new(Config::default(), AcpServerConfig::default());
         let result = server.handle_initialize(&serde_json::json!({})).unwrap();
         assert!(
-            result["capabilities"]["defaultModel"].is_null(),
-            "defaultModel must be null when no provider is configured, got: {}",
+            result["capabilities"].get("defaultModel").is_none(),
+            "defaultModel must be absent when no provider is configured, got: {}",
             result["capabilities"]["defaultModel"]
         );
     }
