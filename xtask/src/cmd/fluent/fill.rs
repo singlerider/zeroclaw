@@ -134,7 +134,8 @@ fn call_api(
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content}
-            ]
+            ],
+            "reasoning_effort": "none"
         });
         let mut req = client.post(format!("{}/v1/chat/completions", backend.base_url))
             .json(&body);

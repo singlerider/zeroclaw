@@ -255,24 +255,25 @@ async fn translate_batch(
     locale: &str,
     batch: &[&str],
 ) -> anyhow::Result<Vec<String>> {
-    let numbered: String = batch
+    let items: String = batch
         .iter()
-        .enumerate()
-        .map(|(i, s)| format!("{}. {}", i + 1, s))
+        .map(|s| format!("- {s}"))
         .collect::<Vec<_>>()
         .join("\n");
 
     let prompt = format!(
         "Translate these English documentation strings to locale '{locale}'.\n\
-         Return ONLY a JSON array of translated strings in the same order.\n\
-         No explanation. Preserve backticks, bold (**), and code spans exactly.\n\
+         Return ONLY a JSON array of translated strings in the same order as the input.\n\
+         No explanation, no item prefixes. Preserve backticks, bold (**), and code spans exactly.\n\
+         Do not escape backslashes or newlines — preserve them byte-for-byte.\n\
          If a string is already in the target language or is a code literal, return it unchanged.\n\n\
-         {numbered}"
+         {items}"
     );
 
     let body = serde_json::json!({
         "model": provider.model,
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [{"role": "user", "content": prompt}],
+        "reasoning_effort": "none"
     });
 
     let mut req = client
