@@ -1,6 +1,11 @@
 # Multi-Model Setup and Fallback Chains
 
-This guide introduces multi-model concepts in ZeroClaw, including fallback provider chains, model-level fallbacks, and API key rotation for resilience.
+A walkthrough of the common patterns for using multiple model providers: cost optimisation, quality tiers, local-first with hosted fallback, API key rotation, and rate-limit resilience.
+
+> **Reference material** for the provider system lives in:
+> - [Model Providers → Overview](../providers/overview.md) — what providers are, configuration shape
+> - [Model Providers → Fallback & routing](../providers/fallback-and-routing.md) — `reliable` and `router` meta-providers
+> - [Model Providers → Catalog](../providers/catalog.md) — every provider's config shape
 
 ## When to Use Multi-Model Setup
 
