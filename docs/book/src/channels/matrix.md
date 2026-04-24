@@ -34,7 +34,7 @@ Before testing message flow, make sure all of the following are true:
 
 ## 2. Configuration
 
-Configure under `[channels_config.matrix]` in `~/.zeroclaw/config.toml`. Required: `homeserver`, `access_token`, `room_id`. Strongly recommended for E2EE: `user_id` + `device_id` (see below). See the [Config reference](../reference/config.md) for the full field index.
+Configure under `[channels.matrix]` in `~/.zeroclaw/config.toml`. Required: `homeserver`, `access_token`, `room_id`. Strongly recommended for E2EE: `user_id` + `device_id` (see below). See the [Config reference](../reference/config.md) for the full field index.
 
 ### About `user_id` and `device_id`
 
@@ -85,7 +85,7 @@ curl -sS -H "Authorization: Bearer $MATRIX_TOKEN" \
 ```
 
 - Check that returned `user_id` matches the bot account.
-- If `device_id` is missing, set `channels_config.matrix.device_id` manually.
+- If `device_id` is missing, set `channels.matrix.device_id` manually.
 - To update the access token without re-running onboard:
   ```bash
   zeroclaw config set channels.matrix.access-token
@@ -97,7 +97,7 @@ curl -sS -H "Authorization: Bearer $MATRIX_TOKEN" \
 - If keys are not shared to this device, encrypted events cannot be decrypted.
 - Verify device trust and key sharing in your Matrix client/admin workflow.
 - If logs show `matrix_sdk_crypto::backups: Trying to backup room keys but no backup key was found`, key backup recovery is not enabled on this device yet. This warning is usually non-fatal for live message flow, but you should still complete key backup/recovery setup.
-- If recipients see bot messages as "unverified", verify/sign the bot device from a trusted Matrix session and keep `channels_config.matrix.device_id` stable across restarts.
+- If recipients see bot messages as "unverified", verify/sign the bot device from a trusted Matrix session and keep `channels.matrix.device_id` stable across restarts.
 
 ### E. Log levels
 
@@ -161,7 +161,7 @@ Use both the returned `access_token` and `device_id` in your config. This create
 **Once you have it**, set both in `config.toml`:
 
 ```toml
-[channels_config.matrix]
+[channels.matrix]
 user_id = "@bot:example.com"
 device_id = "ABCDEF1234"
 ```
@@ -242,7 +242,7 @@ When configuring the Matrix channel, the wizard prompts:
 E2EE recovery key (or Enter to skip): EsTj 3yST y93F SLpB jJsz ...
 ```
 
-Paste the recovery key (input is masked). It will be encrypted and stored in `config.toml` as `channels_config.matrix.recovery_key`.
+Paste the recovery key (input is masked). It will be encrypted and stored in `config.toml` as `channels.matrix.recovery_key`.
 
 Option B — via the secret CLI (recommended for existing installs):
 
@@ -255,7 +255,7 @@ Input is masked. The value is encrypted at rest immediately.
 Option C — edit `config.toml` directly:
 
 ```toml
-[channels_config.matrix]
+[channels.matrix]
 recovery_key = "EsTj 3yST y93F SLpB jJsz ..."
 ```
 

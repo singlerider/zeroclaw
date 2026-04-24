@@ -23,7 +23,7 @@ ZeroClaw supports LINE via the Messaging API — receiving messages through an e
 
 ## 2. Configure ZeroClaw
 
-Configure the LINE channel under `[channels_config.line]` with at minimum `channel_access_token` and `channel_secret`. See the [Config reference](../reference/config.md) for the full field index, defaults, and the `dm_policy` / `group_policy` enums (whose user-facing semantics are also covered in §6 below).
+Configure the LINE channel under `[channels.line]` with at minimum `channel_access_token` and `channel_secret`. See the [Config reference](../reference/config.md) for the full field index, defaults, and the `dm_policy` / `group_policy` enums (whose user-facing semantics are also covered in §6 below).
 
 ### Using environment variables instead of config file
 
