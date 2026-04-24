@@ -90,25 +90,38 @@ fn decode_po_string(lines: &[String]) -> String {
     out
 }
 
+/// Outcome of checking a model response against its source string.
+enum LeakCheck {
+    Clean,
+    Recovered(String),
+    Unrecoverable,
+}
+
 /// Detect a prompt-leak response and attempt to recover the real translation.
 ///
 /// When a model leaks its instructions it translates them into the target language and
-/// appends the actual translation at the end (separated by a blank line). The leak is
-/// structural: the response is far longer than any plausible translation of `source`.
-/// Returns `Some(recovered)` when a leak is detected, `None` when the response looks clean.
-fn recover_from_leak(source: &str, response: &str) -> Option<String> {
+/// often appends the actual translation at the end. The leak is structural: the response
+/// is far longer than any plausible translation of `source`, or starts with a bullet list.
+fn check_for_leak(source: &str, response: &str) -> LeakCheck {
     let leak_threshold = source.len().saturating_mul(4).max(120);
-    if response.len() <= leak_threshold {
-        return None;
+    let looks_like_bullets = response.trim_start().starts_with("- ")
+        && response.contains("\\n- ");
+    let too_long = response.len() > leak_threshold;
+    if !too_long && !looks_like_bullets {
+        return LeakCheck::Clean;
     }
-    // The real translation is always the last non-empty paragraph.
-    let candidate = response.trim().rsplit("\n\n").find(|s| !s.trim().is_empty())?;
-    let candidate = candidate.trim().to_string();
-    // Sanity: recovered part must itself not look like another leak
-    if candidate.len() > leak_threshold {
-        return None;
+    // Try to recover: prefer the last paragraph after a blank line, else everything
+    // after the final terminal punctuation ('. ' or '.').
+    let candidate = response
+        .trim()
+        .rsplit("\n\n")
+        .find(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| response.trim().rsplit(". ").next().map(|s| s.trim_end_matches('.').trim().to_string()));
+    match candidate {
+        Some(c) if !c.is_empty() && c.len() <= leak_threshold => LeakCheck::Recovered(c),
+        _ => LeakCheck::Unrecoverable,
     }
-    Some(candidate)
 }
 
 /// Replace invalid JSON escape sequences (e.g. `\[`, `\(`) with their literal characters.
@@ -302,11 +315,15 @@ async fn translate_batch(
             .ok_or_else(|| anyhow::anyhow!("no content in response: {resp}"))?
             .trim()
             .to_string();
-        let text = if let Some(recovered) = recover_from_leak(batch[0], &text) {
-            eprintln!("  warning: prompt leak detected, recovered translation from response tail");
-            recovered
-        } else {
-            text
+        let text = match check_for_leak(batch[0], &text) {
+            LeakCheck::Clean => text,
+            LeakCheck::Recovered(r) => {
+                eprintln!("  warning: prompt leak detected, recovered translation from response tail");
+                r
+            }
+            LeakCheck::Unrecoverable => {
+                anyhow::bail!("prompt leak with no recoverable translation");
+            }
         };
         return Ok(vec![text]);
     }
@@ -387,22 +404,30 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Repair entries where the model previously leaked its instructions instead of translating.
-    // Use the same length-ratio heuristic as the live detection: recover the real translation
-    // from the response tail when possible, otherwise clear to "" for re-translation.
-    let mut leak_cleared = 0;
+    // Recover the real translation from the response tail when possible, otherwise clear to ""
+    // so the entry gets re-translated on this run.
+    let mut leak_recovered = 0;
+    let mut leak_blanked = 0;
     let mut lines: Vec<String> = lines;
     for entry in &entries {
         if entry.msgstr.is_empty() { continue; }
-        if let Some(recovered) = recover_from_leak(&entry.msgid, &entry.msgstr) {
-            lines[entry.msgstr_line] = format!("msgstr \"{}\"", encode_po_string(&recovered));
-            leak_cleared += 1;
+        match check_for_leak(&entry.msgid, &entry.msgstr) {
+            LeakCheck::Clean => {}
+            LeakCheck::Recovered(r) => {
+                lines[entry.msgstr_line] = format!("msgstr \"{}\"", encode_po_string(&r));
+                leak_recovered += 1;
+            }
+            LeakCheck::Unrecoverable => {
+                lines[entry.msgstr_line] = "msgstr \"\"".to_string();
+                leak_blanked += 1;
+            }
         }
     }
-    if leak_cleared > 0 {
-        println!("==> Repaired {leak_cleared} prompt-leaked entries");
+    if leak_recovered + leak_blanked > 0 {
+        println!("==> Leak repair: {leak_recovered} recovered, {leak_blanked} cleared for re-translation");
     }
     // Re-parse with repaired lines
-    let entries = if leak_cleared > 0 { parse_po(&lines) } else { entries };
+    let entries = if leak_recovered + leak_blanked > 0 { parse_po(&lines) } else { entries };
 
     // Entries with empty msgstr need AI translation.
     // Fuzzy entries already have a translation — accept it as-is, just drop the flag.
