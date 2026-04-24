@@ -1,68 +1,75 @@
 # CI & Actions
 
+Every workflow lives in `.github/workflows/`. The sections below group them by trigger — automatic on git events, or manual via `workflow_dispatch`.
+
 ## Automatic workflows
 
 ### Quality Gate (`ci.yml`)
 
-Fires on every PR targeting `master`. Two sequential stages:
+Fires on every PR targeting `master`. Composite job with multiple matrix legs:
 
-1. **Lint** — `cargo fmt --check` + `cargo clippy --features ci-all -D warnings`. Fails fast before burning compute on the build stage.
-2. **Build** — cross-platform matrix build. Runs only if lint passes.
+- **lint** — `cargo fmt --check`, `cargo clippy -D warnings`, `cargo check --features ci-all`, strict delta lint on changed lines
+- **build** — matrix: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`
+- **check** — all features + no-default-features
+- **check-32bit** — `i686-unknown-linux-gnu` with no default features
+- **bench** — benchmarks compile check
+- **test** — `cargo nextest run --locked` on Linux
+- **security** — `cargo deny check`
 
-A PR cannot merge until this workflow is green.
+`CI Required Gate` is the composite job branch protection pins. A PR cannot merge until this is green.
 
-### Deploy Docs (`docs-deploy.yml`)
+### Daily Advisory Scan (`daily-audit.yml`)
 
-Fires automatically on push to `master` (and `feat/fluent-i18n` during development) when any of the following change: `docs/book/**`, `src/**`, `crates/**`, `Cargo.toml`, `Cargo.lock`.
-
-What it does:
-
-1. Generates `docs/book/src/reference/cli.md` and `config.md` from the live code
-2. Generates the rustdoc API reference
-3. Validates `.po` format — **fails the deploy if any `.po` file is malformed**
-4. Builds mdBook for every locale in `locales.toml` → `docs/book/book/{locale}/`
-5. Assembles the Pages artifact (rustdoc + locale redirect `index.html`)
-6. Deploys to GitHub Pages
-
-**If it fails:** most common causes are a malformed `.po` file (run `cargo mdbook check` locally) or a broken reference page (run `cargo mdbook refs` and check for panics in `markdown-help` or `markdown-schema`).
-
-### Daily Audit (`daily-audit.yml`)
-
-Runs `cargo audit` nightly against the dependency tree. Opens an issue on findings.
+Runs `cargo audit` nightly against the dependency tree. Opens an issue on findings. No action unless a vulnerability is reported.
 
 ### PR Path Labeler (`pr-path-labeler.yml`)
 
-Auto-applies scope and risk labels based on changed file paths. No action needed — runs silently on every PR.
+Auto-applies scope and risk labels based on changed file paths. Runs silently on every PR — if a PR is missing labels, check whether the paths in `.github/labeler.yml` cover the changes.
+
+### Discord Release (`discord-release.yml`)
+
+Fires after a successful stable release. Posts the release notes to the community Discord.
+
+### Tweet Release (`tweet-release.yml`)
+
+Fires after a successful stable release. Posts an announcement tweet.
+
+### Sync Marketplace Templates (`sync-marketplace-templates.yml`)
+
+Fires after every stable release. Auto-opens PRs to update version numbers in the downstream marketplace template repos (docker, k8s, compose).
+
+Docs are built and published as part of the release pipeline rather than on every `master` push. Translation is a local-only workflow — run `cargo mdbook sync --provider <name>` before PRing. See [Docs & Translations](./docs-and-translations.md) for details.
 
 ## Manual workflows
 
-### Translate Docs (`docs-translate.yml`)
-
-Run this before a release to AI-fill any untranslated or fuzzy strings in the `.po` files. It commits updated `.po` files back to the current branch, which then triggers `docs-deploy.yml`.
-
-**Trigger:** Actions → *Translate docs (manual)* → Run workflow
-
-| Input | Options | Default | Notes |
-|---|---|---|---|
-| `locales` | Space-separated codes | all (from `locales.toml`) | Leave blank for all configured locales |
-| `force` | true / false | false | Re-translate everything, not just the delta |
-| `model` | haiku / sonnet / opus | `claude-haiku-4-5-20251001` | Haiku is fast and cheap for delta fills; use sonnet or opus for release quality passes |
-
-Requires the `ANTHROPIC_API_KEY` repository secret to be set (CI uses Anthropic; local fills use `--provider`).
-
-**Expected output:** the workflow commits a `chore(i18n): sync translations via <model>` commit and pushes it. If all strings were already translated, it exits cleanly with "No translation changes".
-
 ### Cross-Platform Build (`cross-platform-build-manual.yml`)
 
-Manual trigger for building release binaries across all target platforms. Use this to verify a branch builds cleanly on non-Linux targets before tagging.
+Manual trigger for building release binaries across the full target matrix (Linux GNU/MUSL, macOS Intel/ARM, Windows, additional ARM Linux targets). Use this to verify a branch compiles cleanly on non-Linux targets before tagging.
 
-### Release (`release-stable-manual.yml`)
+### Release Stable (`release-stable-manual.yml`)
 
-Manual trigger for the full release pipeline. See the release checklist before running.
+Manual trigger for the full release pipeline. Builds all targets, creates the GitHub Release, publishes to crates.io, pushes Docker images, and invokes downstream workflows. Three environment gates require maintainer approval mid-run: `github-releases`, `crates-io`, `docker`.
+
+See the release runbook in the repo's `docs/maintainers/` directory for the full procedure (not yet migrated into this mdBook).
+
+### Package Publishers
+
+Each fires on `workflow_dispatch` with a version input. They are also invoked from the release workflow after a successful publish.
+
+| Workflow | What it does |
+|---|---|
+| `pub-aur.yml` | Updates the Arch User Repository `PKGBUILD` and pushes to the AUR |
+| `pub-homebrew-core.yml` | Opens a PR against `homebrew/homebrew-core` with the new version |
+| `pub-scoop.yml` | Updates the Scoop manifest for Windows |
 
 ## Required secrets
 
 | Secret | Used by |
 |---|---|
-| `ANTHROPIC_API_KEY` | `docs-translate.yml` |
-| `GITHUB_TOKEN` (automatic) | `docs-translate.yml` (push), `docs-deploy.yml` (Pages) |
+| `AUR_SSH_KEY` | `pub-aur.yml` |
+| `DISCORD_WEBHOOK_URL` | `discord-release.yml` |
+| `TWITTER_*` tokens | `tweet-release.yml` |
+| `HOMEBREW_CORE_TOKEN` | `pub-homebrew-core.yml` |
+| `CARGO_REGISTRY_TOKEN` | `release-stable-manual.yml` |
+| `DOCKER_HUB_TOKEN` | `release-stable-manual.yml` |
+| `GITHUB_TOKEN` (automatic) | All workflows that push commits or open PRs |

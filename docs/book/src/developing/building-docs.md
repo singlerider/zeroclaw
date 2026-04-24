@@ -77,10 +77,7 @@ Without `--provider`, `cargo mdbook sync` still runs extract + merge and reports
 
 ## Release translation workflow
 
-Before tagging a release, run a full translation pass so the docs ship in every locale.
-You can do this locally or via the GitHub Actions manual trigger.
-
-### Local (recommended)
+Before tagging a release, run a full translation pass locally and commit the updated `.po` files.
 
 ```bash
 # Fast delta pass (only new or changed strings since last release)
@@ -94,19 +91,6 @@ cargo mdbook stats   # review coverage
 ```
 
 The model used is whatever is configured in `[providers.models.<name>]` in `config.toml`.
-
-### Via GitHub Actions (`.github/workflows/docs-translate.yml`)
-
-Go to **Actions → Translate docs (manual) → Run workflow**:
-
-| Input | Description |
-|---|---|
-| `locales` | Space-separated locale codes, or leave blank for all in `locales.toml` |
-| `force` | Re-translate everything, not just the delta |
-| `model` | Claude model to use — haiku (fast/cheap), sonnet, or opus |
-
-The workflow commits updated `.po` files back to the branch automatically.
-Requires the `ANTHROPIC_API_KEY` repository secret.
 
 ## Tips
 
