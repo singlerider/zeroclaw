@@ -24,11 +24,20 @@ Or pass `--prebuilt` to `install.sh` / `setup.bat` to skip Rust entirely.
 
 ### Missing build dependencies (Linux)
 
+Install the baseline toolchain for your distro, then re-run `./install.sh`:
+
 ```bash
-./install.sh --install-system-deps
+# Debian / Ubuntu
+sudo apt install build-essential pkg-config
+
+# Fedora / RHEL
+sudo dnf group install development-tools && sudo dnf install pkg-config
+
+# Arch
+sudo pacman -S base-devel
 ```
 
-Or see [Setup → Linux](../setup/linux.md) for the per-distro package list.
+Full per-distro list: [Setup → Linux](../setup/linux.md).
 
 ### Build OOMs on low-RAM hosts
 
@@ -36,7 +45,7 @@ Compiling ZeroClaw from source needs ~2 GB RAM at peak. On a 512 MB Raspberry Pi
 
 Options:
 
-1. **Use a prebuilt** — `./install.sh --prefer-prebuilt` downloads from GitHub Releases
+1. **Use a prebuilt** — `./install.sh --prebuilt` skips the toolchain and downloads from GitHub Releases
 2. **Cross-compile on a bigger machine and copy the binary**
 3. **Serialise the build** — `CARGO_BUILD_JOBS=1 cargo build --release --locked`
 4. **Add swap** (works for RAM, costs disk — check you have both)

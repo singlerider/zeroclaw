@@ -4,41 +4,56 @@ Install, update, run as a LaunchAgent, and uninstall on macOS (Intel or Apple Si
 
 ## Install
 
-### Option 1 — Homebrew (recommended)
+`install.sh` is the preferred path; Homebrew is a reasonable alternative if you want `brew services` integration.
+
+### Option 1 — `install.sh` via curl (fastest)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
+```
+
+### Option 2 — `install.sh` from a clone
+
+```bash
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+./install.sh
+```
+
+### What the installer does
+
+1. Asks whether you want a prebuilt binary or to build from source
+2. Installs to `~/.cargo/bin/zeroclaw`
+3. Runs `zeroclaw onboard` to complete first-time setup
+
+Flags:
+
+```bash
+./install.sh --prebuilt                      # always prebuilt, skip the prompt
+./install.sh --source                        # always build from source
+./install.sh --minimal                       # kernel only (~6.6 MB)
+./install.sh --source --features agent-runtime,channel-discord   # custom features
+./install.sh --skip-onboard                  # install only; run `zeroclaw onboard` later
+./install.sh --list-features                 # print available features and exit
+./install.sh --help                          # full flag reference
+```
+
+### Option 3 — Homebrew
 
 ```bash
 brew install zeroclaw
 zeroclaw onboard
 ```
 
-Homebrew is the best-supported path on macOS. Updates are one command, the `brew services` integration Just Works, and the install is in `$HOMEBREW_PREFIX/bin/zeroclaw` where `PATH` already looks.
+Gets you `brew services` integration. Binary lives at `$HOMEBREW_PREFIX/bin/zeroclaw`.
 
-**Workspace location:** with Homebrew, the service user and the CLI user may be different, so the workspace lives at `$HOMEBREW_PREFIX/var/zeroclaw/` rather than `~/.zeroclaw/`. Point CLI invocations at the same workspace:
+**Workspace location gotcha:** with Homebrew, the service user and the CLI user may be different, so the workspace lives at `$HOMEBREW_PREFIX/var/zeroclaw/` rather than `~/.zeroclaw/`. Point CLI invocations at the same workspace:
 
 ```bash
 export ZEROCLAW_WORKSPACE="$HOMEBREW_PREFIX/var/zeroclaw"
 ```
 
 Add that to your shell profile if you want it permanent.
-
-### Option 2 — One-liner bootstrap
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
-```
-
-Installs to `~/.cargo/bin/zeroclaw`. Workspace at `~/.zeroclaw/`. No Homebrew required. Uses prebuilt binaries when available for your architecture.
-
-### Option 3 — From source
-
-```bash
-git clone https://github.com/zeroclaw-labs/zeroclaw
-cd zeroclaw
-cargo install --locked --path .
-zeroclaw onboard
-```
-
-Requires Rust stable (`rustup`). First build is slow.
 
 ## System dependencies
 
@@ -78,27 +93,27 @@ Full details: [Service management](./service.md).
 
 ## Update
 
-Homebrew:
-
-```bash
-brew update && brew upgrade zeroclaw
-brew services restart zeroclaw
-```
-
-Bootstrap install:
+Re-run the installer — it detects the existing install and upgrades in place:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-onboard
 zeroclaw service restart
 ```
 
-Source install:
+Or from a clone:
 
 ```bash
 cd /path/to/zeroclaw
 git pull
-cargo install --locked --path . --force
+./install.sh --skip-onboard
 zeroclaw service restart
+```
+
+If installed via Homebrew instead:
+
+```bash
+brew update && brew upgrade zeroclaw
+brew services restart zeroclaw
 ```
 
 ## Uninstall

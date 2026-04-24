@@ -2,6 +2,8 @@
 
 Install, update, run as a scheduled task / Windows Service, and uninstall on Windows 10 / 11.
 
+`setup.bat` is the Windows counterpart to `install.sh` — same job, different shell. If you're running WSL2, you can follow the [Linux setup](./linux.md) instead; `install.sh` runs unchanged under WSL.
+
 ## Install
 
 ### Option 1 — `setup.bat` from a release

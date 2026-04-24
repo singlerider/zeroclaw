@@ -82,10 +82,10 @@ The gateway stays bound to `127.0.0.1` — the proxy does the listening.
 For a Pi running Raspberry Pi OS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --prefer-prebuilt
+curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --prebuilt
 ```
 
-Prefer `--prefer-prebuilt` on a Pi — compiling from source can take 30+ minutes.
+Prefer `--prebuilt` on a Pi — compiling from source can take 30+ minutes.
 
 For a Pi running Alpine:
 

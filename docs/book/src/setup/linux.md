@@ -4,24 +4,42 @@ Install, update, run as a service, and uninstall — all Linux distributions.
 
 ## Install
 
-### Option 1 — One-liner bootstrap (recommended)
+`install.sh` is the preferred path on every Linux distro. Pipe it from `curl`, or clone and run it locally — both do the same thing.
+
+### Option 1 — `install.sh` via curl (fastest)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
 ```
 
-This script:
+### Option 2 — `install.sh` from a clone
+
+```bash
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+./install.sh
+```
+
+### What the installer does
 
 1. Detects your distribution and architecture
-2. Downloads a prebuilt binary if available for your target, falls back to `cargo install` otherwise
-3. Places the binary at `~/.cargo/bin/zeroclaw` (or `$HOMEBREW_PREFIX/bin/zeroclaw` if Homebrew is present on Linux)
+2. Asks whether you want a prebuilt binary or to build from source (the default is interactive — non-interactive shells default to prebuilt when available)
+3. Places the binary at `~/.cargo/bin/zeroclaw`
 4. Runs `zeroclaw onboard` to complete first-time setup
 
-Skip the onboard step with `--skip-onboard` if you want to hand-edit `~/.zeroclaw/config.toml` first.
+Flags:
 
-### Option 2 — Homebrew
+```bash
+./install.sh --prebuilt                      # always prebuilt, skip the prompt
+./install.sh --source                        # always build from source
+./install.sh --minimal                       # kernel only (~6.6 MB)
+./install.sh --source --features agent-runtime,channel-discord   # custom features
+./install.sh --skip-onboard                  # install only; run `zeroclaw onboard` later
+./install.sh --list-features                 # print available features and exit
+./install.sh --help                          # full flag reference
+```
 
-If you have Linuxbrew:
+### Option 3 — Homebrew (Linuxbrew)
 
 ```bash
 brew install zeroclaw
@@ -29,17 +47,6 @@ zeroclaw onboard
 ```
 
 Homebrew-on-Linux installs follow Homebrew's service path convention — your workspace lives under `$HOMEBREW_PREFIX/var/zeroclaw/` instead of `~/.zeroclaw/`. See [Service management](./service.md) for why this matters.
-
-### Option 3 — From source
-
-```bash
-git clone https://github.com/zeroclaw-labs/zeroclaw
-cd zeroclaw
-cargo install --locked --path .
-zeroclaw onboard
-```
-
-Requires Rust stable (install via `rustup`). First build is slow; subsequent builds use the `cargo install` cache.
 
 ## System dependencies
 
@@ -74,10 +81,10 @@ Full details: [Service management](./service.md).
 
 ### SBC / Raspberry Pi
 
-On a Raspberry Pi or similar SBC, install with the hardware feature:
+On a Raspberry Pi or similar SBC, build with the hardware feature:
 
 ```bash
-cargo install --locked --path . --features hardware
+./install.sh --source --features hardware
 ```
 
 The stock systemd unit includes `SupplementaryGroups=gpio spi i2c` so the service user can access hardware without running as root. Verify your user is in those groups:
@@ -90,24 +97,24 @@ sudo usermod -aG gpio,spi,i2c $USER
 
 ## Update
 
-If installed via the bootstrap script:
+Re-run the installer — it detects the existing install and upgrades in place:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash -s -- --skip-onboard
 ```
 
-If installed via Homebrew:
-
-```bash
-brew update && brew upgrade zeroclaw
-```
-
-If installed via `cargo install`:
+Or from a clone:
 
 ```bash
 cd /path/to/zeroclaw
 git pull
-cargo install --locked --path . --force
+./install.sh --skip-onboard
+```
+
+If installed via Homebrew instead:
+
+```bash
+brew update && brew upgrade zeroclaw
 ```
 
 After updating, restart the service:
