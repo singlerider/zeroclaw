@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use serde_json::{Map, Value};
 
 /// Generates a markdown config reference by walking the schemars JSON Schema value in memory.
@@ -25,7 +27,7 @@ pub fn generate(root: &Value) -> String {
     for (key, schema) in props {
         let resolved = resolve(schema, defs);
         let desc = first_line(resolved.get("description").and_then(Value::as_str));
-        out.push_str(&format!("| `{key}` | {desc} |\n"));
+        let _ = writeln!(out, "| `{key}` | {desc} |");
     }
     out.push('\n');
 
@@ -41,7 +43,7 @@ pub fn generate(root: &Value) -> String {
 fn write_section(out: &mut String, path: &[&str], schema: &Value, defs: &Map<String, Value>) {
     let hashes = "#".repeat(path.len() + 1);
     let path_str = path.join(".");
-    out.push_str(&format!("{hashes} `{path_str}`\n\n"));
+    let _ = writeln!(out, "{hashes} `{path_str}`\n");
 
     if let Some(desc) = schema.get("description").and_then(Value::as_str) {
         out.push_str(desc);
@@ -91,9 +93,7 @@ fn write_section(out: &mut String, path: &[&str], schema: &Value, defs: &Map<Str
             .map(|p| !p.is_empty())
             .unwrap_or(false);
 
-        out.push_str(&format!(
-            "| `{key}`{req}{secret} | {ty} | {default} | {desc} |\n"
-        ));
+        let _ = writeln!(out, "| `{key}`{req}{secret} | {ty} | {default} | {desc} |");
 
         // Only recurse up to depth 3 (e.g. agent.auto_classify.something)
         if has_sub && path.len() < 3 {
