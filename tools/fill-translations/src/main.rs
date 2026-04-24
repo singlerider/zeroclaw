@@ -255,6 +255,35 @@ async fn translate_batch(
     locale: &str,
     batch: &[&str],
 ) -> anyhow::Result<Vec<String>> {
+    // Single-entry: skip JSON entirely, use raw response as the translation
+    if batch.len() == 1 {
+        let prompt = format!(
+            "Translate the following English documentation string to {locale}.\n\
+             - Return ONLY the translated string, nothing else.\n\
+             - Do NOT translate: proper nouns, brand names (e.g. ZeroClaw, Anthropic, GitHub), command names, or code literals.\n\
+             - Preserve exactly: backticks, bold (**text**), inline code, URLs, and escape sequences (\\n, \\t, etc.).\n\
+             - If the string is already in {locale} or is a code literal, return it unchanged.\n\n\
+             {}",
+            batch[0]
+        );
+        let body = serde_json::json!({
+            "model": provider.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "reasoning_effort": "none"
+        });
+        let mut req = client.post(format!("{}/v1/chat/completions", provider.base_url)).json(&body);
+        if let Some(key) = &provider.api_key {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        let resp = req.send().await?.error_for_status()?.json::<serde_json::Value>().await?;
+        let text = resp["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("no content in response: {resp}"))?
+            .trim()
+            .to_string();
+        return Ok(vec![text]);
+    }
+
     let items: String = batch
         .iter()
         .map(|s| format!("- {s}"))
