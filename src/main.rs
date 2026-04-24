@@ -52,8 +52,18 @@ fn parse_temperature(s: &str) -> std::result::Result<f64, String> {
 fn print_no_command_help(cmd: clap::Command) -> Result<()> {
     #[cfg(feature = "agent-runtime")]
     {
-        println!("{}", crate::i18n::get_cli_string("cli-no-command-provided").as_deref().unwrap_or("No command provided."));
-        println!("{}", crate::i18n::get_cli_string("cli-try-onboard").as_deref().unwrap_or("Try `zeroclaw onboard` to initialize your workspace."));
+        println!(
+            "{}",
+            crate::i18n::get_cli_string("cli-no-command-provided")
+                .as_deref()
+                .unwrap_or("No command provided.")
+        );
+        println!(
+            "{}",
+            crate::i18n::get_cli_string("cli-try-onboard")
+                .as_deref()
+                .unwrap_or("Try `zeroclaw onboard` to initialize your workspace.")
+        );
     }
     #[cfg(not(feature = "agent-runtime"))]
     {
@@ -137,6 +147,8 @@ mod platform;
 #[cfg(feature = "plugins-wasm")]
 mod plugins;
 mod providers;
+#[cfg(feature = "schema-export")]
+mod schema_markdown;
 #[cfg(feature = "agent-runtime")]
 mod security;
 #[cfg(feature = "agent-runtime")]
@@ -157,8 +169,6 @@ mod tui;
 mod tunnel;
 #[cfg(feature = "agent-runtime")]
 mod util;
-#[cfg(feature = "schema-export")]
-mod schema_markdown;
 #[cfg(feature = "agent-runtime")]
 mod verifiable_intent;
 
@@ -958,7 +968,8 @@ fn apply_i18n_to_command(cmd: clap::Command) -> clap::Command {
 
 #[cfg(feature = "agent-runtime")]
 fn apply_cmd_translations(cmd: clap::Command, prefix: &str) -> clap::Command {
-    let sub_names: Vec<String> = cmd.get_subcommands()
+    let sub_names: Vec<String> = cmd
+        .get_subcommands()
         .map(|s| s.get_name().to_string())
         .collect();
 

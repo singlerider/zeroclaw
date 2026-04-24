@@ -4,11 +4,16 @@ use serde_json::{Map, Value};
 /// No intermediate JSON file, no external tools.
 pub fn generate(root: &Value) -> String {
     let empty = Map::new();
-    let defs = root.get("$defs").and_then(Value::as_object).unwrap_or(&empty);
+    let defs = root
+        .get("$defs")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
 
     let mut out = String::new();
     out.push_str("# Config Reference\n\n");
-    out.push_str("ZeroClaw is configured via a TOML file. All fields are optional unless noted.\n\n");
+    out.push_str(
+        "ZeroClaw is configured via a TOML file. All fields are optional unless noted.\n\n",
+    );
 
     let Some(props) = root.get("properties").and_then(Value::as_object) else {
         return out;
@@ -44,7 +49,10 @@ fn write_section(out: &mut String, path: &[&str], schema: &Value, defs: &Map<Str
     }
 
     let empty = Map::new();
-    let props = schema.get("properties").and_then(Value::as_object).unwrap_or(&empty);
+    let props = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
     if props.is_empty() {
         return;
     }
@@ -64,9 +72,13 @@ fn write_section(out: &mut String, path: &[&str], schema: &Value, defs: &Map<Str
         let resolved = resolve(prop_schema, defs);
         let ty = type_label(resolved, defs);
         let default = fmt_default(resolved);
-        let desc = first_line(resolved.get("description").and_then(Value::as_str))
-            .replace('|', "\\|");
-        let req = if required.contains(&key.as_str()) { "\\*" } else { "" };
+        let desc =
+            first_line(resolved.get("description").and_then(Value::as_str)).replace('|', "\\|");
+        let req = if required.contains(&key.as_str()) {
+            "\\*"
+        } else {
+            ""
+        };
         let secret = if resolved.get("x-secret").and_then(Value::as_bool) == Some(true) {
             " 🔑"
         } else {
@@ -79,7 +91,9 @@ fn write_section(out: &mut String, path: &[&str], schema: &Value, defs: &Map<Str
             .map(|p| !p.is_empty())
             .unwrap_or(false);
 
-        out.push_str(&format!("| `{key}`{req}{secret} | {ty} | {default} | {desc} |\n"));
+        out.push_str(&format!(
+            "| `{key}`{req}{secret} | {ty} | {default} | {desc} |\n"
+        ));
 
         // Only recurse up to depth 3 (e.g. agent.auto_classify.something)
         if has_sub && path.len() < 3 {

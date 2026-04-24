@@ -53,7 +53,10 @@ fn check_ftl_file(path: &Path) -> anyhow::Result<Vec<(usize, String)>> {
             // Check for unescaped braces in value (Fluent requires {"{"}...{"}"})
             check_unescaped_braces(value, line_no, &mut errors);
         } else if !trimmed.starts_with('-') {
-            errors.push((line_no, format!("malformed line (expected 'key = value'): {trimmed}")));
+            errors.push((
+                line_no,
+                format!("malformed line (expected 'key = value'): {trimmed}"),
+            ));
         }
     }
 
@@ -87,7 +90,12 @@ fn check_unescaped_braces(value: &str, line_no: usize, errors: &mut Vec<(usize, 
                     // tools.ftl which uses only escaped literals, flag bare {.
                     let peek = chars.get(i + 1).copied();
                     if !matches!(peek, Some('$' | '-' | '.')) {
-                        errors.push((line_no, format!("unescaped '{{' at col {i}; use {{\"{{\"}} for a literal brace")));
+                        errors.push((
+                            line_no,
+                            format!(
+                                "unescaped '{{' at col {i}; use {{\"{{\"}} for a literal brace"
+                            ),
+                        ));
                     }
                     i += 1;
                 }

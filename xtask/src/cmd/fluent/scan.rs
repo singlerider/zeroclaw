@@ -95,7 +95,13 @@ fn is_referenced_in_source(root: &std::path::Path, key: &str) -> bool {
 
 fn extract_tool_names_from_source(root: &std::path::Path) -> Vec<String> {
     let output = Command::new("grep")
-        .args(["-r", "--include=*.rs", "-h", "-o", r#"fn name.*"[a-z][a-z0-9_]*""#])
+        .args([
+            "-r",
+            "--include=*.rs",
+            "-h",
+            "-o",
+            r#"fn name.*"[a-z][a-z0-9_]*""#,
+        ])
         .arg(root.join("crates"))
         .output();
 
@@ -105,12 +111,13 @@ fn extract_tool_names_from_source(root: &std::path::Path) -> Vec<String> {
         for line in text.lines() {
             // Extract the string literal from fn name return
             if let Some(start) = line.rfind('"')
-                && let Some(end) = line[..start].rfind('"') {
-                    let name = &line[end + 1..start];
-                    if !name.is_empty() {
-                        names.push(name.to_string());
-                    }
+                && let Some(end) = line[..start].rfind('"')
+            {
+                let name = &line[end + 1..start];
+                if !name.is_empty() {
+                    names.push(name.to_string());
                 }
+            }
         }
     }
     names

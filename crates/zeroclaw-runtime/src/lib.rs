@@ -7,7 +7,6 @@ pub mod util;
 
 pub mod agent;
 pub mod approval;
-pub mod i18n;
 pub mod cost;
 pub mod cron;
 pub mod daemon;
@@ -15,6 +14,7 @@ pub mod doctor;
 pub mod health;
 pub mod heartbeat;
 pub mod hooks;
+pub mod i18n;
 pub mod integrations;
 pub mod nodes;
 pub mod observability;

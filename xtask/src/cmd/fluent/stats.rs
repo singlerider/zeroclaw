@@ -29,8 +29,15 @@ pub fn run() -> anyhow::Result<()> {
     for locale in &locales {
         let locale_dir = locales_dir.join(locale);
         let locale_keys = collect_keys(&locale_dir).unwrap_or_default();
-        let present = locale_keys.iter().filter(|k| en_keys.contains(k.as_str())).count();
-        let pct = if total == 0 { 100.0 } else { present as f64 / total as f64 * 100.0 };
+        let present = locale_keys
+            .iter()
+            .filter(|k| en_keys.contains(k.as_str()))
+            .count();
+        let pct = if total == 0 {
+            100.0
+        } else {
+            present as f64 / total as f64 * 100.0
+        };
         println!("{:<10} {:>6} {:>6}  {:.1}%", locale, present, total, pct);
     }
 

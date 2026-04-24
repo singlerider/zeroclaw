@@ -1,5 +1,5 @@
-use xtask::cmd;
 use clap::{Parser, Subcommand};
+use xtask::cmd;
 
 #[derive(Parser)]
 #[command(name = "fluent", about = "ZeroClaw Fluent app UI translation")]
@@ -32,9 +32,13 @@ enum Cmd {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Scan                   => cmd::fluent::scan::run(),
-        Cmd::Fill { locale, force, provider } => cmd::fluent::fill::run(locale.as_deref(), force, provider.as_deref()),
-        Cmd::Stats                  => cmd::fluent::stats::run(),
-        Cmd::Check                  => cmd::fluent::check::run(),
+        Cmd::Scan => cmd::fluent::scan::run(),
+        Cmd::Fill {
+            locale,
+            force,
+            provider,
+        } => cmd::fluent::fill::run(locale.as_deref(), force, provider.as_deref()),
+        Cmd::Stats => cmd::fluent::stats::run(),
+        Cmd::Check => cmd::fluent::check::run(),
     }
 }

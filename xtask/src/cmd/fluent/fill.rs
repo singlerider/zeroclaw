@@ -13,7 +13,11 @@ fn resolve_backend(provider: &str) -> anyhow::Result<Backend> {
     let cfg = read_provider_config(provider)?;
     let model = cfg.model
         .ok_or_else(|| anyhow::anyhow!("No model set for provider '{provider}' — add `model = \"...\"` to [providers.models.{provider}] in config.toml"))?;
-    Ok(Backend { base_url: cfg.base_url, model, api_key: cfg.api_key })
+    Ok(Backend {
+        base_url: cfg.base_url,
+        model,
+        api_key: cfg.api_key,
+    })
 }
 
 pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>) -> anyhow::Result<()> {
@@ -30,7 +34,11 @@ pub fn run(locale: Option<&str>, force: bool, provider: Option<&str>) -> anyhow:
         None => locales().into_iter().filter(|l| l != "en").collect(),
     };
 
-    let provider_name = provider.ok_or_else(|| anyhow::anyhow!("--provider <name> is required (configured in [providers.models.<name>] in config.toml)"))?;
+    let provider_name = provider.ok_or_else(|| {
+        anyhow::anyhow!(
+            "--provider <name> is required (configured in [providers.models.<name>] in config.toml)"
+        )
+    })?;
     let backend = resolve_backend(provider_name)?;
 
     for target_locale in &targets {
@@ -72,7 +80,10 @@ fn fill_ftl_file(
         .collect();
 
     if to_translate.is_empty() {
-        println!("==> {locale}/{}: up to date, skipping AI step", en_path.file_name().unwrap().to_string_lossy());
+        println!(
+            "==> {locale}/{}: up to date, skipping AI step",
+            en_path.file_name().unwrap().to_string_lossy()
+        );
         return Ok(());
     }
 
@@ -140,7 +151,8 @@ fn call_api(
             ],
             "reasoning_effort": "none"
         });
-        let mut req = client.post(format!("{}/v1/chat/completions", backend.base_url))
+        let mut req = client
+            .post(format!("{}/v1/chat/completions", backend.base_url))
             .json(&body);
         if let Some(key) = &backend.api_key {
             req = req.header("Authorization", format!("Bearer {key}"));
@@ -221,7 +233,9 @@ fn parse_ftl(src: &str) -> Vec<(String, String)> {
         // New `key = value` or `key =` (multi-line) line
         let parsed_kv = if let Some((k, v)) = trimmed.split_once(" = ") {
             Some((k.trim(), v.trim()))
-        } else { trimmed.strip_suffix(" =").map(|k| (k.trim(), "")) };
+        } else {
+            trimmed.strip_suffix(" =").map(|k| (k.trim(), ""))
+        };
         if let Some((key, value)) = parsed_kv {
             flush_entry(&mut entries, &mut current_key, &mut current_lines);
             current_key = Some(key.to_string());
@@ -235,7 +249,11 @@ fn parse_ftl(src: &str) -> Vec<(String, String)> {
     entries
 }
 
-fn flush_entry(entries: &mut Vec<(String, String)>, key: &mut Option<String>, lines: &mut Vec<String>) {
+fn flush_entry(
+    entries: &mut Vec<(String, String)>,
+    key: &mut Option<String>,
+    lines: &mut Vec<String>,
+) {
     if let Some(k) = key.take() {
         while lines.last().is_some_and(|l| l.is_empty()) {
             lines.pop();
@@ -285,7 +303,8 @@ fn write_ftl(
     }
 
     // Append any locale-only keys not in en (shouldn't normally exist, but be safe)
-    let en_set: std::collections::HashSet<&str> = en_entries.iter().map(|(k, _)| k.as_str()).collect();
+    let en_set: std::collections::HashSet<&str> =
+        en_entries.iter().map(|(k, _)| k.as_str()).collect();
     for (key, value) in locale_entries {
         if !en_set.contains(key.as_str()) {
             write_ftl_entry(&mut out, key, value);
