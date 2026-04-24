@@ -247,7 +247,7 @@ fn parse_po(lines: &[String]) -> Vec<Entry> {
             continue;
         }
 
-        if trimmed.starts_with("msgid ") {
+        if let Some(rest) = trimmed.strip_prefix("msgid ") {
             if msgstr_line_idx.is_some() {
                 commit_entry(
                     &mut entries,
@@ -264,16 +264,16 @@ fn parse_po(lines: &[String]) -> Vec<Entry> {
             in_msgid = true;
             in_msgstr = false;
             msgid_lines.clear();
-            msgid_lines.push(trimmed[6..].to_string());
+            msgid_lines.push(rest.to_string());
             continue;
         }
 
-        if trimmed.starts_with("msgstr ") {
+        if let Some(rest) = trimmed.strip_prefix("msgstr ") {
             in_msgid = false;
             in_msgstr = true;
             msgstr_lines.clear();
             msgstr_line_idx = Some(idx);
-            msgstr_lines.push(trimmed[7..].to_string());
+            msgstr_lines.push(rest.to_string());
             continue;
         }
 

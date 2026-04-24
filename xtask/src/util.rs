@@ -106,7 +106,7 @@ pub fn ftl_files_in(locale_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut out = vec![];
     for entry in std::fs::read_dir(locale_dir)? {
         let entry = entry?;
-        if entry.path().extension().map_or(false, |e| e == "ftl") {
+        if entry.path().extension().is_some_and(|e| e == "ftl") {
             out.push(entry.path());
         }
     }

@@ -17,7 +17,7 @@ pub fn run() -> anyhow::Result<()> {
     let en_keys = collect_keys(&en_dir)?;
     let total = en_keys.len();
 
-    println!("{:<10} {:>6} {:>6}  {}", "locale", "keys", "total", "coverage");
+    println!("{:<10} {:>6} {:>6}  coverage", "locale", "keys", "total");
     println!("{}", "-".repeat(36));
 
     // en is always 100%

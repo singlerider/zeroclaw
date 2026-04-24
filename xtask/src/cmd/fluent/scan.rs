@@ -104,14 +104,13 @@ fn extract_tool_names_from_source(root: &std::path::Path) -> Vec<String> {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
             // Extract the string literal from fn name return
-            if let Some(start) = line.rfind('"') {
-                if let Some(end) = line[..start].rfind('"') {
+            if let Some(start) = line.rfind('"')
+                && let Some(end) = line[..start].rfind('"') {
                     let name = &line[end + 1..start];
                     if !name.is_empty() {
                         names.push(name.to_string());
                     }
                 }
-            }
         }
     }
     names

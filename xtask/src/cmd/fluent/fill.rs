@@ -221,11 +221,7 @@ fn parse_ftl(src: &str) -> Vec<(String, String)> {
         // New `key = value` or `key =` (multi-line) line
         let parsed_kv = if let Some((k, v)) = trimmed.split_once(" = ") {
             Some((k.trim(), v.trim()))
-        } else if let Some(k) = trimmed.strip_suffix(" =") {
-            Some((k.trim(), ""))
-        } else {
-            None
-        };
+        } else { trimmed.strip_suffix(" =").map(|k| (k.trim(), "")) };
         if let Some((key, value)) = parsed_kv {
             flush_entry(&mut entries, &mut current_key, &mut current_lines);
             current_key = Some(key.to_string());
@@ -241,7 +237,7 @@ fn parse_ftl(src: &str) -> Vec<(String, String)> {
 
 fn flush_entry(entries: &mut Vec<(String, String)>, key: &mut Option<String>, lines: &mut Vec<String>) {
     if let Some(k) = key.take() {
-        while lines.last().map_or(false, |l| l.is_empty()) {
+        while lines.last().is_some_and(|l| l.is_empty()) {
             lines.pop();
         }
         let value = lines.join("\n");

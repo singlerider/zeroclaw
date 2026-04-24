@@ -7,7 +7,7 @@ pub fn run() -> anyhow::Result<()> {
 
     let mut entries: Vec<_> = std::fs::read_dir(&po_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |x| x == "po"))
+        .filter(|e| e.path().extension().is_some_and(|x| x == "po"))
         .collect();
     entries.sort_by_key(|e| e.path());
 
