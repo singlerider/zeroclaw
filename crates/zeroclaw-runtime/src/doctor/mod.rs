@@ -929,12 +929,14 @@ fn check_environment(items: &mut Vec<DiagItem>) {
     // git
     check_command_available("git", &["--version"], cat, items);
 
-    // Shell
-    let shell = std::env::var("SHELL").unwrap_or_default();
-    if shell.is_empty() {
-        items.push(DiagItem::warn(cat, "$SHELL not set"));
-    } else {
-        items.push(DiagItem::ok(cat, format!("shell: {shell}")));
+    // Shell — Unix uses $SHELL, Windows uses %ComSpec% (path to cmd.exe).
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("ComSpec").ok().filter(|s| !s.is_empty()));
+    match shell {
+        Some(s) => items.push(DiagItem::ok(cat, format!("shell: {s}"))),
+        None => items.push(DiagItem::warn(cat, "neither $SHELL nor %ComSpec% is set")),
     }
 
     // HOME
