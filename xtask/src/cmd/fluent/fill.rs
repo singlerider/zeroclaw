@@ -189,12 +189,17 @@ fn call_api(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No content in response: {text}"))?;
 
-    // Strip markdown code fences if present
+    // Strip markdown code fences and stray inline backticks. Models sometimes
+    // wrap a single-line JSON response in `` `…` `` instead of a fenced block,
+    // so handle both shapes.
     let json_str = content
         .trim()
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
+        .trim()
+        .trim_start_matches('`')
+        .trim_end_matches('`')
         .trim();
 
     let translations: serde_json::Value = serde_json::from_str(json_str)
