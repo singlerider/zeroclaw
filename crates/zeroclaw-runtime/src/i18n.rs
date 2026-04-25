@@ -161,16 +161,18 @@ mod tests {
     }
 
     #[test]
-    fn detect_locale_from_env() {
+    fn detect_locale_ignores_env_vars() {
+        // Locale is intentionally config-only. Env vars (ZEROCLAW_LOCALE, LANG,
+        // LC_ALL) are not consulted — locale is a persistent user preference, not
+        // a per-invocation override.
         let saved = std::env::var("ZEROCLAW_LOCALE").ok();
-        // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("ZEROCLAW_LOCALE", "ja-JP") };
-        assert_eq!(detect_locale(), "ja-JP");
+        // Without a matching config.toml entry, must fall back to "en".
+        let result = detect_locale();
         match saved {
-            // SAFETY: test-only, single-threaded test runner.
             Some(v) => unsafe { std::env::set_var("ZEROCLAW_LOCALE", v) },
-            // SAFETY: test-only, single-threaded test runner.
             None => unsafe { std::env::remove_var("ZEROCLAW_LOCALE") },
         }
+        assert_eq!(result, "en");
     }
 }

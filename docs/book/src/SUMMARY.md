@@ -97,6 +97,16 @@
 - [Extension examples](./developing/extension-examples.md)
 - [Building the docs locally](./developing/building-docs.md)
 
+# Foundations
+
+- [Overview](./foundations/README.md)
+- [Intentional architecture](./foundations/fnd-001-intentional-architecture.md)
+- [Documentation standards](./foundations/fnd-002-documentation-standards.md)
+- [Governance](./foundations/fnd-003-governance.md)
+- [Engineering infrastructure](./foundations/fnd-004-engineering-infrastructure.md)
+- [Contribution culture](./foundations/fnd-005-contribution-culture.md)
+- [Zero compromise in practice](./foundations/fnd-006-zero-compromise-in-practice.md)
+
 # Contributing
 
 - [How to contribute](./contributing/how-to.md)

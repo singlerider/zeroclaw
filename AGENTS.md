@@ -122,6 +122,24 @@ AI coding assistant skills live in `.claude/skills/`. Use the right one for the 
 - `.claude/skills/github-pr-review-session/SKILL.md` — PR review co-pilot; assists **you** as the human reviewer. Posts reviews as WareWolf-MoonWall using the RFC feedback taxonomy (🔴/🟡/✅/🔵/🟢). Trigger: `review 1234`, `re-review 1234`, `go through the queue`.
 - `.claude/skills/changelog-generation/SKILL.md` — generates `CHANGELOG-next.md` between stable tags, resolves contributors via GraphQL, feeds the release workflow. Trigger: `generate changelog`, `release notes for v0.7.x`.
 
+## Localization
+
+- All user-facing output (CLI messages, tool descriptions, onboarding prompts) must use `fl!()` / Fluent strings — never bare string literals.
+- Log messages, `tracing::` spans/events, and panic messages stay in English with stable `error_key` fields (RFC #5653 §4.6).
+- Panics and `tracing::` lines are never translated.
+- The Wiki and internal developer docs are English only.
+
+Dev-operational contracts — files consumed by AI coding skills and development tooling. Do not move or delete without updating all consuming skills and AGENTS.md:
+
+| Protected file | Consuming skill / tool |
+|---|---|
+| `docs/contributing/pr-review-prompt.md` | `github-pr-review-session` — review protocol |
+| `docs/contributing/changelog-generation.md` | `changelog-generation` — release procedure |
+| `docs/contributing/reviewer-playbook.md` | `github-issue-triage` — triage governance |
+| `docs/contributing/pr-workflow.md` | `github-issue-triage` — triage discipline |
+| `docs/contributing/pr-discipline.md` | `github-issue-triage`, PR template — privacy rules |
+| `docs/foundations/fnd-00*.md` | `github-pr-review-session` — RFC reference data; public transparency documents |
+
 ## Linked References
 
 - `@docs/contributing/change-playbooks.md` — adding providers, channels, tools, peripherals; security/gateway changes; architecture boundaries
