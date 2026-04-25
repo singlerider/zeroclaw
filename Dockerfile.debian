@@ -87,7 +87,7 @@ RUN size=$(stat -c%s /app/zeroclaw) && \
 # runtime stage serves it at GET /. The dashboard was decoupled from the
 # binary in #5665 and is now served from disk at `gateway.web_dist_dir`;
 # without this copy the image would return HTTP 503 on /.
-RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace && \
+RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace /zeroclaw-data/web && \
     cp -r web/dist /zeroclaw-data/web/dist && \
     printf '%s\n' \
         'workspace_dir = "/zeroclaw-data/workspace"' \
