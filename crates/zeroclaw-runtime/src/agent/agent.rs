@@ -2084,6 +2084,66 @@ mod tests {
         }
     }
 
+    // ── Duplicate narration guard ────────────────────────────────────
+
+    /// When the model returns narration text alongside tool calls, the agent
+    /// must store exactly ONE assistant history entry (AssistantToolCalls) —
+    /// not a plain Chat(assistant) followed by AssistantToolCalls. The latter
+    /// pattern causes providers that enforce role-alternation to reject the
+    /// next request with a consecutive-assistant-role error.
+    #[tokio::test]
+    async fn narration_with_tool_calls_produces_no_consecutive_assistant_entries() {
+        let memory_cfg = zeroclaw_config::schema::MemoryConfig {
+            backend: "none".into(),
+            ..zeroclaw_config::schema::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            zeroclaw_memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None)
+                .expect("memory creation should succeed with valid config"),
+        );
+
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![zeroclaw_providers::ChatResponse {
+                text: Some("I will echo the message.".into()),
+                tool_calls: vec![zeroclaw_providers::ToolCall {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: "{}".into(),
+                }],
+                usage: None,
+                reasoning_content: None,
+            }]),
+        });
+
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let mut agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .expect("agent builder should succeed with valid config");
+
+        agent.turn("hi").await.unwrap();
+
+        let history = agent.history();
+        for window in history.windows(2) {
+            let prev_is_assistant_chat = matches!(
+                &window[0],
+                ConversationMessage::Chat(m) if m.role == "assistant"
+            );
+            let next_is_tool_calls =
+                matches!(&window[1], ConversationMessage::AssistantToolCalls { .. });
+            assert!(
+                !(prev_is_assistant_chat && next_is_tool_calls),
+                "history contains Chat(assistant) immediately before AssistantToolCalls — \
+                 duplicate narration push was not removed"
+            );
+        }
+    }
+
     // ── Skill tool registration & excluded_tools filtering ──────────
 
     /// A mock tool whose name is configurable (unlike `MockTool` which is
