@@ -84,10 +84,10 @@ Each tool is registered via factory and described to the model via Fluent-locali
 
 ### `zeroclaw-memory`
 
-Conversation memory and retrieval. SQLite is the default backend. Optional:
+Conversation memory and retrieval. SQLite is the default backend; PostgreSQL is available behind `--features memory-postgres` for multi-instance deployments that need a shared, concurrent-write store. Optional:
 
 - Embedding backends (OpenAI, Ollama, local)
-- Vector retrieval over stored conversations
+- Vector retrieval over stored conversations (pgvector when on PostgreSQL)
 - Memory consolidation (summaries, fact extraction)
 
 ### `zeroclaw-tool-call-parser`

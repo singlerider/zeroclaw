@@ -5085,14 +5085,11 @@ impl Default for StorageProviderConfig {
     }
 }
 
-/// Memory backend configuration (`[memory]` section).
-///
-/// Controls conversation memory storage, embeddings, hybrid search, response caching,
-/// and memory snapshot/hydration.
-/// Configuration for Qdrant vector database backend (`[memory.qdrant]`).
-/// Used when `[memory].backend = "qdrant"`.
 /// PostgreSQL memory backend configuration (`[memory.postgres]` section).
-/// Used when `[memory].backend = "postgres"`.
+///
+/// Used when `[memory].backend = "postgres"`. Connection parameters
+/// (`db_url`, `schema`, `table`, `connect_timeout_secs`) live under
+/// `[storage.provider.config]`; this struct only holds vector-search settings.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "memory.postgres"]
@@ -5115,6 +5112,11 @@ impl Default for PostgresMemoryConfig {
     }
 }
 
+/// Qdrant vector database backend configuration (`[memory.qdrant]` section).
+///
+/// Used when `[memory].backend = "qdrant"`. URL, collection, and API key all
+/// fall back to environment variables (`QDRANT_URL`, `QDRANT_COLLECTION`,
+/// `QDRANT_API_KEY`) when not set explicitly.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "memory.qdrant"]
@@ -5161,6 +5163,11 @@ pub enum SearchMode {
     Hybrid,
 }
 
+/// Memory backend configuration (`[memory]` section).
+///
+/// Controls conversation memory storage, embeddings, hybrid search, response
+/// caching, and memory snapshot/hydration. Backend-specific sub-tables
+/// (`[memory.qdrant]`, `[memory.postgres]`) live alongside.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[prefix = "memory"]
