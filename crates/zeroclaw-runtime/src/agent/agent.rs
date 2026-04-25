@@ -966,10 +966,6 @@ impl Agent {
             }
 
             if !text.is_empty() {
-                self.history
-                    .push(ConversationMessage::Chat(ChatMessage::assistant(
-                        text.clone(),
-                    )));
                 print!("{text}");
                 let _ = std::io::stdout().flush();
             }
@@ -1237,13 +1233,6 @@ impl Agent {
             }
 
             // ── Tool calls ─────────────────────────────────────────────
-            if !text.is_empty() {
-                self.history
-                    .push(ConversationMessage::Chat(ChatMessage::assistant(
-                        text.clone(),
-                    )));
-            }
-
             self.history.push(ConversationMessage::AssistantToolCalls {
                 text: response.text.clone(),
                 tool_calls: response.tool_calls.clone(),
