@@ -575,8 +575,6 @@ The Release PR from `release-plz` is the release review checkpoint. Before anyth
 ---
 
 
----
-
 ## Appendix A: Glossary
 
 **SLSA (Supply-chain Levels for Software Artifacts)** — A security framework that defines levels of build integrity, from basic provenance to fully hermetic builds. Developed by Google and adopted by the OpenSSF. Level 2 is the practical target for most open-source projects: hosted build platform, version-controlled build scripts, signed provenance attached to artifacts.

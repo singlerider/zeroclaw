@@ -13,7 +13,6 @@
 
 ---
 
----
 
 ## Revision History
 
@@ -1037,8 +1036,6 @@ By v1.0.0, the governance model should be self-sustaining — the team should no
 
 ---
 
-
----
 
 ## Appendix A: Glossary
 

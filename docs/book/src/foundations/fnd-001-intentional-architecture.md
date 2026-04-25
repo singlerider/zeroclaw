@@ -826,8 +826,6 @@ A published WIT interface and plugin SDK means anyone can extend ZeroClaw withou
 ---
 
 
----
-
 ## Appendix A: Glossary
 
 Terms used in this document that may be unfamiliar:

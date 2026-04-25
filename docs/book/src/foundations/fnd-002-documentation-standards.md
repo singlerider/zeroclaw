@@ -722,8 +722,6 @@ The documentation migration follows the same Strangler Fig pattern as the archit
 ---
 
 
----
-
 ## Appendix A: Glossary
 
 **ADR (Architecture Decision Record)** — An immutable record of a significant architectural decision: the context that prompted it, what was decided, and the consequences. ADRs do not change once accepted; superseded decisions are recorded as new ADRs.
