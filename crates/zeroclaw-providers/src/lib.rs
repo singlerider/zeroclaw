@@ -1846,6 +1846,9 @@ pub fn create_resilient_provider_with_options(
         };
 
         let create_result = match actual_provider_name {
+            // Codex manages its own endpoint via OAuth token exchange; config
+            // base_url is intentionally not forwarded — use provider_api_url
+            // in ProviderRuntimeOptions if an endpoint override is needed.
             "openai-codex" | "openai_codex" | "codex" => create_provider_with_options(
                 actual_provider_name,
                 config_api_key,
