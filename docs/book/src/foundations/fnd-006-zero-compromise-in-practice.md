@@ -8,35 +8,35 @@
 
 --------
 
-│ A note to the team before you read this.
-│
-│ This is the sixth document in ZeroClaw's maturity framework. The five before it
-│ addressed architecture, documentation, governance, engineering infrastructure, and
-│ collaboration — the structural and human scaffolding that surrounds the work. Each
-│ one answered a different question about how we build this project together. If you
-│ have read them all, you may have noticed a question none of them answered: yes, but
-│ how do we actually write it well? The architecture RFC told you what shape to build
-│ in. The documentation RFC told you how to record it. The governance RFC told you how
-│ to coordinate. The CI/CD RFC told you how to gate it. The culture RFC told you how
-│ to work with the people around you. None of them told you what quality looks like at
-│ the sentence level — inside a function, at the moment you are making a choice.
-│
-│ That is what this document is for.
-│
-│ The specific topics here — error handling, API documentation, test design, technical
-│ debt — are Rust topics on the surface. The skills they develop are not. Technology
-│ changes. It changes faster with each iteration than it did the time before. The tools
-│ you are using today — this language, this framework, this AI assistant — will be
-│ superseded. Some of them within the lifetime of this project. The judgment this
-│ document is trying to help you build will not be superseded. It will compound quietly
-│ in the background of every decision you make, in every language you will ever write,
-│ in every system you will ever build, and in work that may have nothing to do with
-│ software at all. That is the investment we are making in you. Not in your ability to
-│ write Rust. In your ability to think about quality, failure, and craft — and to carry
-│ that thinking with you into every tool you ever pick up, including the AI tools you
-│ are using today and the ones that do not exist yet.
-│
-│ Take your time with it.
+> A note to the team before you read this.
+>
+> This is the sixth document in ZeroClaw's maturity framework. The five before it
+> addressed architecture, documentation, governance, engineering infrastructure, and
+> collaboration — the structural and human scaffolding that surrounds the work. Each
+> one answered a different question about how we build this project together. If you
+> have read them all, you may have noticed a question none of them answered: yes, but
+> how do we actually write it well? The architecture RFC told you what shape to build
+> in. The documentation RFC told you how to record it. The governance RFC told you how
+> to coordinate. The CI/CD RFC told you how to gate it. The culture RFC told you how
+> to work with the people around you. None of them told you what quality looks like at
+> the sentence level — inside a function, at the moment you are making a choice.
+>
+> That is what this document is for.
+>
+> The specific topics here — error handling, API documentation, test design, technical
+> debt — are Rust topics on the surface. The skills they develop are not. Technology
+> changes. It changes faster with each iteration than it did the time before. The tools
+> you are using today — this language, this framework, this AI assistant — will be
+> superseded. Some of them within the lifetime of this project. The judgment this
+> document is trying to help you build will not be superseded. It will compound quietly
+> in the background of every decision you make, in every language you will ever write,
+> in every system you will ever build, and in work that may have nothing to do with
+> software at all. That is the investment we are making in you. Not in your ability to
+> write Rust. In your ability to think about quality, failure, and craft — and to carry
+> that thinking with you into every tool you ever pick up, including the AI tools you
+> are using today and the ones that do not exist yet.
+>
+> Take your time with it.
 
 --------
 
@@ -248,11 +248,11 @@ standards produce code that passes every check and still fails users. Standards 
 gates are unenforceable. You need both. The project currently has good gates and
 underdeveloped standards.
 
-│ A codebase can pass every gate and still be incomprehensible to the next contributor,
-│ silent where it should surface errors, impossible to test in isolation, and insecure
-│ at the boundary where user input meets business logic. The green checkmark answers the
-│ question "did this code pass the rules we wrote down?" It does not answer the question
-│ "is this code good?" Those are not the same question.
+> A codebase can pass every gate and still be incomprehensible to the next contributor,
+> silent where it should surface errors, impossible to test in isolation, and insecure
+> at the boundary where user input meets business logic. The green checkmark answers the
+> question "did this code pass the rules we wrote down?" It does not answer the question
+> "is this code good?" Those are not the same question.
 
 This is not a criticism of the gates. The gates are valuable precisely because they
 define a shared, enforceable baseline that every contributor works within. The goal of
@@ -399,7 +399,7 @@ you got it a particular way.
 
 The more important principle is the diagnostic one:
 
-│ A test that is hard to write is usually telling you something about the design.
+> A test that is hard to write is usually telling you something about the design.
 
 If writing a unit test for a function requires standing up a database connection, mocking
 six dependencies, building a full configuration object, and starting an async runtime
@@ -560,7 +560,7 @@ thinking about the person who will one day need to read it.
 
 The question to ask before writing any log message at `warn` or above:
 
-│ What does the person who needs to diagnose this failure at the worst moment need to know?
+> What does the person who needs to diagnose this failure at the worst moment need to know?
 
 That person might be you, six months from now, with no memory of writing this code. It
 might be another contributor who has never seen this module. It might be a user filing a
@@ -713,10 +713,10 @@ It is also, at a deeper level, a question about empathy — about remembering th
 person on the other side of your work is a real person with a real problem, at a moment
 you cannot predict, with context you will not be there to provide.
 
-│ You are not learning Rust. You are, through the vehicle of Rust, learning to build
-│ things that can be trusted. That is portable. It will compound for as long as you
-│ practice it — across every language, every system, every team, and every domain you
-│ ever work in.
+> You are not learning Rust. You are, through the vehicle of Rust, learning to build
+> things that can be trusted. That is portable. It will compound for as long as you
+> practice it — across every language, every system, every team, and every domain you
+> ever work in.
 
 This is the investment the project is making in you. Not in your specific technical
 skills, but in your ability to bring judgment, craft, and care to whatever you build
