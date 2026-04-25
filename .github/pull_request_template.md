@@ -61,4 +61,4 @@ Medium/high-risk PRs must fill:
 
 **Commit trailers** capture AI-assisted collaboration (`Co-Authored-By: Claude ...`) — no separate section needed.
 
-**Privacy contract** (`docs/contributing/pr-discipline.md`) is a merge gate. Never commit real identities, secrets, personal emails, or PII in diff, tests, fixtures, or docs.
+**Privacy contract** (`docs/book/src/contributing/privacy.md`) is a merge gate. Never commit real identities, secrets, personal emails, or PII in diff, tests, fixtures, or docs.

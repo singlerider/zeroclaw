@@ -102,7 +102,7 @@ Branch/commit/PR rules:
 - Work from a non-`master` branch. Open a PR to `master`; do not push directly.
 - Use conventional commit titles. Prefer small PRs (`size: XS/S/M`).
 - Follow `.github/pull_request_template.md` fully.
-- Never commit secrets, personal data, or real identity information (see `@docs/contributing/pr-discipline.md`).
+- Never commit secrets, personal data, or real identity information (see `@docs/book/src/contributing/privacy.md`).
 
 ## Anti-Patterns
 
@@ -133,15 +133,15 @@ Dev-operational contracts — files consumed by AI coding skills and development
 
 | Protected file | Consuming skill / tool |
 |---|---|
-| `docs/contributing/pr-review-prompt.md` | `github-pr-review-session` — review protocol |
-| `docs/contributing/changelog-generation.md` | `changelog-generation` — release procedure |
-| `docs/contributing/reviewer-playbook.md` | `github-issue-triage` — triage governance |
-| `docs/contributing/pr-workflow.md` | `github-issue-triage` — triage discipline |
-| `docs/contributing/pr-discipline.md` | `github-issue-triage`, PR template — privacy rules |
+| `docs/book/src/contributing/pr-review-protocol.md` | `github-pr-review-session` — review protocol |
+| `docs/book/src/maintainers/changelog-generation.md` | `changelog-generation` — release procedure |
+| `docs/book/src/maintainers/reviewer-playbook.md` | `github-issue-triage` — triage governance |
+| `docs/book/src/maintainers/pr-workflow.md` | `github-issue-triage` — triage discipline |
+| `docs/book/src/contributing/privacy.md` | `github-issue-triage`, PR template — privacy rules |
 | `docs/book/src/foundations/fnd-00*.md` | `github-pr-review-session` — RFC reference data; public transparency documents |
 
 ## Linked References
 
-- `@docs/contributing/change-playbooks.md` — adding providers, channels, tools, peripherals; security/gateway changes; architecture boundaries
-- `@docs/contributing/pr-discipline.md` — privacy rules, superseded-PR attribution/templates, handoff template
-- `@docs/contributing/docs-contract.md` — docs system contract, i18n rules, locale parity
+- `@docs/book/src/developing/extension-examples.md` — adding providers, channels, tools, peripherals; tool shared-state contract; architecture boundary rules
+- `@docs/book/src/contributing/privacy.md` — privacy rules and neutral-placeholder palette
+- `@docs/book/src/maintainers/superseding.md` — superseded-PR attribution, PR/commit templates, handoff template

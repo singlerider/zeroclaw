@@ -729,9 +729,9 @@ The SDK handles the host function bindings, the manifest format, and the permiss
 
 The kernel IPC API gets a version prefix (`/v1/`) and a stability guarantee. Breaking changes in v1.x are not permitted to this API. This is the contract that third-party clients and the gateway depend on.
 
-**D5: Extract the versioning policy and stability tier definitions to `docs/contributing/stability-tiers.md`**
+**D5: Extract the versioning policy and stability tier definitions to `docs/book/src/maintainers/stability-tiers.md`**
 
-The versioning policy and stability tier table defined in §4.4.1 of this RFC become a standing contributor reference document at `docs/contributing/stability-tiers.md`. This document is the day-to-day reference contributors use when assigning a tier to a new plugin crate, and that maintainers consult when making release decisions. The RFC itself remains the historical record of *why* these decisions were made; the extracted document is *what* contributors look up.
+The versioning policy and stability tier table defined in §4.4.1 of this RFC become a standing contributor reference document at `docs/book/src/maintainers/stability-tiers.md`. This document is the day-to-day reference contributors use when assigning a tier to a new plugin crate, and that maintainers consult when making release decisions. The RFC itself remains the historical record of *why* these decisions were made; the extracted document is *what* contributors look up.
 
 #### Success Metrics for v1.0.0
 

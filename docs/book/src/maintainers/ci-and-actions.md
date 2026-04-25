@@ -73,3 +73,76 @@ Each fires on `workflow_dispatch` with a version input. They are also invoked fr
 | `CARGO_REGISTRY_TOKEN` | `release-stable-manual.yml` |
 | `DOCKER_HUB_TOKEN` | `release-stable-manual.yml` |
 | `GITHUB_TOKEN` (automatic) | All workflows that push commits or open PRs |
+
+## Build cache behavior
+
+Every job in `ci.yml` uses `Swatinem/rust-cache@v2`. Three behaviors are worth knowing when triaging cache-related flakes:
+
+- **Cache writes are master-only.** `save-if` is conditioned on `github.ref == 'refs/heads/master'`, so PR runs read the master-seeded cache but never update it. PR branches can't pollute the shared cache with branch-specific artifacts.
+- **Cache saves on failure.** `cache-on-failure: true` is set on every job, so a partial run still seeds the next attempt warm.
+- **Windows has no Rust cache.** `if: runner.os != 'Windows'` skips the cache step on the Windows leg — `rust-cache`'s path handling poisons on Windows. Windows always runs cold.
+- **Incremental compilation is disabled.** `CARGO_INCREMENTAL: 0` at the workflow level. Incremental builds inflate cache size and produce non-reproducible artifacts under partial-stale conditions.
+- **`cargo-deny` is not cached.** The `security` job installs it fresh from source on every run. A future improvement is `taiki-e/install-action`, which already caches `cargo-nextest`.
+
+## When the gate goes red
+
+| Symptom | First thing to check |
+|---|---|
+| `CI Required Gate` red | Start with `lint` (fmt/clippy is the most common cause), then `test`, then `build` |
+| Release `validate` failed | `Cargo.toml` version doesn't match the workflow input, or the tag already exists |
+| Release build leg failed | The specific target's job log. Android is `experimental` and runs with `continue-on-error` |
+| Environment gate timed out | Re-run only the timed-out job from the workflow run page |
+| Distribution publisher failed | Re-run the corresponding sub-workflow manually with `dry_run: true` first |
+
+## Allowed actions
+
+The repository runs Actions in `selected` mode — only the actions in this allowlist may run. The allowlist must stay tight; new third-party actions need explicit maintainer approval before being added.
+
+| Action | Used in | Purpose |
+|---|---|---|
+| `actions/checkout@v4` | All workflows | Repository checkout |
+| `actions/upload-artifact@v4` | release | Upload build artifacts |
+| `actions/download-artifact@v4` | release | Download build artifacts for packaging |
+| `actions/labeler@v5` | `pr-path-labeler.yml` | Apply path/scope labels from `.github/labeler.yml` |
+| `dtolnay/rust-toolchain@stable` | All workflows | Install Rust toolchain |
+| `Swatinem/rust-cache@v2` | All workflows | Cargo build/dependency caching |
+| `softprops/action-gh-release@v2` | release | Create GitHub Releases |
+| `docker/setup-buildx-action@v3` | release | Docker Buildx setup |
+| `docker/login-action@v3` | release | GHCR authentication |
+| `docker/build-push-action@v6` | release | Multi-platform image build and push |
+
+Equivalent allowlist patterns (kept narrow on purpose):
+
+```
+actions/*
+dtolnay/rust-toolchain@*
+Swatinem/rust-cache@*
+softprops/action-gh-release@*
+docker/*
+```
+
+Export the current effective policy:
+
+```bash
+gh api repos/zeroclaw-labs/zeroclaw/actions/permissions
+gh api repos/zeroclaw-labs/zeroclaw/actions/permissions/selected-actions
+```
+
+Any PR that adds or changes a `uses:` action source must include an allowlist impact note in its body. Avoid broad wildcard exceptions; expand the allowlist only for verified missing actions.
+
+## Maintenance rules
+
+- Keep `CI Required Gate` deterministic and small. Adding jobs to the gate needs a clear quality argument.
+- All third-party action refs must be pinned to a full commit SHA (per the allowlist policy above).
+- Keep `ci.yml`, `dev/ci.sh`, and `.githooks/pre-push` aligned — the same quality gates run locally and in CI.
+- `docs-quality` checks are not in the required gate. Run them locally with `bash scripts/ci/docs_quality_gate.sh`.
+
+## Emergency rollback
+
+If the allowlist locks out a critical action mid-incident:
+
+1. Temporarily set Actions policy back to `all`.
+2. Restore `selected` allowlist after identifying the missing entry.
+3. Record the incident and the final allowlist delta.
+
+This is the only justified path to `all` mode — and it should never outlast the incident.

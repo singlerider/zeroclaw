@@ -679,7 +679,7 @@ body:
 
         Security vulnerabilities disclosed publicly before a fix is available
         put all ZeroClaw users at risk. Please follow the private disclosure
-        process described in [SECURITY.md](../SECURITY.md).
+        process described in [SECURITY.md](https://github.com/zeroclaw-labs/zeroclaw/blob/master/SECURITY.md).
 
         If you have already filed this as a public issue by mistake, please
         delete it and re-report privately. A Core Team member will contact

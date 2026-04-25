@@ -99,11 +99,11 @@ The **EA Artifacts on a Page** framework defines five families of architecture a
 
 | EA Artifact Family | The Question It Answers | Examples in ZeroClaw | Location |
 |---|---|---|---|
-| **Considerations** | What principles and standards guide our decisions? | `AGENTS.md` files, coding standards, security policy, this doc | `docs/contributing/` or per-crate |
-| **Landscapes** | What does the system look like right now? | Component maps, crate topology, dependency diagrams | `docs/architecture/` |
-| **Outlines** | Where are we going? | RFCs and roadmap proposals | `docs/proposals/` |
-| **Designs** | How exactly are we doing this specific thing? | ADRs, OpenAPI specs, WIT interface files | `docs/architecture/decisions/` |
-| **Standards** | What are the specific rules for how we build? | PR workflow, testing standards, release process | `docs/contributing/` |
+| **Considerations** | What principles and standards guide our decisions? | `AGENTS.md` files, coding standards, security policy, this doc | `docs/book/src/contributing/` or per-crate |
+| **Landscapes** | What does the system look like right now? | Component maps, crate topology, dependency diagrams | `docs/book/src/architecture/` |
+| **Outlines** | Where are we going? | RFCs and roadmap proposals | GitHub Issues with `type:rfc` |
+| **Designs** | How exactly are we doing this specific thing? | ADRs, OpenAPI specs, WIT interface files | `docs/book/src/architecture/` (ADR section) |
+| **Standards** | What are the specific rules for how we build? | PR workflow, testing standards, release process | `docs/book/src/contributing/` and `docs/book/src/maintainers/` |
 
 **What is notably absent from this table:** user guides, setup instructions, channel-specific how-tos, troubleshooting, FAQ. These are **operational content**, not EA artifacts. They do not version with the code. They belong on the GitHub Wiki.
 
@@ -168,27 +168,28 @@ A setup guide for configuring the Telegram channel describes steps a user takes 
 
 ### 5.2 The Split in Practice
 
-**Stays in the repository (`docs/`):**
+**Stays in the repository (`docs/book/src/`):**
 
 | Current location | Artifact family | Notes |
 |---|---|---|
-| `docs/architecture/` | Designs | ADRs, component diagrams |
-| `docs/proposals/` | Outlines | RFCs, roadmap documents |
-| `docs/contributing/` | Considerations + Standards | PR workflow, testing, coding standards |
-| `docs/security/` | Considerations + Designs | Security policy, sandboxing design, audit logging |
-| `docs/hardware/` | Designs | Peripheral design docs, datasheets |
-| `docs/reference/api/` | Designs | Config reference, providers reference — generated from or tightly coupled to code |
-| `docs/reference/cli/` | Designs | Commands reference |
+| `docs/book/src/architecture/` | Landscapes + Designs | Component diagrams, ADRs, crate topology |
+| `docs/book/src/contributing/` | Considerations + Standards | PR workflow, testing, coding standards |
+| `docs/book/src/maintainers/` | Considerations + Standards | Release runbook, reviewer playbook, label policy |
+| `docs/book/src/security/` | Considerations + Designs | Security policy, sandboxing design, audit logging |
+| `docs/book/src/hardware/` | Designs | Peripheral design docs, datasheets |
+| `docs/book/src/reference/config.md` | Designs | Config reference (generated from code) |
+| `docs/book/src/reference/cli.md` | Designs | CLI reference (generated from code) |
+| `docs/book/src/foundations/` | Considerations | Ratified RFCs that shape everything else |
 
-**Moves to the GitHub Wiki:**
+**Moves to the GitHub Wiki (proposed; not yet executed):**
 
 | Current location | Reason for moving |
 |---|---|
-| `docs/setup-guides/` | User-facing how-tos that change independently of code |
-| `docs/ops/operations-runbook.md` | Operational, user-maintained |
-| `docs/ops/troubleshooting.md` | Operational, changes frequently |
-| `docs/ops/network-deployment.md` | Operational, deployment-specific |
-| `docs/setup-guides/mattermost-setup.md` (and similar per-channel guides) | User-facing, change with upstream platform APIs |
+| `docs/book/src/setup/` | User-facing how-tos that change independently of code |
+| `docs/book/src/ops/service.md` | Operational, user-maintained |
+| `docs/book/src/ops/troubleshooting.md` | Operational, changes frequently |
+| `docs/book/src/ops/network-deployment.md` | Operational, deployment-specific |
+| Per-channel setup pages under `docs/book/src/channels/` | User-facing, change with upstream platform APIs |
 
 **Deleted (i18n removal):**
 
@@ -535,11 +536,11 @@ No language variants. No duplicated READMEs. One authoritative English README th
 
 ## 9. The Replacement docs-contract
 
-The current `docs/contributing/docs-contract.md` encodes the i18n parity requirement and a structure that will be obsolete after this RFC is implemented. It should be replaced in full.
+The legacy `docs/contributing/docs-contract.md` encoded an i18n parity requirement and a directory structure that this RFC supersedes. It has been removed; this section is its replacement.
 
-The replacement governs three things: artifact classification, the repo/wiki split, and ADR governance. It says nothing about i18n.
+The replacement governs three things: artifact classification, the repo/wiki split, and ADR governance. It says nothing about i18n — locale parity is now handled by the [Maintainers → Docs & Translations](../maintainers/docs-and-translations.md) page.
 
-**Replacement `docs-contract.md` (abbreviated here for clarity; full version to be written as a follow-up PR):**
+**Replacement docs-contract:**
 
 ```markdown
 # Documentation Contract
@@ -692,7 +693,7 @@ The documentation migration follows the same Strangler Fig pattern as the archit
 - [ ] Write `AGENTS.md` for each new crate as the workspace decomposes (per architecture RFC phases)
 - [ ] Write `docs/architecture/diagrams/component-map.md` (Mermaid, reflects target crate topology)
 - [ ] Write `docs/architecture/diagrams/data-flow.md` (Mermaid, message lifecycle)
-- [ ] Write the plugin SDK documentation in `docs/contributing/plugin-sdk.md`
+- [ ] Write the plugin SDK documentation in `docs/book/src/developing/plugin-sdk.md`
 - [ ] Write the WIT interface documentation alongside the `wit/` files (generated from WIT + hand-written explanation)
 - [ ] Update the OpenAPI spec documentation as the kernel IPC API stabilizes
 
@@ -710,7 +711,7 @@ The documentation migration follows the same Strangler Fig pattern as the archit
 - [ ] Mark ADR-001 through ADR-007 as `accepted` (not `proposed`) once the corresponding code is shipped
 - [ ] Version the kernel IPC API documentation at `v1` with a stability guarantee
 - [ ] Write the Plugin Registry governance document (who controls the registry, how plugins are reviewed, how compromised plugins are revoked)
-- [ ] Publish the plugin SDK as a standalone document site (from `docs/contributing/plugin-sdk.md`)
+- [ ] Publish the plugin SDK as a standalone document site (from `docs/book/src/developing/plugin-sdk.md`)
 - [ ] Establish the Wiki translation coordinator role (a community member who maintains the Translations page and coordinates volunteer translators)
 
 **Success metrics:**

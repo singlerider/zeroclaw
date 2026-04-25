@@ -518,9 +518,9 @@ Implement `build-plugins-wasm` in the release pipeline. Each plugin crate builds
 
 Complete the Tauri build jobs for macOS, Windows, and Linux. The installer bundles the kernel and gateway binaries. Code signing credentials for macOS and Windows are documented as required repository secrets with a setup guide.
 
-**D3: Publish the CI/CD standards to `docs/contributing/ci-standards.md`**
+**D3: Publish the CI/CD standards to `docs/book/src/maintainers/ci-and-actions.md`**
 
-The action pinning policy, advisory triage process, conventional commit requirements, and release pipeline structure defined in this RFC are extracted to `docs/contributing/ci-standards.md` as a standing reference. This RFC remains the historical record of the decisions; the extracted document is what contributors look up day-to-day.
+The action pinning policy, advisory triage process, conventional commit requirements, and release pipeline structure defined in this RFC are extracted to `docs/book/src/maintainers/ci-and-actions.md` as a standing reference. This RFC remains the historical record of the decisions; the extracted document is what contributors look up day-to-day.
 
 **D4: Contributor onboarding for the pipeline**
 
@@ -538,7 +538,7 @@ cargo deny check
 
 - WASM plugin files are published to the registry as part of the release pipeline
 - Tauri desktop installer is built and published automatically on release
-- `docs/contributing/ci-standards.md` exists and covers action pinning, advisory triage, and conventional commits
+- `docs/book/src/maintainers/ci-and-actions.md` exists and covers action pinning, advisory triage, and conventional commits
 - A contributor can replicate all CI checks locally with four commands
 
 ---

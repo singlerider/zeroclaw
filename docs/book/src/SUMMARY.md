@@ -112,6 +112,10 @@
 - [How to contribute](./contributing/how-to.md)
 - [RFC process](./contributing/rfcs.md)
 - [Communication](./contributing/communication.md)
+- [Privacy & PII discipline](./contributing/privacy.md)
+- [Testing](./contributing/testing.md)
+- [PR review protocol](./contributing/pr-review-protocol.md)
+- [Contributor License Agreement](./contributing/cla.md)
 
 # Maintainers
 
@@ -119,3 +123,9 @@
 - [Docs & Translations](./maintainers/docs-and-translations.md)
 - [CI & Actions](./maintainers/ci-and-actions.md)
 - [Claude Code Skills](./maintainers/skills.md)
+- [PR workflow](./maintainers/pr-workflow.md)
+- [Reviewer playbook](./maintainers/reviewer-playbook.md)
+- [Labels](./maintainers/labels.md)
+- [Superseding PRs](./maintainers/superseding.md)
+- [Release runbook](./maintainers/release-runbook.md)
+- [Changelog generation](./maintainers/changelog-generation.md)

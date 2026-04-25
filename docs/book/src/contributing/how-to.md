@@ -32,8 +32,12 @@ The key checkpoints:
 - `cargo fmt` clean (checked in CI)
 - `cargo clippy -D warnings` clean (checked in CI)
 - No dead code — if it's unused, delete it, don't `#[allow(dead_code)]` it
-- Error handling: `anyhow::Result` at binary boundaries, typed errors in library crates
-- Don't commit secrets, personal data, or real-user identities — the privacy contract (`docs/contributing/pr-discipline.md`) is a merge gate
+- Error handling: `anyhow::Result` at binary boundaries, typed errors in library crates. No `unwrap()` / `expect()` in production code paths — propagate with `?` or convert to a typed error
+- Minimal dependencies — every dep adds to binary size; weigh the trade before adding one
+- Trait-first — define the trait in `zeroclaw-api`, then implement in the right edge crate
+- Security by default — allowlists, not blocklists. New external surface defaults closed
+- Inline unit tests — `#[cfg(test)] mod tests {}` at the bottom of the file or a sibling `tests.rs`
+- Don't commit secrets, personal data, or real-user identities — the [Privacy & PII discipline](./privacy.md) page is the merge gate
 
 ## Testing
 
@@ -41,6 +45,8 @@ The key checkpoints:
 - Integration tests in `tests/` — run via `cargo nextest run --locked`
 - Feature-gated code needs feature-gated tests
 - Don't mock the database for tests that exercise schema or SQL — integration tests must hit a real SQLite
+
+For the full five-level taxonomy (unit / component / integration / system / live), shared mock infrastructure, and JSON trace fixture format, see [Testing](./testing.md).
 
 ## Docs changes
 
@@ -61,7 +67,7 @@ refactor(runtime): split agent loop into steps
 chore: bump tokio to 1.43
 ```
 
-Co-authoring with AI is encouraged; use the `Co-Authored-By` trailer per `docs/contributing/ai-collaboration.md`.
+Co-authoring with AI is encouraged; add `Co-Authored-By:` trailers in commit messages where AI tools materially contributed. See FND-005 (Contribution Culture) for the full norm.
 
 ## Pull requests
 
