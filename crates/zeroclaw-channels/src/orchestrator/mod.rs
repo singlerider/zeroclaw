@@ -4030,7 +4030,8 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     .unwrap_or_else(|| std::path::PathBuf::from(".zeroclaw/state/matrix"));
                 Ok(Arc::new(
                     MatrixChannel::new(mx.clone(), state_dir)?
-                        .with_transcription(config.transcription.clone()),
+                        .with_transcription(config.transcription.clone())
+                        .with_workspace_dir(config.workspace_dir.clone()),
                 ))
             }
             #[cfg(not(feature = "channel-matrix"))]
@@ -4508,7 +4509,9 @@ fn collect_configured_channels(
                 .unwrap_or_else(|| std::path::PathBuf::from(".zeroclaw/state/matrix"));
             match MatrixChannel::new(mx.clone(), state_dir) {
                 Ok(channel) => {
-                    let channel = channel.with_transcription(config.transcription.clone());
+                    let channel = channel
+                        .with_transcription(config.transcription.clone())
+                        .with_workspace_dir(config.workspace_dir.clone());
                     channels.push(ConfiguredChannel {
                         display_name: "Matrix",
                         channel: Arc::new(channel),

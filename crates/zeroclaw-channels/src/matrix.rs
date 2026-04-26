@@ -858,6 +858,7 @@ mod inbound {
     pub(super) struct HandlerCtx {
         pub config: Arc<MatrixConfig>,
         pub transcription: Option<Arc<TranscriptionConfig>>,
+        pub workspace_dir: Option<Arc<std::path::PathBuf>>,
         pub tx: mpsc::Sender<ChannelMessage>,
         pub pending_approvals:
             Arc<TokioMutex<HashMap<String, oneshot::Sender<ChannelApprovalResponse>>>>,
@@ -964,76 +965,83 @@ mod inbound {
             }
         }
 
-        let mut attachments = Vec::new();
-        match &ev.content.msgtype {
-            MessageType::Image(m) => {
-                if let Some(att) = download_attachment(
-                    &room,
-                    &m.source,
-                    m.body.clone(),
-                    m.info.as_ref().and_then(|i| i.mimetype.clone()),
-                )
-                .await
-                {
-                    attachments.push(att);
-                }
-            }
-            MessageType::File(m) => {
-                if let Some(att) = download_attachment(
-                    &room,
-                    &m.source,
-                    m.body.clone(),
-                    m.info.as_ref().and_then(|i| i.mimetype.clone()),
-                )
-                .await
-                {
-                    attachments.push(att);
-                }
-            }
-            MessageType::Video(m) => {
-                if let Some(att) = download_attachment(
-                    &room,
-                    &m.source,
-                    m.body.clone(),
-                    m.info.as_ref().and_then(|i| i.mimetype.clone()),
-                )
-                .await
-                {
-                    attachments.push(att);
-                }
-            }
+        // Process inbound media: download, persist to {workspace}/matrix_files/,
+        // and emit a content marker the runtime's vision/document pipeline reads.
+        // The runtime ignores `ChannelMessage.attachments` for vision — markers
+        // in `content` are how Telegram and the multimodal pipeline communicate
+        // (see telegram.rs `format_attachment_content`). We always leave
+        // `attachments` empty.
+        let media_kind = match &ev.content.msgtype {
+            MessageType::Image(m) => Some(MediaInfo::new(
+                m.source.clone(),
+                m.body.clone(),
+                m.info.as_ref().and_then(|i| i.mimetype.clone()),
+                MediaCategory::Image,
+            )),
+            MessageType::File(m) => Some(MediaInfo::new(
+                m.source.clone(),
+                m.body.clone(),
+                m.info.as_ref().and_then(|i| i.mimetype.clone()),
+                MediaCategory::File,
+            )),
+            MessageType::Video(m) => Some(MediaInfo::new(
+                m.source.clone(),
+                m.body.clone(),
+                m.info.as_ref().and_then(|i| i.mimetype.clone()),
+                MediaCategory::Video,
+            )),
             MessageType::Audio(m) => {
-                let mime = m.info.as_ref().and_then(|i| i.mimetype.clone());
-                if let Some(mut att) =
-                    download_attachment(&room, &m.source, m.body.clone(), mime).await
-                {
-                    let is_voice = is_voice_message(&raw);
-                    if is_voice
+                let kind = if is_voice_message(&raw) {
+                    MediaCategory::Voice
+                } else {
+                    MediaCategory::Audio
+                };
+                Some(MediaInfo::new(
+                    m.source.clone(),
+                    m.body.clone(),
+                    m.info.as_ref().and_then(|i| i.mimetype.clone()),
+                    kind,
+                ))
+            }
+            _ => None,
+        };
+
+        if let Some(info) = media_kind {
+            match save_media_to_workspace(&room, &info, ctx.workspace_dir.as_deref()).await {
+                Ok(Some(path)) => {
+                    let marker = format_media_marker(&info, &path);
+                    // Replace the placeholder body ("[image]"/"[file]"/etc.)
+                    // emitted by ctx_mod::body_for with the real marker. If the
+                    // user sent a caption, body would be the caption — append.
+                    let placeholder =
+                        matches!(body.as_str(), "[image]" | "[file]" | "[audio]" | "[video]");
+                    content = if placeholder || body.is_empty() || body == info.file_name {
+                        marker
+                    } else {
+                        format!("{content}\n\n{marker}")
+                    };
+
+                    // Voice message transcription happens AFTER save so the
+                    // agent gets both the transcript text and a path to the
+                    // raw audio file.
+                    if matches!(info.kind, MediaCategory::Voice)
                         && let Some(transcription) = ctx.transcription.as_ref()
                         && transcription.enabled
-                        && !att.data.is_empty()
                     {
-                        match transcribe(transcription, &att).await {
-                            Ok(text) => {
-                                if !text.trim().is_empty() {
-                                    if content.is_empty() || content == att.file_name {
-                                        content = text;
-                                    } else {
-                                        content = format!("{content}\n[voice transcript]: {text}");
-                                    }
-                                }
+                        match transcribe_from_disk(transcription, &path, &info.file_name).await {
+                            Ok(text) if !text.trim().is_empty() => {
+                                content = format!("[voice transcript]: {text}\n\n{content}");
                             }
+                            Ok(_) => {}
                             Err(e) => warn!("matrix: voice transcription failed: {e}"),
                         }
                     }
-                    if is_voice && att.mime_type.is_none() {
-                        att.mime_type = Some("audio/ogg".to_string());
-                    }
-                    attachments.push(att);
                 }
+                Ok(None) => {}
+                Err(e) => warn!("matrix: media handling failed: {e}"),
             }
-            _ => {}
         }
+        let attachments: Vec<MediaAttachment> = Vec::new();
 
         let msg = ChannelMessage {
             id: ev.event_id.to_string(),
@@ -1115,41 +1123,155 @@ mod inbound {
         Some((sender, body))
     }
 
-    async fn download_attachment(
+    pub(super) enum MediaCategory {
+        Image,
+        Video,
+        Audio,
+        Voice,
+        File,
+    }
+
+    pub(super) struct MediaInfo {
+        pub source: matrix_sdk::ruma::events::room::MediaSource,
+        pub file_name: String,
+        pub mime: Option<String>,
+        pub kind: MediaCategory,
+    }
+
+    impl MediaInfo {
+        pub fn new(
+            source: matrix_sdk::ruma::events::room::MediaSource,
+            file_name: String,
+            mime: Option<String>,
+            kind: MediaCategory,
+        ) -> Self {
+            Self {
+                source,
+                file_name,
+                mime,
+                kind,
+            }
+        }
+    }
+
+    /// Download an inbound media file, persist it to `{workspace}/matrix_files/`,
+    /// and return the on-disk path. Returns `Ok(None)` when no `workspace_dir`
+    /// is configured (caller logs and falls back to the placeholder body).
+    async fn save_media_to_workspace(
         room: &Room,
-        source: &matrix_sdk::ruma::events::room::MediaSource,
-        file_name: String,
-        mime: Option<String>,
-    ) -> Option<MediaAttachment> {
+        info: &MediaInfo,
+        workspace: Option<&std::path::PathBuf>,
+    ) -> anyhow::Result<Option<std::path::PathBuf>> {
+        let Some(workspace) = workspace else {
+            warn!(
+                "matrix: cannot persist {} — channels.matrix workspace_dir not configured. Set ZEROCLAW_DIR or run via the orchestrator.",
+                info.file_name
+            );
+            return Ok(None);
+        };
+        let dir = workspace.join("matrix_files");
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
         let request = matrix_sdk::media::MediaRequestParameters {
-            source: source.clone(),
+            source: info.source.clone(),
             format: matrix_sdk::media::MediaFormat::File,
         };
-        let bytes = match room
+        let source_kind = match &info.source {
+            matrix_sdk::ruma::events::room::MediaSource::Plain(_) => "plain",
+            matrix_sdk::ruma::events::room::MediaSource::Encrypted(_) => "encrypted",
+        };
+        let bytes = room
             .client()
             .media()
             .get_media_content(&request, true)
             .await
-        {
-            Ok(b) => b,
-            Err(e) => {
-                warn!("matrix: media download failed: {e}");
-                return None;
-            }
-        };
-        Some(MediaAttachment {
-            file_name,
-            data: bytes,
-            mime_type: mime,
-        })
+            .map_err(|e| anyhow::anyhow!("get_media_content ({source_kind}): {e}"))?;
+
+        let safe_name = sanitize_filename(&info.file_name, &info.kind, info.mime.as_deref());
+        // Disambiguate by uuid prefix to avoid collisions across messages.
+        let unique = format!("{}_{safe_name}", uuid::Uuid::new_v4().simple());
+        let path = dir.join(unique);
+        std::fs::write(&path, &bytes)
+            .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))?;
+        info!(
+            "matrix: saved {} bytes ({}) to {}",
+            bytes.len(),
+            source_kind,
+            path.display()
+        );
+        Ok(Some(path))
     }
 
-    async fn transcribe(
+    fn sanitize_filename(raw: &str, kind: &MediaCategory, mime: Option<&str>) -> String {
+        let trimmed = raw.trim();
+        let candidate = if trimmed.is_empty() || trimmed.starts_with('[') {
+            // Placeholder body or empty — synthesise a sensible name.
+            let ext = default_extension(kind, mime);
+            format!("matrix_media.{ext}")
+        } else {
+            trimmed.to_string()
+        };
+        candidate
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    fn default_extension(kind: &MediaCategory, mime: Option<&str>) -> &'static str {
+        if let Some(m) = mime {
+            match m {
+                "image/png" => return "png",
+                "image/jpeg" | "image/jpg" => return "jpg",
+                "image/gif" => return "gif",
+                "image/webp" => return "webp",
+                "video/mp4" => return "mp4",
+                "audio/ogg" => return "ogg",
+                "audio/mpeg" | "audio/mp3" => return "mp3",
+                "audio/wav" => return "wav",
+                "application/pdf" => return "pdf",
+                _ => {}
+            }
+        }
+        match kind {
+            MediaCategory::Image => "jpg",
+            MediaCategory::Video => "mp4",
+            MediaCategory::Audio | MediaCategory::Voice => "ogg",
+            MediaCategory::File => "bin",
+        }
+    }
+
+    fn format_media_marker(info: &MediaInfo, path: &std::path::Path) -> String {
+        match info.kind {
+            MediaCategory::Image => format!("[IMAGE:{}]", path.display()),
+            _ => {
+                let display_name = if info.file_name.trim().is_empty() {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("attachment")
+                        .to_string()
+                } else {
+                    info.file_name.clone()
+                };
+                format!("[Document: {display_name}] {}", path.display())
+            }
+        }
+    }
+
+    async fn transcribe_from_disk(
         config: &TranscriptionConfig,
-        att: &MediaAttachment,
+        path: &std::path::Path,
+        file_name: &str,
     ) -> anyhow::Result<String> {
+        let bytes =
+            std::fs::read(path).map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
         let manager = TranscriptionManager::new(config)?;
-        manager.transcribe(&att.data, &att.file_name).await
+        manager.transcribe(&bytes, file_name).await
     }
 }
 
@@ -1464,6 +1586,7 @@ mod outbound {
 pub struct MatrixChannel {
     config: Arc<MatrixConfig>,
     state_dir: PathBuf,
+    workspace_dir: Option<Arc<PathBuf>>,
     transcription: Option<Arc<TranscriptionConfig>>,
     client: tokio::sync::OnceCell<Client>,
     pending_approvals: Arc<TokioMutex<HashMap<String, oneshot::Sender<ChannelApprovalResponse>>>>,
@@ -1488,6 +1611,7 @@ impl MatrixChannel {
         Ok(Self {
             config: Arc::new(config),
             state_dir,
+            workspace_dir: None,
             transcription: None,
             client: tokio::sync::OnceCell::new(),
             pending_approvals: Arc::new(TokioMutex::new(HashMap::new())),
@@ -1502,6 +1626,14 @@ impl MatrixChannel {
 
     pub fn with_transcription(mut self, transcription: TranscriptionConfig) -> Self {
         self.transcription = Some(Arc::new(transcription));
+        self
+    }
+
+    /// Configure the workspace directory used to persist downloaded media so
+    /// the agent's vision/document pipelines can read inbound files via
+    /// `[IMAGE:path]` / `[Document: name] path` markers.
+    pub fn with_workspace_dir(mut self, dir: PathBuf) -> Self {
+        self.workspace_dir = Some(Arc::new(dir));
         self
     }
 
@@ -1549,6 +1681,7 @@ impl Channel for MatrixChannel {
         let ctx = inbound::HandlerCtx {
             config: self.config.clone(),
             transcription: self.transcription.clone(),
+            workspace_dir: self.workspace_dir.clone(),
             tx,
             pending_approvals: self.pending_approvals.clone(),
             threads_seen: self.threads_seen.clone(),
