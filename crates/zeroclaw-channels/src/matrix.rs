@@ -1340,6 +1340,19 @@ mod outbound {
 
         let (mut text, ms) = markers::parse(&message.content);
 
+        // Build the thread anchor used by both attachment uploads and the
+        // text reply, so attachments live in the same thread instead of
+        // landing in the main timeline.
+        let thread_anchor: Option<OwnedEventId> = if outbox.reply_in_thread {
+            message
+                .thread_ts
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(|s| s.parse().ok())
+        } else {
+            None
+        };
+
         // Outbound attachments. SendMessage.attachments comes from the runtime's
         // structured attachment list; missing/empty data is fatal there because
         // the bytes were already in memory. Marker-driven uploads are best-
@@ -1347,7 +1360,7 @@ mod outbound {
         // back to a textual note so the operator sees what the agent intended
         // rather than a silently-dropped reply.
         for att in &message.attachments {
-            upload_attachment(&room, att, AttachmentKind::Auto).await?;
+            upload_attachment(&room, att, AttachmentKind::Auto, thread_anchor.as_ref()).await?;
         }
 
         let mut failed_markers: Vec<String> = Vec::new();
@@ -1377,7 +1390,7 @@ mod outbound {
                 data: bytes,
                 mime_type: Some(mime),
             };
-            if let Err(e) = upload_attachment(&room, &att, kind).await {
+            if let Err(e) = upload_attachment(&room, &att, kind, thread_anchor.as_ref()).await {
                 warn!(
                     "matrix: skipping outbound marker for {} (upload failed): {e}",
                     marker.target
@@ -1549,6 +1562,7 @@ mod outbound {
         room: &Room,
         att: &MediaAttachment,
         kind: AttachmentKind,
+        thread_anchor: Option<&OwnedEventId>,
     ) -> Result<()> {
         let mime: mime_guess::Mime = match att.mime_type.as_deref() {
             Some(m) => m
@@ -1559,25 +1573,29 @@ mod outbound {
                 .unwrap_or(mime_guess::mime::APPLICATION_OCTET_STREAM),
         };
         if matches!(kind, AttachmentKind::Voice) {
-            return upload_voice(room, att, &mime).await;
+            return upload_voice(room, att, &mime, thread_anchor).await;
         }
-        room.send_attachment(
-            att.file_name.clone(),
-            &mime,
-            att.data.clone(),
-            AttachmentConfig::new(),
-        )
-        .await
-        .map_err(|e| anyhow!("send_attachment failed: {e}"))?;
+        let mut config = AttachmentConfig::new();
+        if let Some(anchor) = thread_anchor {
+            config = config.reply(Some(Reply {
+                event_id: anchor.clone(),
+                enforce_thread: EnforceThread::Threaded(ReplyWithinThread::No),
+            }));
+        }
+        room.send_attachment(att.file_name.clone(), &mime, att.data.clone(), config)
+            .await
+            .map_err(|e| anyhow!("send_attachment failed: {e}"))?;
         Ok(())
     }
 
     /// Voice messages need the `org.matrix.msc3245.voice` flag, which the
-    /// stable matrix-sdk types don't carry. Send via raw JSON.
+    /// stable matrix-sdk types don't carry. Send via raw JSON, attaching the
+    /// thread relation manually when the bot is replying inside one.
     async fn upload_voice(
         room: &Room,
         att: &MediaAttachment,
         mime: &mime_guess::Mime,
+        thread_anchor: Option<&OwnedEventId>,
     ) -> Result<()> {
         let mxc = room
             .client()
@@ -1585,7 +1603,7 @@ mod outbound {
             .upload(mime, att.data.clone(), None)
             .await
             .map_err(|e| anyhow!("media upload failed: {e}"))?;
-        let event = json!({
+        let mut event = json!({
             "msgtype": "m.audio",
             "body": att.file_name,
             "filename": att.file_name,
@@ -1600,6 +1618,19 @@ mod outbound {
                 "waveform": Vec::<u32>::new(),
             },
         });
+        if let Some(anchor) = thread_anchor
+            && let Some(obj) = event.as_object_mut()
+        {
+            obj.insert(
+                "m.relates_to".to_string(),
+                json!({
+                    "rel_type": "m.thread",
+                    "event_id": anchor.as_str(),
+                    "is_falling_back": true,
+                    "m.in_reply_to": { "event_id": anchor.as_str() },
+                }),
+            );
+        }
         room.send_raw("m.room.message", event).await?;
         Ok(())
     }
