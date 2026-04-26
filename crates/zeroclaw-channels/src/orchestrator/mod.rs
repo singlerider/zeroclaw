@@ -101,6 +101,11 @@ use zeroclaw_runtime::security::{AutonomyLevel, SecurityPolicy};
 use zeroclaw_runtime::tools::{self, Tool};
 use zeroclaw_runtime::util::truncate_with_ellipsis;
 
+/// Live channel registry populated by `start_channels()`. Used by `deliver_announcement()` to
+/// reuse authenticated channel instances (critical for Matrix E2EE — avoids re-running session
+/// restore on every cron delivery).
+static CRON_CHANNEL_REGISTRY: OnceLock<Arc<HashMap<String, Arc<dyn Channel>>>> = OnceLock::new();
+
 /// Observer wrapper that forwards tool-call events to a channel sender
 /// for real-time threaded notifications.
 struct ChannelNotifyObserver {
@@ -4018,16 +4023,14 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                     .matrix
                     .as_ref()
                     .context("Matrix channel is not configured")?;
+                let state_dir = config
+                    .config_path
+                    .parent()
+                    .map(|p| p.join("state").join("matrix"))
+                    .unwrap_or_else(|| std::path::PathBuf::from(".zeroclaw/state/matrix"));
                 Ok(Arc::new(
-                    MatrixChannel::new(
-                        mx.homeserver.clone(),
-                        mx.access_token.clone(),
-                        // "" sentinel = no specific room (join logic handles "allow all")
-                        mx.allowed_rooms.first().cloned().unwrap_or_default(),
-                        mx.allowed_users.clone(),
-                        mx.mention_only,
-                    )
-                    .with_approval_timeout_secs(mx.approval_timeout_secs),
+                    MatrixChannel::new(mx.clone(), state_dir)?
+                        .with_transcription(config.transcription.clone()),
                 ))
             }
             #[cfg(not(feature = "channel-matrix"))]
@@ -4498,31 +4501,23 @@ fn collect_configured_channels(
     #[cfg(feature = "channel-matrix")]
     if let Some(ref mx) = config.channels.matrix {
         if mx.enabled {
-            channels.push(ConfiguredChannel {
-                display_name: "Matrix",
-                channel: Arc::new(
-                    MatrixChannel::new_full(
-                        mx.homeserver.clone(),
-                        mx.access_token.clone(),
-                        // "" sentinel = no specific room (join logic handles "allow all")
-                        mx.allowed_rooms.first().cloned().unwrap_or_default(),
-                        mx.allowed_users.clone(),
-                        mx.allowed_rooms.clone(),
-                        mx.user_id.clone(),
-                        mx.device_id.clone(),
-                        config.config_path.parent().map(|path| path.to_path_buf()),
-                        mx.recovery_key.clone(),
-                        mx.mention_only,
-                    )
-                    .with_streaming(
-                        mx.stream_mode,
-                        mx.draft_update_interval_ms,
-                        mx.multi_message_delay_ms,
-                    )
-                    .with_transcription(config.transcription.clone())
-                    .with_approval_timeout_secs(mx.approval_timeout_secs),
-                ),
-            });
+            let state_dir = config
+                .config_path
+                .parent()
+                .map(|p| p.join("state").join("matrix"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".zeroclaw/state/matrix"));
+            match MatrixChannel::new(mx.clone(), state_dir) {
+                Ok(channel) => {
+                    let channel = channel.with_transcription(config.transcription.clone());
+                    channels.push(ConfiguredChannel {
+                        display_name: "Matrix",
+                        channel: Arc::new(channel),
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("Matrix channel construction failed: {e}");
+                }
+            }
         } else {
             tracing::info!("Matrix channel configured but disabled (enabled = false)");
         }
@@ -5440,6 +5435,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             .map(|ch| (ch.name().to_string(), Arc::clone(ch)))
             .collect::<HashMap<_, _>>(),
     );
+    let _ = CRON_CHANNEL_REGISTRY.set(Arc::clone(&channels_by_name));
 
     // Populate the reaction tool's channel map now that channels are initialized.
     if let Some(ref handle) = reaction_handle_ch {
@@ -5694,6 +5690,14 @@ pub async fn deliver_announcement(
         zeroclaw_runtime::security::LeakResult::Detected { redacted, .. } => redacted,
         zeroclaw_runtime::security::LeakResult::Clean => output.to_string(),
     };
+
+    // Use the live channel instance when available — critical for Matrix E2EE which must
+    // reuse the authenticated client rather than re-running session restore per delivery.
+    if let Some(registry) = CRON_CHANNEL_REGISTRY.get()
+        && let Some(ch) = registry.get(channel.to_ascii_lowercase().as_str())
+    {
+        return ch.send(&SendMessage::new(&safe_output, target)).await;
+    }
 
     match channel.to_ascii_lowercase().as_str() {
         #[cfg(feature = "channel-telegram")]

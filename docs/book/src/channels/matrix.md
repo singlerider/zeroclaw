@@ -47,6 +47,8 @@ zeroclaw config set channels.matrix.access-token           # prompts, input mask
 zeroclaw config set channels.matrix.user-id @bot:matrix.example.com
 zeroclaw config set channels.matrix.device-id ABCDEF1234
 zeroclaw config set channels.matrix.allowed-users '["*"]'   # open for testing
+zeroclaw config set channels.matrix.ack-reactions true       # default: true (👀 → ✅)
+zeroclaw config set channels.matrix.reply-in-thread true     # default: true
 ```
 
 Required: `homeserver`, `access-token`, `room-id`. Strongly recommended for E2EE: `user-id` and `device-id` (see §4H for how to obtain them). For the full field index, see the [Config reference](../reference/config.md).
@@ -333,6 +335,11 @@ RUST_LOG=zeroclaw::channels::matrix=debug,matrix_sdk_crypto=debug zeroclaw daemo
 - Start with permissive `allowed_users`, tighten to explicit user IDs once verified.
 - Prefer canonical room IDs in production to avoid alias drift.
 - **Threading:** ZeroClaw always replies in a thread rooted at the user's original message. Each thread maintains its own isolated conversation context. The main room timeline is unaffected — threads don't share context with each other or with the room. In encrypted rooms, threading works identically; the SDK decrypts events transparently before thread context is evaluated.
+- **Thread root context:** the first inbound message ZeroClaw sees in any given thread is prefixed with `[Thread root from @sender]: <root body>` so the agent has the conversation that triggered the reply. Threads the bot itself starts skip the preamble. This is in-memory tracking — after a daemon restart, the next message in each active thread re-injects the preamble exactly once.
+- **Voice messages** (MSC3245): inbound `m.audio` events with the `org.matrix.msc3245.voice` flag are routed through the configured transcription pipeline so the agent receives transcribed text alongside the audio bytes. Outbound voice notes use the `[voice:<url|path>]` marker; ZeroClaw uploads the file as `m.audio` with the voice flag set so Element renders it as a voice note.
+- **Acknowledgement reactions:** controlled by `channels.matrix.ack-reactions` (default `true`). When on, the bot reacts with 👀 while processing and ✅ when done. Set to `false` to keep rooms reaction-free.
+- **Persistent sessions:** on first successful login, ZeroClaw writes `~/.zeroclaw/state/matrix/session.json` (user_id + device_id + access_token + optional refresh_token). On subsequent restarts the SDK restores from that blob — no re-login. The matrix-rust-sdk's SQLite crypto store lives alongside it at `~/.zeroclaw/state/matrix/store/`. **Once `session.json` exists, rotating `access-token` in config has no effect until the file is deleted** — the saved token wins. Delete `session.json` to force a re-login from config values.
+- **Cross-signing bootstrap:** when both `password` AND `recovery-key` are configured, ZeroClaw bootstraps cross-signing on the first password login (UIA-protected with the password) and uploads the keys under the recovery key. Subsequent restarts inherit the verified state via the SQLite store. If only one of the two is set, bootstrap is skipped and the bot stays unverified — fine for most bots.
 
 ## See also
 
