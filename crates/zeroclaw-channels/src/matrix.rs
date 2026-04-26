@@ -1549,6 +1549,36 @@ mod outbound {
         pub workspace_dir: Option<&'a Path>,
     }
 
+    /// What `outbound::send` should do once all attachment uploads are done
+    /// and the marker-stripped text is in hand. Extracted as a small enum so
+    /// the empty-text-with-attachments contract can be unit-tested without
+    /// the SDK in the loop.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum SendOutcome {
+        /// Text is non-empty (with or without prior attachments). Caller
+        /// proceeds to send the text message and returns its event_id.
+        SendText,
+        /// Text is empty but at least one attachment uploaded successfully.
+        /// Caller skips the text send and returns the carried event_id.
+        ReturnAttachment,
+        /// Text is empty AND no attachment landed. Caller surfaces an error
+        /// to the runtime so it can decide what to do.
+        EmptyError,
+    }
+
+    /// Decide what `outbound::send` should do given the post-marker-strip
+    /// text and whether at least one attachment landed. Pure function.
+    pub(super) fn decide_send_outcome(
+        text_is_empty_after_strip: bool,
+        any_attachment_landed: bool,
+    ) -> SendOutcome {
+        match (text_is_empty_after_strip, any_attachment_landed) {
+            (false, _) => SendOutcome::SendText,
+            (true, true) => SendOutcome::ReturnAttachment,
+            (true, false) => SendOutcome::EmptyError,
+        }
+    }
+
     /// 8 MiB cap on the body of an HTTP marker fetch. Matches WebFetchTool's
     /// streaming-cap pattern in `crates/zeroclaw-tools/src/web_fetch.rs`.
     const MAX_MARKER_BYTES: usize = 8 * 1024 * 1024;
@@ -1690,8 +1720,16 @@ mod outbound {
         // effort: if a marker target can't be read or uploaded, log it and fall
         // back to a textual note so the operator sees what the agent intended
         // rather than a silently-dropped reply.
+        //
+        // Track the last successful attachment event_id so a marker-only send
+        // (text empty after stripping markers) can return Ok with that id
+        // instead of an Err — otherwise the runtime would see a failure even
+        // though the attachment actually landed in the room.
+        let mut last_attachment_id: Option<OwnedEventId> = None;
         for att in &message.attachments {
-            upload_attachment(&room, att, AttachmentKind::Auto, thread_anchor.as_ref()).await?;
+            let id =
+                upload_attachment(&room, att, AttachmentKind::Auto, thread_anchor.as_ref()).await?;
+            last_attachment_id = Some(id);
         }
 
         let mut failed_markers: Vec<String> = Vec::new();
@@ -1721,12 +1759,15 @@ mod outbound {
                 data: bytes,
                 mime_type: Some(mime),
             };
-            if let Err(e) = upload_attachment(&room, &att, kind, thread_anchor.as_ref()).await {
-                warn!(
-                    "matrix: skipping outbound marker for {} (upload failed): {e}",
-                    marker.target
-                );
-                failed_markers.push(marker.target.clone());
+            match upload_attachment(&room, &att, kind, thread_anchor.as_ref()).await {
+                Ok(id) => last_attachment_id = Some(id),
+                Err(e) => {
+                    warn!(
+                        "matrix: skipping outbound marker for {} (upload failed): {e}",
+                        marker.target
+                    );
+                    failed_markers.push(marker.target.clone());
+                }
             }
         }
 
@@ -1747,10 +1788,23 @@ mod outbound {
             };
         }
 
-        if text.trim().is_empty() {
-            return Err(anyhow!(
-                "matrix: empty message body after stripping markers"
-            ));
+        // Decide whether to send the text, return the last attachment's
+        // event_id, or surface an error. Marker-only messages used to error
+        // here even though their attachment had landed; the runtime would
+        // see Err and could retry, producing duplicate uploads.
+        match decide_send_outcome(text.trim().is_empty(), last_attachment_id.is_some()) {
+            SendOutcome::SendText => {}
+            SendOutcome::ReturnAttachment => {
+                // Safe by construction: ReturnAttachment is only returned
+                // when last_attachment_id is Some.
+                return Ok(last_attachment_id
+                    .expect("decide_send_outcome guarantees Some when ReturnAttachment"));
+            }
+            SendOutcome::EmptyError => {
+                return Err(anyhow!(
+                    "matrix: empty message body and no successful attachment"
+                ));
+            }
         }
 
         let content = RoomMessageEventContent::text_markdown(&text);
@@ -1894,7 +1948,7 @@ mod outbound {
         att: &MediaAttachment,
         kind: AttachmentKind,
         thread_anchor: Option<&OwnedEventId>,
-    ) -> Result<()> {
+    ) -> Result<OwnedEventId> {
         let mime: mime_guess::Mime = match att.mime_type.as_deref() {
             Some(m) => m
                 .parse()
@@ -1913,10 +1967,11 @@ mod outbound {
                 enforce_thread: EnforceThread::Threaded(ReplyWithinThread::No),
             }));
         }
-        room.send_attachment(att.file_name.clone(), &mime, att.data.clone(), config)
+        let resp = room
+            .send_attachment(att.file_name.clone(), &mime, att.data.clone(), config)
             .await
             .map_err(|e| anyhow!("send_attachment failed: {e}"))?;
-        Ok(())
+        Ok(resp.event_id)
     }
 
     /// Voice messages need the `org.matrix.msc3245.voice` flag, which the
@@ -1927,7 +1982,7 @@ mod outbound {
         att: &MediaAttachment,
         mime: &mime_guess::Mime,
         thread_anchor: Option<&OwnedEventId>,
-    ) -> Result<()> {
+    ) -> Result<OwnedEventId> {
         let mxc = room
             .client()
             .media()
@@ -1962,8 +2017,8 @@ mod outbound {
                 }),
             );
         }
-        room.send_raw("m.room.message", event).await?;
-        Ok(())
+        let resp = room.send_raw("m.room.message", event).await?;
+        Ok(resp.event_id)
     }
 
     fn derive_file_name(target: &str) -> String {
@@ -3392,6 +3447,40 @@ mod tests {
             // even when workspace_dir is None.
             let result = validate_marker_target("https://example.com/x.jpg", None);
             assert!(matches!(result, Ok(MarkerTarget::Http(_))));
+        }
+    }
+
+    mod outbound_send_outcome {
+        //! Decision logic for what `outbound::send` does after attachment
+        //! uploads complete. Marker-only messages used to error even though
+        //! the attachment had landed; this captures the new contract.
+
+        use super::super::outbound::{SendOutcome, decide_send_outcome};
+
+        #[test]
+        fn non_empty_text_with_attachment_sends_text() {
+            assert_eq!(decide_send_outcome(false, true), SendOutcome::SendText);
+        }
+
+        #[test]
+        fn non_empty_text_without_attachment_sends_text() {
+            assert_eq!(decide_send_outcome(false, false), SendOutcome::SendText);
+        }
+
+        #[test]
+        fn empty_text_with_attachment_returns_attachment() {
+            // The bug fix: marker-only sends must surface the attachment's
+            // event_id, not an error.
+            assert_eq!(
+                decide_send_outcome(true, true),
+                SendOutcome::ReturnAttachment
+            );
+        }
+
+        #[test]
+        fn empty_text_without_attachment_is_error() {
+            // True empty-message case: nothing to deliver, surface the error.
+            assert_eq!(decide_send_outcome(true, false), SendOutcome::EmptyError);
         }
     }
 }
