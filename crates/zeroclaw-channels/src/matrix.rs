@@ -1123,7 +1123,6 @@ mod inbound {
                 ctx.workspace_dir.as_deref(),
                 &body,
                 content,
-                &raw,
                 ctx.transcription.as_deref(),
             )
             .await;
@@ -1131,7 +1130,10 @@ mod inbound {
             // The current event has no media of its own but is a reply (often
             // mention-only text replying to a previously-ignored media event).
             // Fetch the parent event and pull in any media it carries so the
-            // agent can answer questions like "can you see the image?".
+            // agent can answer questions like "can you see the image?". The
+            // parent's MediaCategory (set by parent_media_info) is the
+            // authoritative kind here — `raw` is the text reply, not the
+            // parent voice/image, so we never look at `raw` for kind data.
             match room.event(&reply_target, None).await {
                 Ok(timeline_event) => {
                     if let Some(info) = parent_media_info(timeline_event.into_raw()) {
@@ -1141,7 +1143,6 @@ mod inbound {
                             ctx.workspace_dir.as_deref(),
                             "",
                             content,
-                            &raw,
                             ctx.transcription.as_deref(),
                         )
                         .await;
@@ -1255,6 +1256,21 @@ mod inbound {
         File,
     }
 
+    /// Decide whether transcription should run on a media attachment given
+    /// its category and the channel's transcription config. The previous
+    /// gate also required `is_voice_message(raw)` to be true, but `raw`
+    /// is the *current* event — for parent media pulled via `m.in_reply_to`,
+    /// the current event is the user's text reply (no MSC3245 flag), so
+    /// the gate would short-circuit and skip transcription on reply-to-voice
+    /// flows. `parent_media_info` already classifies by reading the parent
+    /// event's flag, so trust `info.kind` directly.
+    pub(super) fn should_transcribe(
+        kind: &MediaCategory,
+        transcription: Option<&TranscriptionConfig>,
+    ) -> bool {
+        matches!(kind, MediaCategory::Voice) && matches!(transcription, Some(t) if t.enabled)
+    }
+
     /// Common path for both "this event carries media" and "this event is a
     /// reply to one that did" — downloads, persists to workspace, appends a
     /// `[IMAGE:path]` / `[Document:...] path` marker to `content`, and runs
@@ -1263,16 +1279,12 @@ mod inbound {
     /// `body_hint` is the originating event's body (used to decide whether
     /// to overwrite the placeholder body with the marker or append to it);
     /// pass `""` when the media came from a parent reply target.
-    /// `raw` is the *current* (top-level) event — used for voice detection on
-    /// non-parent media. For parent-reply media we already determined the
-    /// kind from the parent event itself.
     async fn attach_media(
         room: &Room,
         info: &MediaInfo,
         workspace_dir: Option<&std::path::PathBuf>,
         body_hint: &str,
         content: String,
-        raw: &RawEvent,
         transcription: Option<&TranscriptionConfig>,
     ) -> String {
         let mut content = content;
@@ -1292,11 +1304,8 @@ mod inbound {
                     format!("{content}\n\n{marker}")
                 };
 
-                if matches!(info.kind, MediaCategory::Voice)
-                    && is_voice_message(raw)
-                    && let Some(t) = transcription
-                    && t.enabled
-                {
+                if should_transcribe(&info.kind, transcription) {
+                    let t = transcription.expect("should_transcribe guarantees Some");
                     match transcribe_from_disk(t, &path, &info.file_name).await {
                         Ok(text) if !text.trim().is_empty() => {
                             content = format!("[voice transcript]: {text}\n\n{content}");
@@ -3447,6 +3456,83 @@ mod tests {
             // even when workspace_dir is None.
             let result = validate_marker_target("https://example.com/x.jpg", None);
             assert!(matches!(result, Ok(MarkerTarget::Http(_))));
+        }
+    }
+
+    mod transcription_gate {
+        //! `should_transcribe` decides whether to run STT on a downloaded
+        //! media attachment. The previous gate also required
+        //! `is_voice_message(raw)` to be true on the *current* event, which
+        //! short-circuited reply-to-voice flows because the current event
+        //! is the user's text reply, not the parent voice note. The new
+        //! gate trusts `info.kind` (set by `parent_media_info` for parent
+        //! media or the inbound match for direct media).
+
+        use super::super::inbound::{MediaCategory, should_transcribe};
+        use zeroclaw_config::schema::TranscriptionConfig;
+
+        fn enabled_cfg() -> TranscriptionConfig {
+            // Construct via Default + flip the `enabled` flag so this stays
+            // robust to future field additions on TranscriptionConfig.
+            let mut cfg = TranscriptionConfig::default();
+            cfg.enabled = true;
+            cfg
+        }
+
+        fn disabled_cfg() -> TranscriptionConfig {
+            TranscriptionConfig::default()
+        }
+
+        #[test]
+        fn voice_with_enabled_cfg_transcribes() {
+            assert!(should_transcribe(
+                &MediaCategory::Voice,
+                Some(&enabled_cfg())
+            ));
+        }
+
+        #[test]
+        fn voice_with_disabled_cfg_does_not_transcribe() {
+            assert!(!should_transcribe(
+                &MediaCategory::Voice,
+                Some(&disabled_cfg())
+            ));
+        }
+
+        #[test]
+        fn voice_without_cfg_does_not_transcribe() {
+            assert!(!should_transcribe(&MediaCategory::Voice, None));
+        }
+
+        #[test]
+        fn audio_with_enabled_cfg_does_not_transcribe() {
+            // Plain m.audio (no MSC3245 voice flag) is left as a regular
+            // audio file — only voice notes get transcribed.
+            assert!(!should_transcribe(
+                &MediaCategory::Audio,
+                Some(&enabled_cfg())
+            ));
+        }
+
+        #[test]
+        fn image_with_enabled_cfg_does_not_transcribe() {
+            assert!(!should_transcribe(
+                &MediaCategory::Image,
+                Some(&enabled_cfg())
+            ));
+        }
+
+        #[test]
+        fn voice_kind_alone_is_sufficient() {
+            // The bug fix: parent-voice replies set info.kind = Voice via
+            // parent_media_info, but the previous gate also looked at the
+            // *current* event's voice flag (which is the text reply event,
+            // never carrying the flag) and skipped transcription.
+            // info.kind alone is sufficient now.
+            assert!(should_transcribe(
+                &MediaCategory::Voice,
+                Some(&enabled_cfg())
+            ));
         }
     }
 
