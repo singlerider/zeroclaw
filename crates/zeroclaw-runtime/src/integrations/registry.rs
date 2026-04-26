@@ -941,7 +941,6 @@ mod tests {
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         });
         let entries = all_integrations();
         let mx = entries.iter().find(|e| e.name == "Matrix").unwrap();

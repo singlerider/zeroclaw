@@ -436,10 +436,7 @@ mod client {
     use matrix_sdk::{
         Client, SessionMeta, SessionTokens,
         authentication::matrix::MatrixSession,
-        ruma::{
-            OwnedRoomId, RoomAliasId,
-            api::client::uiaa::{AuthData, Password, UserIdentifier},
-        },
+        ruma::{OwnedRoomId, RoomAliasId},
     };
     use tokio::sync::RwLock;
     use tracing::{debug, info, warn};
@@ -662,30 +659,16 @@ mod client {
             run_recovery(&client, key).await;
         }
 
-        // Step 3: ensure cross-signing is set up.
+        // Cross-signing is handled by Step 2's `recover()` — when
+        // `recovery_key` matches what the homeserver has sealed in secret
+        // storage, the SDK imports the existing master / self-signing /
+        // user-signing keys and the new device is signed by them
+        // automatically. No bootstrap, no UIA, no key rotation.
         //
-        // - On fresh_login: idempotent bootstrap — no-op if recover() just
-        //   imported an existing identity, fresh bootstrap otherwise.
-        // - On any startup (fresh or restored): if `reset_cross_signing` is on
-        //   AND the current device is not cross-signed by its owner, force a
-        //   bootstrap that rotates the master/SSK/USK and signs this device.
-        //   We only do the forced reset when the device actually lacks the
-        //   signature so it doesn't rotate keys on every start.
-        if let Some(pw) = config.password.as_deref().filter(|s| !s.is_empty())
-            && let Some(user_id) = client.user_id()
-        {
-            let needs_forced_reset =
-                config.reset_cross_signing && !current_device_cross_signed(&client).await;
-            if fresh_login || needs_forced_reset {
-                ensure_cross_signing(
-                    &client,
-                    user_id.as_str().to_string(),
-                    pw.to_string(),
-                    needs_forced_reset,
-                )
-                .await;
-            }
-        }
+        // If `recover()` fails (wrong recovery_key, missing default key,
+        // passphrase / base58 mismatch) the diagnostics emitted there name
+        // exactly what's wrong; the operator fixes the recovery key in
+        // Element + config and the next start succeeds.
 
         Ok(client)
     }
@@ -889,88 +872,6 @@ mod client {
             Err(e) => {
                 warn!("matrix: failed to fetch key event for {key_id}: {e}");
             }
-        }
-    }
-
-    /// Returns true iff the current device's ed25519 key is signed by the
-    /// account's self-signing key — i.e. fully trusted by cross-signing.
-    /// A `None` from `get_device` (device not yet known to the local store
-    /// after a fresh login) is treated as "not cross-signed" so the caller
-    /// drives bootstrap rather than skipping it.
-    async fn current_device_cross_signed(client: &Client) -> bool {
-        let Some(uid) = client.user_id() else {
-            return false;
-        };
-        let Some(did) = client.device_id() else {
-            return false;
-        };
-        match client.encryption().get_device(uid, did).await {
-            Ok(Some(device)) => device.is_cross_signed_by_owner(),
-            _ => false,
-        }
-    }
-
-    /// Ensure cross-signing is set up for this device.
-    ///
-    /// - When `force_reset` is `false` (the safe default): use
-    ///   `bootstrap_cross_signing_if_needed`. If the account already has an
-    ///   identity server-side this is a no-op; freshly created devices on
-    ///   such accounts cannot self-sign (the SDK would need the existing
-    ///   self-signing key, which only `recover()` can import) and other
-    ///   clients will display "Encrypted by a device not verified by its
-    ///   owner" until manual verification.
-    /// - When `force_reset` is `true`: call `bootstrap_cross_signing` (no
-    ///   `_if_needed`) which forcibly uploads a fresh master / self-signing
-    ///   / user-signing key set under UIA, signing the current device. This
-    ///   invalidates every prior verification of the account by other users
-    ///   — correct for a dedicated bot account, surprising for a shared one.
-    async fn ensure_cross_signing(
-        client: &Client,
-        user_id: String,
-        password: String,
-        force_reset: bool,
-    ) {
-        // Two-phase UIA dance per SDK docs (encryption/mod.rs:1390-1410):
-        // first call with `None` → server returns UiaaResponse with a session
-        // ID → retry with AuthData::Password carrying that session.
-        let first = if force_reset {
-            client.encryption().bootstrap_cross_signing(None).await
-        } else {
-            client
-                .encryption()
-                .bootstrap_cross_signing_if_needed(None)
-                .await
-        };
-        let err = match first {
-            Ok(()) => {
-                info!("matrix: cross-signing already in place (no UIA needed)");
-                return;
-            }
-            Err(e) => e,
-        };
-        let Some(uiaa) = err.as_uiaa_response() else {
-            warn!("matrix: cross-signing setup failed (non-UIA error): {err}");
-            return;
-        };
-        let mut password_auth = Password::new(UserIdentifier::UserIdOrLocalpart(user_id), password);
-        password_auth.session = uiaa.session.clone();
-        let result = if force_reset {
-            client
-                .encryption()
-                .bootstrap_cross_signing(Some(AuthData::Password(password_auth)))
-                .await
-        } else {
-            client
-                .encryption()
-                .bootstrap_cross_signing_if_needed(Some(AuthData::Password(password_auth)))
-                .await
-        };
-        match result {
-            Ok(()) if force_reset => info!(
-                "matrix: cross-signing keys reset and current device signed (reset_cross_signing=true)"
-            ),
-            Ok(()) => info!("matrix: cross-signing bootstrapped after UIA"),
-            Err(e) => warn!("matrix: cross-signing setup failed after UIA: {e}"),
         }
     }
 
@@ -2679,7 +2580,6 @@ mod tests {
                 password: password.map(String::from),
                 approval_timeout_secs: 300,
                 reply_in_thread: true,
-                reset_cross_signing: false,
                 ack_reactions: true,
             }
         }

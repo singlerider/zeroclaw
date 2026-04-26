@@ -7302,26 +7302,6 @@ pub struct MatrixConfig {
     /// (👀 on receipt, ✅ on completion). Disable to keep rooms reaction-free.
     #[serde(default = "default_true")]
     pub ack_reactions: bool,
-    /// When true, after a fresh password login the bot forcibly resets its
-    /// account-level cross-signing keys (master / self-signing / user-signing)
-    /// using `password` for UIA, which then signs the new device.
-    ///
-    /// **Recommended `true` for ZeroClaw-only bot accounts.** A device freshly
-    /// registered by login cannot be self-signed by an existing master key
-    /// unless the SDK has the self-signing key locally — and that requires a
-    /// working `recovery_key` to import from server-side secret storage.
-    /// Without this flag, every relogin (manual or auto-recovery) leaves the
-    /// device unverified and other Matrix clients show "Encrypted by a device
-    /// not verified by its owner" on every message the bot sends.
-    ///
-    /// **Destructive caveat:** resetting cross-signing invalidates every prior
-    /// verification of this account by other users; they'll see a one-time
-    /// "identity changed" prompt and must re-verify the bot once before
-    /// trusting it again. Acceptable for a Matrix account dedicated to
-    /// ZeroClaw; if the account is shared with a human you probably want
-    /// `false` and should fix `recovery_key` instead. Default: `false`.
-    #[serde(default)]
-    pub reset_cross_signing: bool,
 }
 
 impl ChannelConfig for MatrixConfig {
@@ -11946,7 +11926,6 @@ auto_save = true
                 mqtt: None,
                 message_timeout_secs: 300,
                 ack_reactions: true,
-                reset_cross_signing: false,
                 show_tool_calls: true,
                 session_persistence: true,
                 session_backend: default_session_backend(),
@@ -12925,7 +12904,6 @@ default_temperature = 0.7
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
         let json = serde_json::to_string(&mc).unwrap();
         let parsed: MatrixConfig = serde_json::from_str(&json).unwrap();
@@ -12960,7 +12938,6 @@ default_temperature = 0.7
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
         let toml_str = toml::to_string(&mc).unwrap();
         let parsed: MatrixConfig = toml::from_str(&toml_str).unwrap();
@@ -13083,7 +13060,6 @@ allowed_users = ["@u:matrix.org"]
                 approval_timeout_secs: 300,
                 reply_in_thread: true,
                 ack_reactions: true,
-                reset_cross_signing: false,
             }),
             signal: None,
             whatsapp: None,
@@ -13113,7 +13089,6 @@ allowed_users = ["@u:matrix.org"]
             mqtt: None,
             message_timeout_secs: 300,
             ack_reactions: true,
-            reset_cross_signing: false,
             show_tool_calls: true,
             session_persistence: true,
             session_backend: default_session_backend(),
@@ -13495,7 +13470,6 @@ bot_token = "xoxb-tok"
             mqtt: None,
             message_timeout_secs: 300,
             ack_reactions: true,
-            reset_cross_signing: false,
             show_tool_calls: true,
             session_persistence: true,
             session_backend: default_session_backend(),
@@ -16942,7 +16916,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
         let fields = mx.secret_fields();
         assert_eq!(fields.len(), 3);
@@ -16975,7 +16948,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
         let fields = mx.secret_fields();
         assert!(!fields[0].is_set);
@@ -17001,7 +16973,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
         mx.set_secret("channels.matrix.access-token", "new-token".into())
             .unwrap();
@@ -17028,7 +16999,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
         assert!(
             mx.set_secret("channels.matrix.nonexistent", "val".into())
@@ -17072,7 +17042,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         });
 
         let fields = config.secret_fields();
@@ -17102,7 +17071,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         });
 
         config
@@ -17132,7 +17100,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         });
         config
             .set_secret("channels.matrix.access-token", "sk-test".into())
@@ -17176,7 +17143,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
 
         // Encrypt
@@ -17212,7 +17178,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
 
         mx.encrypt_secrets(&store).unwrap();
@@ -17246,7 +17211,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         };
 
         mx.encrypt_secrets(&store).unwrap();
@@ -17275,7 +17239,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             approval_timeout_secs: 300,
             reply_in_thread: true,
             ack_reactions: true,
-            reset_cross_signing: false,
         }
     }
 
