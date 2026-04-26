@@ -10,7 +10,7 @@ name: Deploy mdBook docs to Pages
 
 on:
   push:
-    branches: [master, feat/fluent-i18n]
+    branches: [master]
     paths:
       - "docs/book/**"
       - "src/**"

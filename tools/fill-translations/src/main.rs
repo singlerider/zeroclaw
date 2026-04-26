@@ -447,6 +447,14 @@ async fn fetch_ollama_content(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if args.po.extension().and_then(|e| e.to_str()) != Some("po") {
+        anyhow::bail!("--po path must have a .po extension: {}", args.po.display());
+    }
+    if !args.po.exists() {
+        anyhow::bail!("--po path does not exist: {}", args.po.display());
+    }
+
     let provider = read_provider_config(&args.provider)?;
 
     let raw = std::fs::read_to_string(&args.po)?;
