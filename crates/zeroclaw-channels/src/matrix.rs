@@ -576,7 +576,6 @@ mod client {
             .context("build matrix client")?;
 
         // Step 1: restore an existing session, or fresh-login.
-        let mut fresh_login = false;
         if let Some(blob) = saved {
             let saved_device_id = blob.device_id.clone();
             let session = MatrixSession {
@@ -639,7 +638,6 @@ mod client {
             }
         } else {
             login_fresh(&client, config).await?;
-            fresh_login = true;
             if let Some(blob) = session_blob_from(&client)
                 && let Err(e) = session::save(state_dir, &blob)
             {
@@ -1113,38 +1111,32 @@ mod inbound {
         };
 
         if let Some(info) = media_kind {
-            match save_media_to_workspace(&room, &info, ctx.workspace_dir.as_deref()).await {
-                Ok(Some(path)) => {
-                    let marker = format_media_marker(&info, &path);
-                    // Replace the placeholder body ("[image]"/"[file]"/etc.)
-                    // emitted by ctx_mod::body_for with the real marker. If the
-                    // user sent a caption, body would be the caption — append.
-                    let placeholder =
-                        matches!(body.as_str(), "[image]" | "[file]" | "[audio]" | "[video]");
-                    content = if placeholder || body.is_empty() || body == info.file_name {
-                        marker
-                    } else {
-                        format!("{content}\n\n{marker}")
-                    };
-
-                    // Voice message transcription happens AFTER save so the
-                    // agent gets both the transcript text and a path to the
-                    // raw audio file.
-                    if matches!(info.kind, MediaCategory::Voice)
-                        && let Some(transcription) = ctx.transcription.as_ref()
-                        && transcription.enabled
-                    {
-                        match transcribe_from_disk(transcription, &path, &info.file_name).await {
-                            Ok(text) if !text.trim().is_empty() => {
-                                content = format!("[voice transcript]: {text}\n\n{content}");
-                            }
-                            Ok(_) => {}
-                            Err(e) => warn!("matrix: voice transcription failed: {e}"),
-                        }
+            content =
+                attach_media(&room, &info, ctx.workspace_dir.as_deref(), &body, content, &raw, ctx.transcription.as_deref())
+                    .await;
+        } else if let Some(reply_target) = extract_in_reply_to(&raw) {
+            // The current event has no media of its own but is a reply (often
+            // mention-only text replying to a previously-ignored media event).
+            // Fetch the parent event and pull in any media it carries so the
+            // agent can answer questions like "can you see the image?".
+            match room.event(&reply_target, None).await {
+                Ok(timeline_event) => {
+                    if let Some(info) = parent_media_info(timeline_event.into_raw()) {
+                        content = attach_media(
+                            &room,
+                            &info,
+                            ctx.workspace_dir.as_deref(),
+                            "",
+                            content,
+                            &raw,
+                            ctx.transcription.as_deref(),
+                        )
+                        .await;
                     }
                 }
-                Ok(None) => {}
-                Err(e) => warn!("matrix: media handling failed: {e}"),
+                Err(e) => debug!(
+                    "matrix: could not fetch in_reply_to parent {reply_target}: {e}"
+                ),
             }
         }
         let attachments: Vec<MediaAttachment> = Vec::new();
@@ -1207,6 +1199,21 @@ mod inbound {
         root.parse().ok()
     }
 
+    /// Pull the `m.in_reply_to.event_id` from a raw event. This is Matrix's
+    /// inline-reply mechanism (separate from threads): when a user replies to
+    /// a previous message — for instance a media-only event the bot ignored
+    /// because of mention-only filtering — the reply event embeds a pointer
+    /// to that previous event under `content.m.relates_to.m.in_reply_to`.
+    /// The pointer can also live inside an `m.thread` relation when the
+    /// client is using the modern threaded-reply spec, so we accept both.
+    pub(super) fn extract_in_reply_to(raw: &RawEvent) -> Option<OwnedEventId> {
+        let v: JsonValue = serde_json::from_str(raw.get()).ok()?;
+        let relates = v.get("content")?.get("m.relates_to")?;
+        let in_reply_to = relates.get("m.in_reply_to")?;
+        let event_id = in_reply_to.get("event_id")?.as_str()?;
+        event_id.parse().ok()
+    }
+
     pub(super) fn is_voice_message(raw: &RawEvent) -> bool {
         let v: JsonValue = match serde_json::from_str(raw.get()) {
             Ok(v) => v,
@@ -1235,6 +1242,113 @@ mod inbound {
         Audio,
         Voice,
         File,
+    }
+
+    /// Common path for both "this event carries media" and "this event is a
+    /// reply to one that did" — downloads, persists to workspace, appends a
+    /// `[IMAGE:path]` / `[Document:...] path` marker to `content`, and runs
+    /// voice transcription when the media is an MSC3245 voice note.
+    ///
+    /// `body_hint` is the originating event's body (used to decide whether
+    /// to overwrite the placeholder body with the marker or append to it);
+    /// pass `""` when the media came from a parent reply target.
+    /// `raw` is the *current* (top-level) event — used for voice detection on
+    /// non-parent media. For parent-reply media we already determined the
+    /// kind from the parent event itself.
+    async fn attach_media(
+        room: &Room,
+        info: &MediaInfo,
+        workspace_dir: Option<&std::path::PathBuf>,
+        body_hint: &str,
+        content: String,
+        raw: &RawEvent,
+        transcription: Option<&TranscriptionConfig>,
+    ) -> String {
+        let mut content = content;
+        match save_media_to_workspace(room, info, workspace_dir).await {
+            Ok(Some(path)) => {
+                let marker = format_media_marker(info, &path);
+                let placeholder = matches!(
+                    body_hint,
+                    "[image]" | "[file]" | "[audio]" | "[video]"
+                );
+                content = if body_hint.is_empty() {
+                    if content.is_empty() {
+                        marker
+                    } else {
+                        format!("{content}\n\n{marker}")
+                    }
+                } else if placeholder
+                    || body_hint == info.file_name
+                    || content == body_hint
+                {
+                    marker
+                } else {
+                    format!("{content}\n\n{marker}")
+                };
+
+                if matches!(info.kind, MediaCategory::Voice)
+                    && is_voice_message(raw)
+                    && let Some(t) = transcription
+                    && t.enabled
+                {
+                    match transcribe_from_disk(t, &path, &info.file_name).await {
+                        Ok(text) if !text.trim().is_empty() => {
+                            content = format!("[voice transcript]: {text}\n\n{content}");
+                        }
+                        Ok(_) => {}
+                        Err(e) => warn!("matrix: voice transcription failed: {e}"),
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => warn!("matrix: media handling failed: {e}"),
+        }
+        content
+    }
+
+    /// Walk a fetched timeline event's raw JSON looking for a media-typed
+    /// `m.room.message` payload. Returns `None` if the event is not a
+    /// recognized media message.
+    fn parent_media_info(
+        raw: matrix_sdk::ruma::serde::Raw<matrix_sdk::ruma::events::AnySyncTimelineEvent>,
+    ) -> Option<MediaInfo> {
+        let json: JsonValue = serde_json::from_str(raw.json().get()).ok()?;
+        let content = json.get("content")?;
+        let msgtype = content.get("msgtype")?.as_str()?;
+        let kind = match msgtype {
+            "m.image" => MediaCategory::Image,
+            "m.video" => MediaCategory::Video,
+            "m.audio" if content.get("org.matrix.msc3245.voice").is_some() => {
+                MediaCategory::Voice
+            }
+            "m.audio" => MediaCategory::Audio,
+            "m.file" => MediaCategory::File,
+            _ => return None,
+        };
+        let file_name = content
+            .get("body")
+            .and_then(|b| b.as_str())
+            .unwrap_or("attachment")
+            .to_string();
+        let mime = content
+            .get("info")
+            .and_then(|i| i.get("mimetype"))
+            .and_then(|m| m.as_str())
+            .map(String::from);
+        let source = if let Some(file) = content.get("file") {
+            // Encrypted media: rebuild MediaSource::Encrypted from JSON.
+            let encrypted: matrix_sdk::ruma::events::room::EncryptedFile =
+                serde_json::from_value(file.clone()).ok()?;
+            matrix_sdk::ruma::events::room::MediaSource::Encrypted(Box::new(encrypted))
+        } else if let Some(url) = content.get("url").and_then(|u| u.as_str()) {
+            matrix_sdk::ruma::events::room::MediaSource::Plain(
+                matrix_sdk::ruma::OwnedMxcUri::from(url),
+            )
+        } else {
+            return None;
+        };
+        Some(MediaInfo::new(source, file_name, mime, kind))
     }
 
     pub(super) struct MediaInfo {
