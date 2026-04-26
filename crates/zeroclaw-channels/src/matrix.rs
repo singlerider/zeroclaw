@@ -310,7 +310,7 @@ mod streaming {
 
     use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
 
-    pub(super) type DraftKey = (OwnedRoomId, Option<OwnedEventId>);
+    pub(super) type DraftKey = OwnedRoomId;
 
     #[derive(Debug, Clone)]
     pub(super) struct PartialDraft {
@@ -319,9 +319,15 @@ mod streaming {
         pub last_edit: Instant,
     }
 
+    /// MultiMessage streaming state. The runtime calls `update_draft` repeatedly
+    /// with the accumulated agent output; we send each `\n\n`-bounded paragraph
+    /// as its own room message, threaded under `thread_anchor` when present.
+    /// `sent_so_far` is a byte counter into the accumulated text — everything
+    /// before that index has already been emitted.
     #[derive(Debug, Clone)]
     pub(super) struct MultiDraft {
-        pub current_event_id: OwnedEventId,
+        pub thread_anchor: Option<OwnedEventId>,
+        pub sent_so_far: usize,
     }
 
     #[derive(Default, Debug)]
@@ -340,6 +346,34 @@ mod streaming {
             return false;
         }
         now.saturating_duration_since(existing.last_edit) >= min_interval
+    }
+
+    /// Find the next paragraph break (`\n\n`) in `new_text`, ignoring any
+    /// breaks that fall inside an open ```fenced``` code block. Returns the
+    /// byte offset of the first `\n` of the break, or `None` if no break is
+    /// found yet (caller should buffer and retry on the next update).
+    pub(super) fn next_paragraph_break(new_text: &str) -> Option<usize> {
+        let bytes = new_text.as_bytes();
+        let mut in_fence = false;
+        let mut i = 0;
+        while i < bytes.len() {
+            // Detect opening or closing ```code fence``` at line start.
+            if bytes[i] == b'`'
+                && i + 2 < bytes.len()
+                && bytes[i + 1] == b'`'
+                && bytes[i + 2] == b'`'
+                && (i == 0 || bytes[i - 1] == b'\n')
+            {
+                in_fence = !in_fence;
+                i += 3;
+                continue;
+            }
+            if !in_fence && bytes[i] == b'\n' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
     }
 }
 
@@ -628,13 +662,29 @@ mod client {
             run_recovery(&client, key).await;
         }
 
-        // Step 3: ensure cross-signing is set up. Idempotent — a no-op when
-        // recover() imported an existing identity, fresh bootstrap otherwise.
-        if fresh_login
-            && let Some(pw) = config.password.as_deref().filter(|s| !s.is_empty())
+        // Step 3: ensure cross-signing is set up.
+        //
+        // - On fresh_login: idempotent bootstrap — no-op if recover() just
+        //   imported an existing identity, fresh bootstrap otherwise.
+        // - On any startup (fresh or restored): if `reset_cross_signing` is on
+        //   AND the current device is not cross-signed by its owner, force a
+        //   bootstrap that rotates the master/SSK/USK and signs this device.
+        //   We only do the forced reset when the device actually lacks the
+        //   signature so it doesn't rotate keys on every start.
+        if let Some(pw) = config.password.as_deref().filter(|s| !s.is_empty())
             && let Some(user_id) = client.user_id()
         {
-            ensure_cross_signing(&client, user_id.as_str().to_string(), pw.to_string()).await;
+            let needs_forced_reset =
+                config.reset_cross_signing && !current_device_cross_signed(&client).await;
+            if fresh_login || needs_forced_reset {
+                ensure_cross_signing(
+                    &client,
+                    user_id.as_str().to_string(),
+                    pw.to_string(),
+                    needs_forced_reset,
+                )
+                .await;
+            }
         }
 
         Ok(client)
@@ -744,9 +794,12 @@ mod client {
     }
 
     /// Try to import cross-signing keys + room keys from the homeserver's
-    /// encrypted backup, decrypted by `key`. Logs success or failure; failure
-    /// is non-fatal (caller will fall through to `ensure_cross_signing`,
-    /// which bootstraps fresh keys if no identity was imported).
+    /// encrypted backup using the operator's recovery key. Logs detailed
+    /// diagnostics on failure so a MAC mismatch can be debugged without
+    /// guessing — server-side default-key id, whether the key event has
+    /// passphrase info (changes which SDK decode path runs first), input
+    /// length (whitespace-stripped, not the value), and the full error
+    /// debug chain (the SDK's `Display` masks fallback errors).
     async fn run_recovery(client: &Client, key: &str) {
         let recovery = client.encryption().recovery();
         if matches!(
@@ -756,34 +809,168 @@ mod client {
             debug!("matrix: recovery already enabled, skipping recover()");
             return;
         }
+
+        let stripped_len = key.chars().filter(|c| !c.is_whitespace()).count();
+        diagnose_secret_storage(client, stripped_len).await;
+
         match recovery.recover(key).await {
             Ok(()) => {
                 info!("matrix: E2EE recovery completed (cross-signing + room keys imported)")
             }
             Err(e) => warn!(
-                "matrix: E2EE recovery failed: {e} — ensure channels.matrix.recovery-key matches the homeserver's secret-storage key. Continuing with fresh bootstrap."
+                "matrix: E2EE recovery failed: {e}; full error chain = {e:?}. \
+                 If the input length above is unexpected (base58 keys are typically \
+                 ~58 chars, passphrases vary), the wrong value may be in \
+                 channels.matrix.recovery-key."
             ),
         }
     }
 
-    /// Ensure cross-signing is set up for this device. After a successful
-    /// `recover()`, the user identity already exists and this is a no-op.
-    /// On a brand-new account with no server-side backup, this bootstraps
-    /// fresh cross-signing keys (UIA-protected by `password`).
-    ///
-    /// We deliberately do *not* call `recovery().enable()` here: it would
-    /// generate a new secret-storage key and invalidate the user's
-    /// configured `recovery_key`.
-    async fn ensure_cross_signing(client: &Client, user_id: String, password: String) {
-        let identifier = UserIdentifier::UserIdOrLocalpart(user_id);
-        let auth_data = AuthData::Password(Password::new(identifier, password));
-        match client
-            .encryption()
-            .bootstrap_cross_signing_if_needed(Some(auth_data))
+    async fn diagnose_secret_storage(client: &Client, input_len: usize) {
+        use matrix_sdk::ruma::events::secret_storage::{
+            default_key::SecretStorageDefaultKeyEventContent, key::SecretStorageKeyEventContent,
+        };
+        use matrix_sdk::ruma::events::{GlobalAccountDataEventType, StaticEventContent};
+
+        let account = client.account();
+        let default_key = match account
+            .fetch_account_data_static::<SecretStorageDefaultKeyEventContent>()
             .await
         {
-            Ok(()) => info!("matrix: cross-signing verified or bootstrapped"),
-            Err(e) => warn!("matrix: cross-signing setup failed: {e}"),
+            Ok(Some(raw)) => match raw.deserialize() {
+                Ok(content) => Some(content),
+                Err(e) => {
+                    warn!("matrix: cannot deserialize default secret-storage key event: {e}");
+                    None
+                }
+            },
+            Ok(None) => {
+                warn!(
+                    "matrix: server has no m.secret_storage.default_key set; recovery cannot proceed (input_len={input_len}). Set up Secure Backup in Element first."
+                );
+                return;
+            }
+            Err(e) => {
+                warn!("matrix: failed to fetch default secret-storage key event: {e}");
+                return;
+            }
+        };
+        let Some(default_key) = default_key else {
+            return;
+        };
+        let key_id = default_key.key_id;
+
+        // Fetch the actual key event for the default key id so we can see
+        // whether it has passphrase info (affects which decode path the SDK
+        // tries first inside SecretStorageKey::from_account_data).
+        let event_type = GlobalAccountDataEventType::SecretStorageKey(key_id.clone());
+        match account.fetch_account_data(event_type).await {
+            Ok(Some(raw)) => {
+                let json = raw.json().get();
+                let has_passphrase =
+                    json.contains("\"passphrase\"") && json.contains("\"iterations\"");
+                info!(
+                    "matrix: secret-storage diagnostics: default_key_id={key_id}, \
+                     has_passphrase_info={has_passphrase}, input_len={input_len}. \
+                     {}",
+                    if has_passphrase {
+                        "SDK will try passphrase derivation first; if your input is a base58 key the passphrase MAC will fail and the error you see may be the passphrase error rather than the base58 fallback's error."
+                    } else {
+                        "SDK will use base58 decoding directly."
+                    }
+                );
+                let _ = SecretStorageKeyEventContent::TYPE; // keep import live
+            }
+            Ok(None) => {
+                warn!(
+                    "matrix: default key id {key_id} has no corresponding key event on the account — secret storage is in an inconsistent state. Re-running Secure Backup setup in Element will repair this."
+                );
+            }
+            Err(e) => {
+                warn!("matrix: failed to fetch key event for {key_id}: {e}");
+            }
+        }
+    }
+
+    /// Returns true iff the current device's ed25519 key is signed by the
+    /// account's self-signing key — i.e. fully trusted by cross-signing.
+    /// A `None` from `get_device` (device not yet known to the local store
+    /// after a fresh login) is treated as "not cross-signed" so the caller
+    /// drives bootstrap rather than skipping it.
+    async fn current_device_cross_signed(client: &Client) -> bool {
+        let Some(uid) = client.user_id() else {
+            return false;
+        };
+        let Some(did) = client.device_id() else {
+            return false;
+        };
+        match client.encryption().get_device(uid, did).await {
+            Ok(Some(device)) => device.is_cross_signed_by_owner(),
+            _ => false,
+        }
+    }
+
+    /// Ensure cross-signing is set up for this device.
+    ///
+    /// - When `force_reset` is `false` (the safe default): use
+    ///   `bootstrap_cross_signing_if_needed`. If the account already has an
+    ///   identity server-side this is a no-op; freshly created devices on
+    ///   such accounts cannot self-sign (the SDK would need the existing
+    ///   self-signing key, which only `recover()` can import) and other
+    ///   clients will display "Encrypted by a device not verified by its
+    ///   owner" until manual verification.
+    /// - When `force_reset` is `true`: call `bootstrap_cross_signing` (no
+    ///   `_if_needed`) which forcibly uploads a fresh master / self-signing
+    ///   / user-signing key set under UIA, signing the current device. This
+    ///   invalidates every prior verification of the account by other users
+    ///   — correct for a dedicated bot account, surprising for a shared one.
+    async fn ensure_cross_signing(
+        client: &Client,
+        user_id: String,
+        password: String,
+        force_reset: bool,
+    ) {
+        // Two-phase UIA dance per SDK docs (encryption/mod.rs:1390-1410):
+        // first call with `None` → server returns UiaaResponse with a session
+        // ID → retry with AuthData::Password carrying that session.
+        let first = if force_reset {
+            client.encryption().bootstrap_cross_signing(None).await
+        } else {
+            client
+                .encryption()
+                .bootstrap_cross_signing_if_needed(None)
+                .await
+        };
+        let err = match first {
+            Ok(()) => {
+                info!("matrix: cross-signing already in place (no UIA needed)");
+                return;
+            }
+            Err(e) => e,
+        };
+        let Some(uiaa) = err.as_uiaa_response() else {
+            warn!("matrix: cross-signing setup failed (non-UIA error): {err}");
+            return;
+        };
+        let mut password_auth = Password::new(UserIdentifier::UserIdOrLocalpart(user_id), password);
+        password_auth.session = uiaa.session.clone();
+        let result = if force_reset {
+            client
+                .encryption()
+                .bootstrap_cross_signing(Some(AuthData::Password(password_auth)))
+                .await
+        } else {
+            client
+                .encryption()
+                .bootstrap_cross_signing_if_needed(Some(AuthData::Password(password_auth)))
+                .await
+        };
+        match result {
+            Ok(()) if force_reset => info!(
+                "matrix: cross-signing keys reset and current device signed (reset_cross_signing=true)"
+            ),
+            Ok(()) => info!("matrix: cross-signing bootstrapped after UIA"),
+            Err(e) => warn!("matrix: cross-signing setup failed after UIA: {e}"),
         }
     }
 
@@ -1748,6 +1935,72 @@ impl MatrixChannel {
             reply_in_thread: self.config.reply_in_thread,
         }
     }
+
+    /// Edit-in-place draft update. Rate-limited per the configured interval.
+    async fn partial_update(&self, recipient: &str, text: &str) -> Result<()> {
+        let client = self.ensure_client().await?;
+        let key = streaming_key(recipient)?;
+        let event_id = {
+            let mut state = self.streaming_state.write().await;
+            let Some(draft) = state.partial.get_mut(&key) else {
+                return Ok(());
+            };
+            let now = Instant::now();
+            let interval = Duration::from_millis(self.config.draft_update_interval_ms.max(50));
+            if !streaming::partial_should_edit(draft, text, now, interval) {
+                return Ok(());
+            }
+            let event_id = draft.event_id.clone();
+            draft.last_text = text.to_string();
+            draft.last_edit = now;
+            event_id
+        };
+        outbound::edit(client, recipient, &event_id, text).await
+    }
+
+    /// MultiMessage paragraph emitter. Loops emitting one paragraph per
+    /// `\n\n` boundary until the unsent buffer no longer contains a break,
+    /// then returns to wait for more accumulated text. Each paragraph posts
+    /// as an independent room message threaded under the captured anchor.
+    async fn multi_update(&self, recipient: &str, text: &str) -> Result<()> {
+        let client = self.ensure_client().await?;
+        let key = streaming_key(recipient)?;
+        let delay = Duration::from_millis(self.config.multi_message_delay_ms);
+        loop {
+            let (paragraph, thread_anchor) = {
+                let mut state = self.streaming_state.write().await;
+                let Some(multi) = state.multi.get_mut(&key) else {
+                    return Ok(());
+                };
+                // Detect a buffer reset (e.g. DraftEvent::Clear) and re-anchor
+                // to the new shorter text.
+                if text.len() < multi.sent_so_far {
+                    multi.sent_so_far = 0;
+                    return Ok(());
+                }
+                if text.len() == multi.sent_so_far {
+                    return Ok(());
+                }
+                let unsent = &text[multi.sent_so_far..];
+                let Some(break_at) = streaming::next_paragraph_break(unsent) else {
+                    return Ok(());
+                };
+                let paragraph = unsent[..break_at].trim().to_string();
+                multi.sent_so_far += break_at + 2; // +2 for the consumed "\n\n"
+                (paragraph, multi.thread_anchor.clone())
+            };
+            if !paragraph.is_empty() {
+                let mut msg = SendMessage::new(paragraph, recipient);
+                msg.thread_ts = thread_anchor.as_ref().map(|e| e.to_string());
+                if let Err(e) = outbound::send(&self.outbox(client), &msg).await {
+                    tracing::warn!("matrix: multi-message paragraph send failed: {e}");
+                }
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -1808,7 +2061,11 @@ impl Channel for MatrixChannel {
     }
 
     fn supports_draft_updates(&self) -> bool {
-        matches!(self.config.stream_mode, StreamMode::Partial)
+        // The orchestrator's streaming pipeline is gated on this returning
+        // true. Both Partial and MultiMessage need it on so update_draft is
+        // driven with accumulated text; the channel decides internally
+        // whether to edit a single message or emit paragraphs.
+        !matches!(self.config.stream_mode, StreamMode::Off)
     }
 
     fn supports_multi_message_streaming(&self) -> bool {
@@ -1821,11 +2078,14 @@ impl Channel for MatrixChannel {
 
     async fn send_draft(&self, message: &SendMessage) -> Result<Option<String>> {
         let client = self.ensure_client().await?;
-        let event_id = outbound::send(&self.outbox(client), message).await?;
-        let key = streaming_key(&message.recipient, message.thread_ts.as_deref())?;
-        let mut state = self.streaming_state.write().await;
+        let key = streaming_key(&message.recipient)?;
         match self.config.stream_mode {
-            StreamMode::Partial | StreamMode::Off => {
+            StreamMode::Off => Ok(None),
+            StreamMode::Partial => {
+                // Send the placeholder draft now so subsequent update_draft
+                // calls have an event to edit.
+                let event_id = outbound::send(&self.outbox(client), message).await?;
+                let mut state = self.streaming_state.write().await;
                 state.partial.insert(
                     key,
                     streaming::PartialDraft {
@@ -1834,38 +2094,36 @@ impl Channel for MatrixChannel {
                         last_edit: Instant::now(),
                     },
                 );
+                Ok(Some(event_id.to_string()))
             }
             StreamMode::MultiMessage => {
+                // No initial message — paragraphs are emitted by update_draft
+                // as they appear. Capture the thread anchor up front so each
+                // paragraph lands in the same thread as the user's message.
+                let thread_anchor = message
+                    .thread_ts
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .and_then(|s| s.parse::<OwnedEventId>().ok());
+                let mut state = self.streaming_state.write().await;
                 state.multi.insert(
                     key,
                     streaming::MultiDraft {
-                        current_event_id: event_id.clone(),
+                        thread_anchor,
+                        sent_so_far: 0,
                     },
                 );
+                Ok(Some("multi_message_synthetic".to_string()))
             }
         }
-        Ok(Some(event_id.to_string()))
     }
 
     async fn update_draft(&self, recipient: &str, _message_id: &str, text: &str) -> Result<()> {
-        let client = self.ensure_client().await?;
-        let key = streaming_key(recipient, None)?;
-        let event_id = {
-            let mut state = self.streaming_state.write().await;
-            let Some(draft) = state.partial.get_mut(&key) else {
-                return Ok(());
-            };
-            let now = Instant::now();
-            let interval = Duration::from_millis(self.config.draft_update_interval_ms.max(50));
-            if !streaming::partial_should_edit(draft, text, now, interval) {
-                return Ok(());
-            }
-            let event_id = draft.event_id.clone();
-            draft.last_text = text.to_string();
-            draft.last_edit = now;
-            event_id
-        };
-        outbound::edit(client, recipient, &event_id, text).await
+        match self.config.stream_mode {
+            StreamMode::Off => Ok(()),
+            StreamMode::Partial => self.partial_update(recipient, text).await,
+            StreamMode::MultiMessage => self.multi_update(recipient, text).await,
+        }
     }
 
     async fn update_draft_progress(
@@ -1874,41 +2132,79 @@ impl Channel for MatrixChannel {
         message_id: &str,
         text: &str,
     ) -> Result<()> {
-        self.update_draft(recipient, message_id, text).await
+        // Tool-status updates only show in Partial (edit-in-place) mode.
+        // MultiMessage doesn't have an in-flight draft to update.
+        if matches!(self.config.stream_mode, StreamMode::Partial) {
+            return self.update_draft(recipient, message_id, text).await;
+        }
+        Ok(())
     }
 
     async fn finalize_draft(&self, recipient: &str, _message_id: &str, text: &str) -> Result<()> {
         let client = self.ensure_client().await?;
-        let key = streaming_key(recipient, None)?;
-        let event_id = {
-            let mut state = self.streaming_state.write().await;
-            if let Some(d) = state.partial.remove(&key) {
-                Some(d.event_id)
-            } else {
-                state.multi.remove(&key).map(|d| d.current_event_id)
+        let key = streaming_key(recipient)?;
+        match self.config.stream_mode {
+            StreamMode::Off => Ok(()),
+            StreamMode::Partial => {
+                let event_id = self
+                    .streaming_state
+                    .write()
+                    .await
+                    .partial
+                    .remove(&key)
+                    .map(|d| d.event_id);
+                if let Some(eid) = event_id {
+                    outbound::edit(client, recipient, &eid, text).await?;
+                }
+                Ok(())
             }
-        };
-        if let Some(eid) = event_id {
-            outbound::edit(client, recipient, &eid, text).await?;
+            StreamMode::MultiMessage => {
+                // Drain the trailing paragraph (or whatever's left after the
+                // last \n\n boundary) as one final message.
+                let multi = self.streaming_state.write().await.multi.remove(&key);
+                let Some(state) = multi else {
+                    return Ok(());
+                };
+                let remainder = if text.len() > state.sent_so_far {
+                    text[state.sent_so_far..].trim().to_string()
+                } else {
+                    String::new()
+                };
+                if !remainder.is_empty() {
+                    let mut msg = SendMessage::new(remainder, recipient);
+                    msg.thread_ts = state.thread_anchor.as_ref().map(|e| e.to_string());
+                    outbound::send(&self.outbox(client), &msg).await?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     async fn cancel_draft(&self, recipient: &str, _message_id: &str) -> Result<()> {
         let client = self.ensure_client().await?;
-        let key = streaming_key(recipient, None)?;
-        let event_id = {
-            let mut state = self.streaming_state.write().await;
-            if let Some(d) = state.partial.remove(&key) {
-                Some(d.event_id)
-            } else {
-                state.multi.remove(&key).map(|d| d.current_event_id)
+        let key = streaming_key(recipient)?;
+        match self.config.stream_mode {
+            StreamMode::Off => Ok(()),
+            StreamMode::Partial => {
+                if let Some(d) = self.streaming_state.write().await.partial.remove(&key) {
+                    let _ = outbound::redact(
+                        client,
+                        recipient,
+                        &d.event_id,
+                        Some("cancelled".to_string()),
+                    )
+                    .await;
+                }
+                Ok(())
             }
-        };
-        if let Some(eid) = event_id {
-            let _ = outbound::redact(client, recipient, &eid, Some("cancelled".to_string())).await;
+            StreamMode::MultiMessage => {
+                // Already-sent paragraphs are independent room messages and
+                // are not redacted on cancel — partial output is preferable
+                // to silent disappearance. Just drop our state.
+                self.streaming_state.write().await.multi.remove(&key);
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     async fn add_reaction(&self, channel_id: &str, message_id: &str, emoji: &str) -> Result<()> {
@@ -1968,18 +2264,10 @@ impl Channel for MatrixChannel {
     }
 }
 
-fn streaming_key(recipient: &str, thread: Option<&str>) -> Result<streaming::DraftKey> {
-    let room: OwnedRoomId = recipient
-        .parse()
-        .with_context(|| format!("parse recipient room id {recipient}"))?;
-    let thread = match thread {
-        Some(t) if !t.is_empty() => Some(
-            t.parse::<OwnedEventId>()
-                .with_context(|| format!("parse thread anchor {t}"))?,
-        ),
-        _ => None,
-    };
-    Ok((room, thread))
+fn streaming_key(recipient: &str) -> Result<streaming::DraftKey> {
+    recipient
+        .parse::<OwnedRoomId>()
+        .with_context(|| format!("parse recipient room id {recipient}"))
 }
 
 // ─── tests ─────────────────────────────────────────────────────────────────
@@ -2391,6 +2679,7 @@ mod tests {
                 password: password.map(String::from),
                 approval_timeout_secs: 300,
                 reply_in_thread: true,
+                reset_cross_signing: false,
                 ack_reactions: true,
             }
         }
