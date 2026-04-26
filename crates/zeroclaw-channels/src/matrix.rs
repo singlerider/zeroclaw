@@ -407,6 +407,16 @@ mod session {
         state_dir.join(SESSION_FILE)
     }
 
+    /// Load the saved login blob. Returns `Ok(None)` when:
+    /// - the file doesn't exist (fresh install, expected first-run state), or
+    /// - the file exists but is corrupt JSON (manual edit gone wrong, partial
+    ///   write from a prior interrupted save). The corrupt case used to
+    ///   propagate an error and stall startup; treating it as a missing
+    ///   session lets the build flow's auto-recovery path fall through to
+    ///   fresh login when credentials are available.
+    ///
+    /// Read errors (permission denied, I/O failure on the underlying file)
+    /// still propagate — those are real problems the operator should see.
     pub(super) fn load(state_dir: &Path) -> anyhow::Result<Option<SessionBlob>> {
         let p = path(state_dir);
         if !p.exists() {
@@ -414,9 +424,16 @@ mod session {
         }
         let bytes = std::fs::read(&p)
             .map_err(|e| anyhow::anyhow!("read matrix session blob {}: {e}", p.display()))?;
-        let blob: SessionBlob = serde_json::from_slice(&bytes)
-            .map_err(|e| anyhow::anyhow!("parse matrix session blob {}: {e}", p.display()))?;
-        Ok(Some(blob))
+        match serde_json::from_slice::<SessionBlob>(&bytes) {
+            Ok(blob) => Ok(Some(blob)),
+            Err(e) => {
+                tracing::warn!(
+                    "matrix: session blob {} is corrupt JSON ({e}); treating as missing so auto-recovery can re-login",
+                    p.display()
+                );
+                Ok(None)
+            }
+        }
     }
 
     pub(super) fn save(state_dir: &Path, blob: &SessionBlob) -> anyhow::Result<()> {
@@ -424,9 +441,30 @@ mod session {
             .map_err(|e| anyhow::anyhow!("create matrix state dir {}: {e}", state_dir.display()))?;
         let p = path(state_dir);
         let json = serde_json::to_vec_pretty(blob)?;
-        std::fs::write(&p, json)
+        write_with_owner_only(&p, &json)
             .map_err(|e| anyhow::anyhow!("write matrix session blob {}: {e}", p.display()))?;
         Ok(())
+    }
+
+    /// Write the session blob with `0o600` permissions on Unix so the
+    /// access token isn't world-readable under a permissive umask.
+    /// Windows falls back to default ACLs (the std-lib write).
+    #[cfg(unix)]
+    fn write_with_owner_only(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(contents)
+    }
+
+    #[cfg(not(unix))]
+    fn write_with_owner_only(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+        std::fs::write(path, contents)
     }
 }
 
@@ -2880,11 +2918,39 @@ mod tests {
         }
 
         #[test]
-        fn corrupt_returns_err() {
+        fn corrupt_returns_none() {
+            // Contract change: a corrupt session.json (manually edited,
+            // truncated by a crash, partial write) must NOT propagate as
+            // an error that stalls startup. Returning None lets the build
+            // flow auto-recover via fresh login when credentials are
+            // available.
             let dir = TempDir::new().unwrap();
             let p = dir.path().join("session.json");
             std::fs::write(p, "{not valid json").unwrap();
-            assert!(load(dir.path()).is_err());
+            assert!(load(dir.path()).unwrap().is_none());
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn save_creates_owner_only_perms() {
+            // session.json holds the access token in plaintext. On Unix
+            // it must be 0o600 regardless of umask so other local users
+            // can't read it.
+            use std::os::unix::fs::PermissionsExt;
+            let dir = TempDir::new().unwrap();
+            let blob = SessionBlob {
+                user_id: "@bot:example.org".to_string(),
+                device_id: "DEV1".to_string(),
+                access_token: "secret".to_string(),
+                refresh_token: None,
+            };
+            save(dir.path(), &blob).unwrap();
+            let meta = std::fs::metadata(dir.path().join("session.json")).unwrap();
+            let mode = meta.permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "expected 0o600, got {mode:o}; session.json must be owner-only"
+            );
         }
     }
 
