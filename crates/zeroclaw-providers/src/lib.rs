@@ -717,8 +717,9 @@ pub struct ProviderRuntimeOptions {
     /// Propagated from `ModelProviderConfig::provider_extra`.
     pub provider_extra: Option<serde_json::Value>,
     /// Full `[providers]` config, used to resolve `api_key`, `base_url`, and
-    /// provider-type overrides for fallback providers from `[providers.<name>]`.
-    /// When `None`, fallback credentials are resolved from env vars only.
+    /// provider-type overrides for fallback providers from
+    /// `[providers.models.<name>]`. When `None`, fallback credentials are
+    /// resolved from env vars only.
     pub fallback_providers_config: Option<zeroclaw_config::providers::ProvidersConfig>,
 }
 
