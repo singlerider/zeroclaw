@@ -412,6 +412,7 @@ impl AcpServer {
                         }
                     }),
                 },
+                TurnEvent::Usage { .. } => continue,
             };
             self.write_notification(&notification).await;
         }

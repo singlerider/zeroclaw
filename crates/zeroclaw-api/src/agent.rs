@@ -24,4 +24,12 @@ pub enum TurnEvent {
         name: String,
         output: String,
     },
+    /// Aggregated token usage and cost for the just-completed turn.
+    /// Emitted at most once, after the final LLM call returns. Consumers
+    /// should treat absence as "usage unavailable" rather than zero.
+    Usage {
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        cost_usd: Option<f64>,
+    },
 }

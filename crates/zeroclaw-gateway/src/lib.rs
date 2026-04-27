@@ -1384,6 +1384,48 @@ async fn run_gateway_chat_simple(
         .await
 }
 
+/// Record webhook (simple chat) cost against the gateway's tracker.
+/// Returns the computed cost in USD when both tracker and usage are present.
+fn record_webhook_cost(
+    state: &AppState,
+    provider_name: &str,
+    model: &str,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+) -> Option<f64> {
+    let tracker = state.cost_tracker.as_ref()?;
+    let input = input_tokens.unwrap_or(0);
+    let output = output_tokens.unwrap_or(0);
+    if input == 0 && output == 0 {
+        return None;
+    }
+    let prices = state.config.lock().cost.prices.clone();
+    let pricing = prices
+        .get(model)
+        .or_else(|| prices.get(&format!("{provider_name}/{model}")))
+        .or_else(|| {
+            model
+                .rsplit_once('/')
+                .and_then(|(_, suffix)| prices.get(suffix))
+        });
+    let usage = zeroclaw_runtime::cost::types::TokenUsage::new(
+        model,
+        input,
+        output,
+        pricing.map_or(0.0, |entry| entry.input),
+        pricing.map_or(0.0, |entry| entry.output),
+    );
+    let cost_usd = usage.cost_usd;
+    if let Err(error) = tracker.record_usage(usage) {
+        tracing::warn!(
+            provider = provider_name,
+            model,
+            "Failed to record webhook turn cost: {error}"
+        );
+    }
+    Some(cost_usd)
+}
+
 /// Full-featured chat with tools for channel handlers (WhatsApp, Linq, Nextcloud Talk).
 async fn run_gateway_chat_with_tools(
     state: &AppState,
@@ -1391,9 +1433,22 @@ async fn run_gateway_chat_with_tools(
     session_id: Option<&str>,
 ) -> anyhow::Result<String> {
     let config = state.config.lock().clone();
-    Box::pin(zeroclaw_runtime::agent::process_message(
-        config, message, session_id,
-    ))
+    // Scope the cost tracking context so per-LLM-call usage flows into the
+    // gateway's cost tracker and costs.jsonl. Without this scope, the
+    // tracker exists on AppState but never receives any records from the
+    // runtime tool loop.
+    let cost_tracking_context = state.cost_tracker.as_ref().map(|tracker| {
+        zeroclaw_runtime::agent::loop_::ToolLoopCostTrackingContext::new(
+            tracker.clone(),
+            std::sync::Arc::new(state.config.lock().cost.prices.clone()),
+        )
+    });
+    Box::pin(
+        zeroclaw_runtime::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(
+            cost_tracking_context,
+            zeroclaw_runtime::agent::process_message(config, message, session_id),
+        ),
+    )
     .await
 }
 
@@ -1543,6 +1598,16 @@ async fn handle_webhook(
                 .map(|(i, o)| i + o)
                 .or(input_tokens)
                 .or(output_tokens);
+            // Persist webhook turn cost so /api/cost and costs.jsonl reflect
+            // simple-chat traffic. run_gateway_chat_simple bypasses the tool
+            // loop, so the task-local cost tracker scope is not in play here.
+            let cost_usd = record_webhook_cost(
+                &state,
+                &provider_label,
+                &model_label,
+                input_tokens,
+                output_tokens,
+            );
             state.observer.record_event(
                 &zeroclaw_runtime::observability::ObserverEvent::LlmResponse {
                     provider: provider_label.clone(),
@@ -1563,7 +1628,7 @@ async fn handle_webhook(
                     model: model_label,
                     duration,
                     tokens_used,
-                    cost_usd: None,
+                    cost_usd,
                 },
             );
 

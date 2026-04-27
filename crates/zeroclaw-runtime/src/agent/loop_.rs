@@ -533,6 +533,7 @@ struct StreamedChatOutcome {
     response_text: String,
     tool_calls: Vec<ToolCall>,
     forwarded_live_deltas: bool,
+    usage: Option<zeroclaw_providers::traits::TokenUsage>,
 }
 
 async fn consume_provider_streaming_response(
@@ -575,6 +576,9 @@ async fn consume_provider_streaming_response(
         let event = event_result.map_err(|err| anyhow::anyhow!("provider stream error: {err}"))?;
         match event {
             StreamEvent::Final => break,
+            StreamEvent::Usage(usage) => {
+                outcome.usage = Some(usage);
+            }
             StreamEvent::ToolCall(tool_call) => {
                 outcome.tool_calls.push(tool_call);
                 suppress_forwarding = true;
@@ -1111,7 +1115,7 @@ pub async fn run_tool_call_loop(
                     Ok(zeroclaw_providers::ChatResponse {
                         text: Some(streamed.response_text),
                         tool_calls: streamed.tool_calls,
-                        usage: None,
+                        usage: streamed.usage,
                         reasoning_content: None,
                     })
                 }

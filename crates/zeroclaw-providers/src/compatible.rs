@@ -521,6 +521,8 @@ struct ApiChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptionsBody>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_stream: Option<bool>,
@@ -530,6 +532,15 @@ struct ApiChatRequest {
     tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+}
+
+/// OpenAI-compatible `stream_options.include_usage` toggle.
+/// When set with streaming, providers emit a final SSE chunk carrying usage
+/// counts (prompt_tokens / completion_tokens) so the agent can populate cost
+/// records and the WebSocket done frame for streaming responses.
+#[derive(Debug, Serialize, Clone, Copy)]
+struct StreamOptionsBody {
+    include_usage: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -832,6 +843,10 @@ struct ResponsesContent {
 struct StreamChunkResponse {
     #[serde(default)]
     choices: Vec<StreamChoice>,
+    /// Final-chunk usage counts. Populated only when the request includes
+    /// `stream_options.include_usage: true` and the provider supports it.
+    #[serde(default)]
+    usage: Option<UsageInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1246,6 +1261,17 @@ pub(crate) fn sse_bytes_to_events(
 
                             if choice.finish_reason.as_deref() == Some("tool_calls") {
                                 should_emit_tool_calls = true;
+                            }
+                        }
+
+                        if let Some(usage) = chunk.usage.as_ref() {
+                            let token_usage = zeroclaw_api::provider::TokenUsage {
+                                input_tokens: usage.prompt_tokens,
+                                output_tokens: usage.completion_tokens,
+                                cached_input_tokens: None,
+                            };
+                            if tx.send(Ok(StreamEvent::Usage(token_usage))).await.is_err() {
+                                return;
                             }
                         }
 
@@ -1775,6 +1801,7 @@ impl Provider for OpenAiCompatibleProvider {
             messages,
             temperature,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: self.reasoning_effort_for_model(model),
             tool_stream: None,
             tools: None,
@@ -1884,6 +1911,7 @@ impl Provider for OpenAiCompatibleProvider {
             messages: api_messages,
             temperature,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: self.reasoning_effort_for_model(model),
             tool_stream: None,
             tools: None,
@@ -1984,6 +2012,7 @@ impl Provider for OpenAiCompatibleProvider {
             messages: api_messages,
             temperature,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: self.reasoning_effort_for_model(model),
             tool_stream: self.tool_stream_for_tools(!tools.is_empty()),
             tools: if tools.is_empty() {
@@ -2253,6 +2282,9 @@ impl Provider for OpenAiCompatibleProvider {
                     None
                 },
                 stream: Some(options.enabled),
+                stream_options: options.enabled.then_some(StreamOptionsBody {
+                    include_usage: true,
+                }),
                 tools: None,
                 tool_choice: None,
                 max_tokens: self.max_tokens,
@@ -2353,6 +2385,9 @@ impl Provider for OpenAiCompatibleProvider {
             messages,
             temperature,
             stream: Some(options.enabled),
+            stream_options: options.enabled.then_some(StreamOptionsBody {
+                include_usage: true,
+            }),
             reasoning_effort: self.reasoning_effort_for_model(model),
             tool_stream: None,
             tools: None,
@@ -2441,6 +2476,9 @@ impl Provider for OpenAiCompatibleProvider {
             messages: api_messages,
             temperature,
             stream: Some(options.enabled),
+            stream_options: options.enabled.then_some(StreamOptionsBody {
+                include_usage: true,
+            }),
             reasoning_effort: self.reasoning_effort_for_model(model),
             tool_stream: None,
             tools: None,
@@ -2568,6 +2606,7 @@ mod tests {
             ],
             temperature: 0.4,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: None,
             tool_stream: None,
             tools: None,
@@ -3569,6 +3608,7 @@ mod tests {
             }],
             temperature: 0.7,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: None,
             tool_stream: None,
             tools: Some(tools),
@@ -3592,6 +3632,7 @@ mod tests {
             }],
             temperature: 0.7,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: None,
             tool_stream: provider.tool_stream_for_tools(true),
             tools: Some(vec![serde_json::json!({
@@ -3626,6 +3667,7 @@ mod tests {
             }],
             temperature: 0.7,
             stream: Some(false),
+            stream_options: None,
             reasoning_effort: None,
             tool_stream: provider.tool_stream_for_tools(true),
             tools: Some(vec![serde_json::json!({
