@@ -2523,7 +2523,7 @@ mod tests {
             .expect("agent builder should succeed with valid config");
 
         let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
-        agent.turn_streamed("hi", event_tx).await.unwrap();
+        agent.turn_streamed("hi", event_tx, None).await.unwrap();
 
         let history = agent.history();
         for window in history.windows(2) {
