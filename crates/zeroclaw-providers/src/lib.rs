@@ -1847,6 +1847,70 @@ fn resolve_fallback_provider(
     }
 }
 
+/// Which factory the fallback dispatch should call, with the credentials
+/// to hand it. The url-bearing variant carries the resolved base_url as a
+/// positional arg; the codex variant relies on `provider_api_url` already
+/// being set on the accompanying `ProviderRuntimeOptions` (because the
+/// codex factory does not accept a positional url).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FallbackFactoryCall {
+    Codex {
+        api_key: Option<String>,
+    },
+    UrlBased {
+        api_key: Option<String>,
+        api_url: Option<String>,
+    },
+}
+
+/// Plan for constructing a single fallback provider: which factory to call,
+/// the provider-name string to hand it, and the per-call options (already
+/// patched with `auth_profile_override` and `provider_api_url` where they
+/// belong). Pure data — no provider construction happens here, which makes
+/// the dispatch logic unit-testable without standing up real providers.
+#[derive(Debug, Clone)]
+struct FallbackBuildPlan {
+    actual_provider_name: String,
+    options: ProviderRuntimeOptions,
+    call: FallbackFactoryCall,
+}
+
+fn build_fallback_call(
+    resolution: FallbackResolution,
+    base_options: &ProviderRuntimeOptions,
+) -> FallbackBuildPlan {
+    let mut options = base_options.clone();
+    if let Some(profile) = resolution.profile_override.as_deref() {
+        options.auth_profile_override = Some(profile.to_string());
+    }
+
+    let call = match resolution.actual_provider_name.as_str() {
+        // Codex manages its own endpoint via OAuth token exchange and reads
+        // the override from `provider_api_url`, not from a positional URL.
+        // Forward the resolved base_url so a fallback profile's base_url is
+        // honored on the codex path. Without this the codex fallback would
+        // silently fall back to the OAuth-default endpoint.
+        "openai-codex" | "openai_codex" | "codex" => {
+            if let Some(ref url) = resolution.base_url {
+                options.provider_api_url = Some(url.clone());
+            }
+            FallbackFactoryCall::Codex {
+                api_key: resolution.api_key.clone(),
+            }
+        }
+        _ => FallbackFactoryCall::UrlBased {
+            api_key: resolution.api_key.clone(),
+            api_url: resolution.base_url.clone(),
+        },
+    };
+
+    FallbackBuildPlan {
+        actual_provider_name: resolution.actual_provider_name,
+        options,
+        call,
+    }
+}
+
 /// Create provider chain with retry and fallback behavior.
 pub fn create_resilient_provider(
     primary_name: &str,
@@ -1893,36 +1957,22 @@ pub fn create_resilient_provider_with_options(
         // fall through to env vars (e.g. XAI_API_KEY for "xai") as before.
         let resolution =
             resolve_fallback_provider(fallback, options.fallback_providers_config.as_ref());
+        let plan = build_fallback_call(resolution, options);
 
-        // Propagate auth profile override (e.g. "openai-codex:second") through
-        // ProviderRuntimeOptions so the provider picks up the right OAuth
-        // credential set.
-        let mut fallback_options = options.clone();
-        if let Some(profile) = resolution.profile_override.as_deref() {
-            fallback_options.auth_profile_override = Some(profile.to_string());
-        }
-
-        let create_result = match resolution.actual_provider_name.as_str() {
-            // Codex manages its own endpoint via OAuth token exchange and
-            // reads the override from `provider_api_url`, not from a positional
-            // url argument. Forward the resolved base_url through that field
-            // so a fallback profile's base_url is honored on the codex path.
-            "openai-codex" | "openai_codex" | "codex" => {
-                if let Some(ref url) = resolution.base_url {
-                    fallback_options.provider_api_url = Some(url.clone());
-                }
-                create_provider_with_options(
-                    &resolution.actual_provider_name,
-                    resolution.api_key.as_deref(),
-                    &fallback_options,
+        let create_result = match plan.call {
+            FallbackFactoryCall::Codex { api_key } => create_provider_with_options(
+                &plan.actual_provider_name,
+                api_key.as_deref(),
+                &plan.options,
+            ),
+            FallbackFactoryCall::UrlBased { api_key, api_url } => {
+                create_provider_with_url_and_options(
+                    &plan.actual_provider_name,
+                    api_key.as_deref(),
+                    api_url.as_deref(),
+                    &plan.options,
                 )
             }
-            _ => create_provider_with_url_and_options(
-                &resolution.actual_provider_name,
-                resolution.api_key.as_deref(),
-                resolution.base_url.as_deref(),
-                &fallback_options,
-            ),
         };
         match create_result {
             Ok(provider) => providers.push((fallback.clone(), provider)),
@@ -3961,6 +4011,99 @@ mod tests {
         let resolution = resolve_fallback_provider("openai-codex:second", None);
         assert_eq!(resolution.actual_provider_name, "openai-codex");
         assert_eq!(resolution.profile_override.as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn build_fallback_call_codex_writes_base_url_to_provider_api_url() {
+        // Codex factory has no positional URL parameter — it reads the
+        // override from ProviderRuntimeOptions::provider_api_url. The plan
+        // must move the resolved base_url into options before dispatch,
+        // otherwise a Codex fallback with a configured base_url silently
+        // falls back to the OAuth-default endpoint.
+        let resolution = FallbackResolution {
+            actual_provider_name: "openai-codex".to_string(),
+            profile_override: None,
+            api_key: Some("oauth-token".to_string()),
+            base_url: Some("https://codex.internal/v1".to_string()),
+        };
+        let base = ProviderRuntimeOptions::default();
+        let plan = build_fallback_call(resolution, &base);
+
+        assert_eq!(plan.actual_provider_name, "openai-codex");
+        assert_eq!(
+            plan.options.provider_api_url.as_deref(),
+            Some("https://codex.internal/v1"),
+            "Codex base_url must be forwarded via provider_api_url"
+        );
+        assert_eq!(
+            plan.call,
+            FallbackFactoryCall::Codex {
+                api_key: Some("oauth-token".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn build_fallback_call_codex_without_base_url_leaves_options_unchanged() {
+        let resolution = FallbackResolution {
+            actual_provider_name: "codex".to_string(),
+            profile_override: None,
+            api_key: None,
+            base_url: None,
+        };
+        let base = ProviderRuntimeOptions {
+            provider_api_url: Some("https://default.example/v1".to_string()),
+            ..ProviderRuntimeOptions::default()
+        };
+        let plan = build_fallback_call(resolution, &base);
+
+        // Original provider_api_url must be preserved when the resolution
+        // carries no base_url, so we don't clobber an upstream override.
+        assert_eq!(
+            plan.options.provider_api_url.as_deref(),
+            Some("https://default.example/v1")
+        );
+        assert!(matches!(plan.call, FallbackFactoryCall::Codex { .. }));
+    }
+
+    #[test]
+    fn build_fallback_call_url_based_carries_base_url_in_call_args() {
+        let resolution = FallbackResolution {
+            actual_provider_name: "ollama".to_string(),
+            profile_override: None,
+            api_key: Some("ollama-key".to_string()),
+            base_url: Some("http://192.168.2.4:11434".to_string()),
+        };
+        let base = ProviderRuntimeOptions::default();
+        let plan = build_fallback_call(resolution, &base);
+
+        // For non-Codex providers the URL goes through the positional arg,
+        // not options. options.provider_api_url stays at its base value.
+        assert_eq!(plan.options.provider_api_url, None);
+        assert_eq!(
+            plan.call,
+            FallbackFactoryCall::UrlBased {
+                api_key: Some("ollama-key".to_string()),
+                api_url: Some("http://192.168.2.4:11434".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn build_fallback_call_propagates_profile_override_to_options() {
+        let resolution = FallbackResolution {
+            actual_provider_name: "openai-codex".to_string(),
+            profile_override: Some("second".to_string()),
+            api_key: None,
+            base_url: None,
+        };
+        let base = ProviderRuntimeOptions::default();
+        let plan = build_fallback_call(resolution, &base);
+        assert_eq!(
+            plan.options.auth_profile_override.as_deref(),
+            Some("second"),
+            "auth_profile_override must reach the per-call options"
+        );
     }
 
     #[test]
