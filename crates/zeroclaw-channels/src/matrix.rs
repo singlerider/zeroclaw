@@ -995,7 +995,12 @@ mod inbound {
             OwnedEventId, OwnedUserId,
             events::{
                 AnySyncTimelineEvent,
-                room::message::{MessageType, OriginalSyncRoomMessageEvent},
+                reaction::ReactionEventContent,
+                relation::Annotation,
+                room::{
+                    encrypted::OriginalSyncRoomEncryptedEvent,
+                    message::{MessageType, OriginalSyncRoomMessageEvent},
+                },
             },
             serde::Raw,
         },
@@ -1024,6 +1029,10 @@ mod inbound {
         pub bot_user_id: OwnedUserId,
         pub bot_display_name: Arc<TokioRwLock<Option<String>>>,
         pub initial_sync_done: Arc<AtomicBool>,
+        /// Event ids of inbound events that arrived as `m.room.encrypted` and
+        /// could not be decrypted. Tracked so the bot reacts ❓ exactly once
+        /// per event across sync catchup deliveries.
+        pub undecryptable_seen: Arc<TokioMutex<HashSet<OwnedEventId>>>,
     }
 
     pub(super) async fn run_sync_loop(client: Client, ctx: HandlerCtx) -> anyhow::Result<()> {
@@ -1039,6 +1048,18 @@ mod inbound {
             },
         );
 
+        // Surface inbound events the SDK couldn't decrypt by reacting ❓ on
+        // the encrypted event so the operator notices a key gap in chat
+        // instead of silent dropping. Best-effort: prophylactic in normally-
+        // healthy rooms where decryption succeeds.
+        let encrypted_ctx = ctx.clone();
+        client.add_event_handler(move |ev: OriginalSyncRoomEncryptedEvent, room: Room| {
+            let ctx = encrypted_ctx.clone();
+            async move {
+                handle_undecryptable(ctx, ev, room).await;
+            }
+        });
+
         info!("matrix: starting sync loop");
         // Run an initial sync once so the sync token + state are populated,
         // then flip the health flag and enter the long-running sync loop.
@@ -1050,6 +1071,36 @@ mod inbound {
             .sync(SyncSettings::default())
             .await
             .map_err(|e| anyhow::anyhow!("matrix sync loop failed: {e}"))
+    }
+
+    /// React ❓ on any inbound event the SDK delivered as still-encrypted
+    /// (decryption failed or no keys available). Skips the bot's own
+    /// events, non-Joined rooms, and any event already reacted to in this
+    /// process. Reaction send failures are warn-logged, not propagated.
+    async fn handle_undecryptable(ctx: HandlerCtx, ev: OriginalSyncRoomEncryptedEvent, room: Room) {
+        if room.state() != RoomState::Joined {
+            return;
+        }
+        if ev.sender == ctx.bot_user_id {
+            return;
+        }
+        let event_id = ev.event_id.clone();
+        let already = {
+            let mut seen = ctx.undecryptable_seen.lock().await;
+            !seen.insert(event_id.clone())
+        };
+        if already {
+            return;
+        }
+        debug!(
+            "matrix: reacting ❓ to undecryptable event {} from {}",
+            event_id, ev.sender
+        );
+        let content =
+            ReactionEventContent::new(Annotation::new(event_id.clone(), "❓".to_string()));
+        if let Err(e) = room.send(content).await {
+            warn!("matrix: failed to react ❓ on undecryptable event {event_id}: {e}");
+        }
     }
 
     async fn handle_message(
@@ -1636,6 +1687,36 @@ mod outbound {
         }
     }
 
+    /// Why a marker upload didn't reach the room. Drives both the textual
+    /// "(note: I couldn't deliver…)" line and the emoji reactions on the
+    /// agent's outgoing message so a chatter sees a hard refusal at a glance.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum MarkerFailure {
+        /// Trust-boundary refusal: `validate_marker_target` rejected the
+        /// target (path escapes workspace, disallowed scheme, etc.). The bot
+        /// deliberately did not attempt the fetch.
+        Refused,
+        /// Post-validation failure: fetch error, file not found, upload
+        /// rejected by the server, oversize body, timeout. The bot tried and
+        /// couldn't complete the delivery.
+        Failed,
+    }
+
+    /// Pick the emoji reactions to apply to the agent's outgoing text/event
+    /// based on which kinds of marker failures occurred. 🚫 means the bot
+    /// refused for safety; ⚠️ means it tried and didn't make it. Both can
+    /// fire on the same message when a batch mixes refusals and failures.
+    pub(super) fn decide_reactions(failures: &[MarkerFailure]) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if failures.iter().any(|f| matches!(f, MarkerFailure::Refused)) {
+            out.push("🚫");
+        }
+        if failures.iter().any(|f| matches!(f, MarkerFailure::Failed)) {
+            out.push("⚠️");
+        }
+        out
+    }
+
     /// 8 MiB cap on the body of an HTTP marker fetch. Matches WebFetchTool's
     /// streaming-cap pattern in `crates/zeroclaw-tools/src/web_fetch.rs`.
     const MAX_MARKER_BYTES: usize = 8 * 1024 * 1024;
@@ -1650,6 +1731,41 @@ mod outbound {
     pub(super) enum MarkerTarget {
         Local(PathBuf),
         Http(reqwest::Url),
+    }
+
+    /// Why `validate_marker_target` rejected a target. The distinction drives
+    /// the user-facing emoji reaction: `Refused` (the bot declined a target
+    /// it could have fetched) becomes 🚫, `NotFound` (the file simply isn't
+    /// there) becomes ⚠️ alongside other delivery failures. Without this
+    /// split, an agent emitting `[file:/missing.pdf]` would surface as a
+    /// safety refusal even though no policy fired.
+    #[derive(Debug)]
+    pub(super) enum ValidateError {
+        /// Trust-boundary refusal: disallowed scheme, no workspace
+        /// configured, or path resolved outside the workspace. The target
+        /// was a real, reachable resource that policy declined.
+        Refused(anyhow::Error),
+        /// The path didn't resolve to anything on disk (ENOENT or similar
+        /// during canonicalize). Treated as a delivery failure, not a
+        /// safety event.
+        NotFound(anyhow::Error),
+    }
+
+    impl std::fmt::Display for ValidateError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                ValidateError::Refused(e) | ValidateError::NotFound(e) => write!(f, "{e}"),
+            }
+        }
+    }
+
+    impl ValidateError {
+        pub(super) fn as_marker_failure(&self) -> MarkerFailure {
+            match self {
+                ValidateError::Refused(_) => MarkerFailure::Refused,
+                ValidateError::NotFound(_) => MarkerFailure::Failed,
+            }
+        }
     }
 
     /// Validate an outbound marker target against the trust boundary policy:
@@ -1669,34 +1785,33 @@ mod outbound {
     pub(super) fn validate_marker_target(
         target: &str,
         workspace_dir: Option<&Path>,
-    ) -> Result<MarkerTarget> {
+    ) -> std::result::Result<MarkerTarget, ValidateError> {
         if target.starts_with("http://") || target.starts_with("https://") {
             let url = reqwest::Url::parse(target)
-                .with_context(|| format!("parse marker URL {target}"))?;
+                .with_context(|| format!("parse marker URL {target}"))
+                .map_err(ValidateError::Refused)?;
             return Ok(MarkerTarget::Http(url));
         }
-        // Anything else with a scheme that isn't a Windows drive letter is
-        // refused. `://` covers most URL forms; `data:` and `file:` get
-        // explicit checks because they don't use `//`.
         if target.contains("://") {
             let scheme = target.split("://").next().unwrap_or("?");
-            bail!(
+            return Err(ValidateError::Refused(anyhow!(
                 "matrix: marker target uses disallowed scheme {scheme:?}; only http/https and workspace-relative paths are accepted"
-            );
+            )));
         }
         if target.starts_with("data:") || target.starts_with("file:") {
-            bail!(
+            return Err(ValidateError::Refused(anyhow!(
                 "matrix: marker target uses disallowed scheme; only http/https and workspace-relative paths are accepted"
-            );
+            )));
         }
 
         let workspace = workspace_dir.ok_or_else(|| {
-            anyhow!(
+            ValidateError::Refused(anyhow!(
                 "matrix: marker target {target} is a local path but the channel was started without a workspace_dir, refusing for safety"
-            )
+            ))
         })?;
         let workspace_canon = std::fs::canonicalize(workspace)
-            .with_context(|| format!("canonicalize workspace {}", workspace.display()))?;
+            .with_context(|| format!("canonicalize workspace {}", workspace.display()))
+            .map_err(ValidateError::Refused)?;
 
         let target_path = Path::new(target);
         let absolute = if target_path.is_absolute() {
@@ -1704,15 +1819,26 @@ mod outbound {
         } else {
             workspace_canon.join(target_path)
         };
-        let target_canon = std::fs::canonicalize(&absolute)
-            .with_context(|| format!("canonicalize marker target {target}"))?;
+        let target_canon = match std::fs::canonicalize(&absolute) {
+            Ok(p) => p,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ValidateError::NotFound(anyhow!(
+                    "matrix: marker target {target} not found on disk"
+                )));
+            }
+            Err(e) => {
+                return Err(ValidateError::Refused(
+                    anyhow::Error::from(e).context(format!("canonicalize marker target {target}")),
+                ));
+            }
+        };
 
         if !target_canon.starts_with(&workspace_canon) {
-            bail!(
+            return Err(ValidateError::Refused(anyhow!(
                 "matrix: marker target {target} resolves to {} which is outside workspace_dir {}; refusing",
                 target_canon.display(),
                 workspace_canon.display(),
-            );
+            )));
         }
         Ok(MarkerTarget::Local(target_canon))
     }
@@ -1789,7 +1915,11 @@ mod outbound {
             last_attachment_id = Some(id);
         }
 
-        let mut failed_markers: Vec<String> = Vec::new();
+        // Track each failed marker with the reason: Refused (trust-boundary
+        // rejection by validate_marker_target) vs Failed (everything else —
+        // fetch error, upload rejection). Drives both the textual note and
+        // the emoji reactions fired below.
+        let mut failed_markers: Vec<(String, MarkerFailure)> = Vec::new();
         for marker in &ms {
             let kind = match marker.kind {
                 markers::MarkerKind::Image => AttachmentKind::Image,
@@ -1798,16 +1928,45 @@ mod outbound {
                 markers::MarkerKind::File => AttachmentKind::File,
                 markers::MarkerKind::Voice => AttachmentKind::Voice,
             };
-            let bytes = match fetch_marker_bytes(&marker.target, outbox.workspace_dir).await {
-                Ok(b) => b,
+            let resolved = match validate_marker_target(&marker.target, outbox.workspace_dir) {
+                Ok(t) => t,
                 Err(e) => {
+                    let kind = e.as_marker_failure();
+                    let label = match kind {
+                        MarkerFailure::Refused => "trust boundary",
+                        MarkerFailure::Failed => "not found",
+                    };
                     warn!(
-                        "matrix: skipping outbound marker for {}: {e}",
+                        "matrix: skipping outbound marker for {} ({label}): {e}",
                         marker.target
                     );
-                    failed_markers.push(marker.target.clone());
+                    failed_markers.push((marker.target.clone(), kind));
                     continue;
                 }
+            };
+            let bytes = match resolved {
+                MarkerTarget::Local(path) => match tokio::fs::read(&path).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!(
+                            "matrix: skipping outbound marker for {} (read failed): {e}",
+                            marker.target
+                        );
+                        failed_markers.push((marker.target.clone(), MarkerFailure::Failed));
+                        continue;
+                    }
+                },
+                MarkerTarget::Http(url) => match fetch_http(url).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!(
+                            "matrix: skipping outbound marker for {} (http failed): {e}",
+                            marker.target
+                        );
+                        failed_markers.push((marker.target.clone(), MarkerFailure::Failed));
+                        continue;
+                    }
+                },
             };
             let file_name = derive_file_name(&marker.target);
             let mime = mime_for(&file_name, &kind);
@@ -1823,19 +1982,17 @@ mod outbound {
                         "matrix: skipping outbound marker for {} (upload failed): {e}",
                         marker.target
                     );
-                    failed_markers.push(marker.target.clone());
+                    failed_markers.push((marker.target.clone(), MarkerFailure::Failed));
                 }
             }
         }
 
         if !failed_markers.is_empty() {
-            let note = if failed_markers.len() == 1 {
-                format!(
-                    "(note: I couldn't deliver the file at {}.)",
-                    failed_markers[0]
-                )
+            let targets: Vec<&str> = failed_markers.iter().map(|(t, _)| t.as_str()).collect();
+            let note = if targets.len() == 1 {
+                format!("(note: I couldn't deliver the file at {}.)", targets[0])
             } else {
-                let joined = failed_markers.join(", ");
+                let joined = targets.join(", ");
                 format!("(note: I couldn't deliver these files: {joined}.)")
             };
             text = if text.trim().is_empty() {
@@ -1854,8 +2011,11 @@ mod outbound {
             SendOutcome::ReturnAttachment => {
                 // Safe by construction: ReturnAttachment is only returned
                 // when last_attachment_id is Some.
-                return Ok(last_attachment_id
-                    .expect("decide_send_outcome guarantees Some when ReturnAttachment"));
+                let attachment_id = last_attachment_id
+                    .expect("decide_send_outcome guarantees Some when ReturnAttachment");
+                let kinds: Vec<MarkerFailure> = failed_markers.iter().map(|(_, k)| *k).collect();
+                emit_failure_reactions(&room, &attachment_id, &kinds).await;
+                return Ok(attachment_id);
             }
             SendOutcome::EmptyError => {
                 return Err(anyhow!(
@@ -1875,7 +2035,28 @@ mod outbound {
             room.send(content).await?.event_id
         };
 
+        let kinds: Vec<MarkerFailure> = failed_markers.iter().map(|(_, k)| *k).collect();
+        emit_failure_reactions(&room, &event_id, &kinds).await;
+
         Ok(event_id)
+    }
+
+    /// Best-effort: apply 🚫 / ⚠️ reactions to the bot's just-sent message
+    /// based on which kinds of marker failures occurred. Reaction send
+    /// failures are logged but never propagated — the primary message
+    /// already landed.
+    async fn emit_failure_reactions(
+        room: &Room,
+        event_id: &OwnedEventId,
+        failures: &[MarkerFailure],
+    ) {
+        for emoji in decide_reactions(failures) {
+            let content =
+                ReactionEventContent::new(Annotation::new(event_id.clone(), emoji.to_string()));
+            if let Err(e) = room.send(content).await {
+                warn!("matrix: failed to send {emoji} reaction on outgoing message: {e}");
+            }
+        }
     }
 
     async fn send_threaded_reply(
@@ -2096,27 +2277,6 @@ mod outbound {
             AttachmentKind::File | AttachmentKind::Auto => "application/octet-stream".to_string(),
         }
     }
-
-    /// Sandboxed outbound-marker fetcher. Resolves a marker target string via
-    /// `validate_marker_target` (see that function's docs for the trust
-    /// boundary policy), then performs a bounded fetch:
-    ///
-    /// * Local paths use async I/O via `tokio::fs::read` so the executor
-    ///   isn't blocked on disk reads.
-    /// * HTTP/HTTPS URLs go through a static `reqwest::Client` with a 30s
-    ///   timeout and a 5-redirect cap, with the response body streamed into
-    ///   an 8 MiB buffer that aborts on overflow.
-    pub(super) async fn fetch_marker_bytes(
-        target: &str,
-        workspace_dir: Option<&Path>,
-    ) -> Result<Vec<u8>> {
-        match validate_marker_target(target, workspace_dir)? {
-            MarkerTarget::Local(path) => tokio::fs::read(&path)
-                .await
-                .with_context(|| format!("read marker file {}", path.display())),
-            MarkerTarget::Http(url) => fetch_http(url).await,
-        }
-    }
 }
 
 // ─── public type ───────────────────────────────────────────────────────────
@@ -2135,6 +2295,7 @@ pub struct MatrixChannel {
     reaction_log: Arc<TokioMutex<HashMap<outbound::ReactionKey, OwnedEventId>>>,
     bot_display_name: Arc<TokioRwLock<Option<String>>>,
     initial_sync_done: Arc<AtomicBool>,
+    undecryptable_seen: Arc<TokioMutex<HashSet<OwnedEventId>>>,
 }
 
 impl MatrixChannel {
@@ -2160,6 +2321,7 @@ impl MatrixChannel {
             reaction_log: Arc::new(TokioMutex::new(HashMap::new())),
             bot_display_name: Arc::new(TokioRwLock::new(None)),
             initial_sync_done: Arc::new(AtomicBool::new(false)),
+            undecryptable_seen: Arc::new(TokioMutex::new(HashSet::new())),
         })
     }
 
@@ -2294,6 +2456,7 @@ impl Channel for MatrixChannel {
             bot_user_id: user_id,
             bot_display_name: self.bot_display_name.clone(),
             initial_sync_done: self.initial_sync_done.clone(),
+            undecryptable_seen: self.undecryptable_seen.clone(),
         };
         inbound::run_sync_loop(client, ctx).await
     }
