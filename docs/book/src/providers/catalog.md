@@ -42,6 +42,24 @@ think = false                     # disable chain-of-thought on reasoning models
 
 Local inference. Uses Ollama's native `/api/chat`. Schema-based structured output via `format` parameter (reliability varies by model). No API key needed.
 
+For a **remote Ollama instance** (separate machine or LXC container), set `base_url` to the remote address:
+
+```toml
+[providers.models.ollama]
+kind = "ollama"
+base_url = "http://192.168.1.100:11434"
+model = "qwen3.6:27b"
+```
+
+Then point the agent at it:
+
+```toml
+[providers]
+fallback = "ollama"
+```
+
+Or set it from the command line: `zeroclaw config set providers.fallback ollama`
+
 ### Bedrock
 
 ```toml

@@ -68,8 +68,8 @@ See [Configuration](./configuration.md) for the full schema.
 
 Two mechanisms:
 
-1. **`default_model`** in the top-level config picks which provider the agent loop uses by default.
-2. **Channels and tools can override.** A channel config can specify `provider = "claude"` to use Claude for that channel's responses while `default_model` stays set to a cheaper option for the rest.
+1. **`providers.fallback`** names which `[providers.models.<name>]` entry the agent uses when no other rule applies. Onboarding does not set this automatically — set it manually after configuring your providers: `zeroclaw config set providers.fallback <name>`.
+2. **Channels and tools can override.** A channel config can specify `provider = "claude"` to use Claude for that channel's responses while the fallback handles everything else.
 
 ## Why provider-agnostic matters
 

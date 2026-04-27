@@ -112,14 +112,24 @@ api_version = "2024-10-01-preview"
 api_key = "..."
 ```
 
-## Picking the default
+## Setting the fallback provider
+
+`providers.fallback` names which `[providers.models.<name>]` entry the agent uses when no other routing rule applies. Onboarding configures your provider credentials and model but does **not** set this field — you set it manually after deciding which provider should be the default:
 
 ```toml
-default_provider = "claude"
-default_model    = "claude-haiku-4-5-20251001"
+[providers]
+fallback = "claude"   # must match a key under [providers.models.*]
 ```
 
-Both are read at agent startup. Channels, tools, and SOPs can override per-request.
+Or from the command line:
+
+```bash
+zeroclaw config set providers.fallback claude
+```
+
+Until `providers.fallback` is set the agent will not know which provider to use and will error at startup. Configure at least one provider under `[providers.models.*]` and then set `providers.fallback` to its name.
+
+Channels, tools, and SOPs can override the fallback on a per-request basis.
 
 ## See also
 
