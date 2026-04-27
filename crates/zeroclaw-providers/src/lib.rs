@@ -717,7 +717,7 @@ pub struct ProviderRuntimeOptions {
     /// Propagated from `ModelProviderConfig::provider_extra`.
     pub provider_extra: Option<serde_json::Value>,
     /// Full `[providers]` config, used to resolve `api_key`, `base_url`, and
-    /// provider-type overrides for fallback providers from `[providers.models.<name>]`.
+    /// provider-type overrides for fallback providers from `[providers.<name>]`.
     /// When `None`, fallback credentials are resolved from env vars only.
     pub fallback_providers_config: Option<zeroclaw_config::providers::ProvidersConfig>,
 }
@@ -1816,7 +1816,7 @@ pub fn create_resilient_provider_with_options(
 
         let (provider_name, profile_override) = parse_provider_profile(fallback);
 
-        // Look up api_key, base_url, and provider-type from [providers.models.<name>]
+        // Look up api_key, base_url, and provider-type from [providers.<name>]
         // before falling back to env var resolution. This makes fallback providers
         // config-aware the same way the primary provider is. If no profile entry
         // exists, resolve_provider_credential falls through to provider-specific env
@@ -3797,6 +3797,84 @@ mod tests {
         // Keys without a recognisable prefix should never flag a mismatch.
         assert_eq!(check_api_key_prefix("openai", "my-custom-key-123"), None);
         assert_eq!(check_api_key_prefix("anthropic", "some-random-key"), None);
+    }
+
+    // --- config-aware fallback ---
+
+    #[test]
+    fn fallback_uses_config_api_key_when_set() {
+        let mut models = std::collections::HashMap::new();
+        models.insert(
+            "ollama".to_string(),
+            zeroclaw_config::schema::ModelProviderConfig {
+                api_key: Some("config-test-key".to_string()),
+                base_url: Some("http://localhost:11434".to_string()),
+                ..Default::default()
+            },
+        );
+        let providers_config = zeroclaw_config::providers::ProvidersConfig {
+            models,
+            ..Default::default()
+        };
+
+        let reliability = zeroclaw_config::schema::ReliabilityConfig {
+            provider_retries: 1,
+            provider_backoff_ms: 100,
+            fallback_providers: vec!["ollama".into()],
+            api_keys: Vec::new(),
+            model_fallbacks: std::collections::HashMap::new(),
+            channel_initial_backoff_secs: 2,
+            channel_max_backoff_secs: 60,
+            scheduler_poll_secs: 15,
+            scheduler_retries: 2,
+        };
+
+        let options = ProviderRuntimeOptions {
+            fallback_providers_config: Some(providers_config),
+            ..ProviderRuntimeOptions::default()
+        };
+
+        let provider =
+            create_resilient_provider_with_options("lmstudio", None, None, &reliability, &options);
+        assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn fallback_name_override_routes_to_correct_provider() {
+        let mut models = std::collections::HashMap::new();
+        models.insert(
+            "my-local".to_string(),
+            zeroclaw_config::schema::ModelProviderConfig {
+                name: Some("ollama".to_string()),
+                base_url: Some("http://localhost:11434".to_string()),
+                ..Default::default()
+            },
+        );
+        let providers_config = zeroclaw_config::providers::ProvidersConfig {
+            models,
+            ..Default::default()
+        };
+
+        let reliability = zeroclaw_config::schema::ReliabilityConfig {
+            provider_retries: 1,
+            provider_backoff_ms: 100,
+            fallback_providers: vec!["my-local".into()],
+            api_keys: Vec::new(),
+            model_fallbacks: std::collections::HashMap::new(),
+            channel_initial_backoff_secs: 2,
+            channel_max_backoff_secs: 60,
+            scheduler_poll_secs: 15,
+            scheduler_retries: 2,
+        };
+
+        let options = ProviderRuntimeOptions {
+            fallback_providers_config: Some(providers_config),
+            ..ProviderRuntimeOptions::default()
+        };
+
+        let provider =
+            create_resilient_provider_with_options("lmstudio", None, None, &reliability, &options);
+        assert!(provider.is_ok());
     }
 
     #[test]
