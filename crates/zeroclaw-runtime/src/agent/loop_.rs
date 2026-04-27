@@ -7095,7 +7095,7 @@ Let me check the result."#;
                 _system_prompt: Option<&str>,
                 _message: &str,
                 _model: &str,
-                _temperature: f64,
+                _temperature: Option<f64>,
             ) -> anyhow::Result<String> {
                 anyhow::bail!("not used in this test")
             }
@@ -7104,7 +7104,7 @@ Let me check the result."#;
                 &self,
                 _request: ChatRequest<'_>,
                 _model: &str,
-                _temperature: f64,
+                _temperature: Option<f64>,
             ) -> anyhow::Result<ChatResponse> {
                 anyhow::bail!("not used in this test")
             }
@@ -7117,7 +7117,7 @@ Let me check the result."#;
                 &self,
                 _request: ChatRequest<'_>,
                 _model: &str,
-                _temperature: f64,
+                _temperature: Option<f64>,
                 _options: StreamOptions,
             ) -> futures_util::stream::BoxStream<
                 'static,
