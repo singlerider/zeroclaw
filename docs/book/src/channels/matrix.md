@@ -12,7 +12,7 @@ If Matrix appears connected but there's no reply, validate these first:
 
 1. Sender is allowed by `allowed_users` (for testing: `["*"]`).
 2. Bot account has joined the exact target room.
-3. Token belongs to the same bot account (`whoami` check — see §4C).
+3. Token belongs to the same bot account (`whoami` check — see §5C).
 4. Encrypted room has usable device identity (`device_id`) and key sharing.
 5. Daemon was restarted after config changes.
 
@@ -51,14 +51,60 @@ zeroclaw config set channels.matrix.ack-reactions true       # default: true (�
 zeroclaw config set channels.matrix.reply-in-thread true     # default: true
 ```
 
-Required: `homeserver`, `access-token`, `room-id`. Strongly recommended for E2EE: `user-id` and `device-id` (see §4H for how to obtain them). For the full field index, see the [Config reference](../reference/config.md).
+Required: `homeserver`, `access-token`, `room-id`. Strongly recommended for E2EE: `user-id` and `device-id`. For the full field index, see the [Config reference](../reference/config.md).
+
+> **Don't have an `access-token` yet?** See §3 below — it walks through the Matrix password-login API call that mints a token plus a stable `device_id` in one shot. If you only need to look up `device_id` for a token you already have, see §5H.
 
 ### About `user-id` and `device-id`
 
 - ZeroClaw attempts to read identity from Matrix `/_matrix/client/v3/account/whoami`.
 - If `whoami` doesn't return `device_id`, set `device-id` manually — critical for E2EE session restore.
 
-## 3. Quick validation
+## 3. Obtaining `access-token` and `device-id`
+
+Brand-new bot accounts need a Matrix access token before ZeroClaw can connect. Element doesn't expose the token directly, so the canonical path is a one-shot password-login API call that returns both the access token and a stable device ID together.
+
+If your operator account already has a token (e.g. you copied it from another deployment), skip to §4. If you only need to look up the `device_id` for an existing token, see §5H Option 1 (`whoami`) or Option 2 (Element).
+
+### Step 1 — Mint a token via password login
+
+Run this once. Replace `your.homeserver`, the bot username, password, and pick any short `device_id` string (alphanumeric, no spaces — this is the *server-side* device label that ZeroClaw will reuse on every restart):
+
+```bash
+curl -sS -X POST "https://your.homeserver/_matrix/client/v3/login" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"YOUR_BOT_USERNAME"},"password":"YOUR_PASSWORD","device_id":"NEW_DEVICE_ID"}'
+```
+
+Response:
+
+```json
+{"user_id": "@bot:example.com", "access_token": "syt_...", "device_id": "NEWDEVICE"}
+```
+
+### Step 2 — Apply both values to ZeroClaw
+
+```bash
+zeroclaw config set channels.matrix.access-token    # paste the access_token (input is masked)
+zeroclaw config set channels.matrix.device-id NEWDEVICE
+zeroclaw config set channels.matrix.user-id @bot:example.com
+zeroclaw service restart
+```
+
+The wizard (`zeroclaw onboard --channels-only`) prompts for these same fields if you'd rather work through it interactively.
+
+### Notes
+
+- **Keep a copy of the token** when you first paste it. Secrets are encrypted at rest and `zeroclaw config get` will print `[masked]` for the token field; you can't retrieve it later. Stash it in a scratch note if you'll need it for the curl validation snippets in §5C.
+- **Reuse the same `device_id` on every restart** — changing it forces a new server-side device registration, which breaks key sharing and verification in encrypted rooms. The auto-recovery path in §8 handles the rare cases where wiping is genuinely the right call.
+- **Rotating the access token later** without re-running the wizard:
+  ```bash
+  zeroclaw config set channels.matrix.access-token    # prompts, masked
+  zeroclaw service restart
+  ```
+- **Token shows as expired or invalid** at startup: mint a new one with the same curl, repeat Step 2.
+
+## 4. Quick validation
 
 ```bash
 zeroclaw onboard --channels-only
@@ -70,7 +116,7 @@ Send a plain-text message in the configured Matrix room. Confirm:
 - ZeroClaw logs show the Matrix listener starting with no repeated sync/auth errors.
 - In an encrypted room, the bot can read and reply to encrypted messages from allowed users.
 
-## 4. Troubleshooting "no response"
+## 5. Troubleshooting "no response"
 
 Work through in order.
 
@@ -93,7 +139,7 @@ Work through in order.
 
 > **About `$MATRIX_TOKEN` in the snippets below.** Secrets in ZeroClaw are encrypted at rest and intentionally **not** retrievable via `zeroclaw config get` — it prints `[masked]` for any secret field. You have two options:
 >
-> 1. **Get a fresh token** from the password-login curl command in §4H Option 2. Export the `access_token` it returns. Good for validation and recovery paths — doesn't affect what's in your config.
+> 1. **Get a fresh token** by re-running the password-login curl from §3 Step 1. Export the `access_token` it returns. Good for validation and recovery paths — doesn't affect what's in your config.
 > 2. **Keep a copy** of the token when you first paste it into `zeroclaw onboard` or `zeroclaw config set channels.matrix.access-token`. A one-time side-effect — write it to a scratch note if you want to run these curl checks later.
 >
 > The non-secret fields *are* retrievable:
@@ -111,7 +157,7 @@ curl -sS -H "Authorization: Bearer $MATRIX_TOKEN" \
 ```
 
 - Returned `user_id` must match the bot account.
-- If `device_id` is missing from the response, set it manually (see §H).
+- If `device_id` is missing from the response, set it manually (see §5H).
 - Rotate the access token without re-running onboard:
   ```bash
   zeroclaw config set channels.matrix.access-token    # prompts, masked
@@ -123,7 +169,7 @@ curl -sS -H "Authorization: Bearer $MATRIX_TOKEN" \
 - The bot device must have received room keys from trusted devices.
 - If keys haven't been shared to this device, encrypted events cannot be decrypted.
 - Verify device trust and key sharing from a trusted Matrix session.
-- `matrix_sdk_crypto::backups: Trying to backup room keys but no backup key was found` — key backup recovery isn't enabled on this device yet. Non-fatal for message flow; still worth completing (see §I).
+- `matrix_sdk_crypto::backups: Trying to backup room keys but no backup key was found` — key backup recovery isn't enabled on this device yet. Non-fatal for message flow; still worth completing (see §5I).
 - If recipients see bot messages as "unverified", verify/sign the bot device from a trusted Matrix session and keep `device-id` stable across restarts.
 
 ### E. Log levels
@@ -144,7 +190,9 @@ RUST_LOG=info,matrix_sdk=info,matrix_sdk_base=info,matrix_sdk_crypto=info zerocl
 
 After config changes, restart the daemon and send a new message. Old timeline history won't be replayed.
 
-### H. Finding your `device_id`
+### H. Finding `device_id` for an existing token
+
+Use this when you already have an access token (e.g. inherited from another deployment) and need to look up its `device_id`. For brand-new bots, see §3 — the password-login flow there returns both values together.
 
 ZeroClaw needs a stable `device_id` for E2EE session restore. Without it, a new device is registered every restart, breaking key sharing and device verification.
 
@@ -161,32 +209,9 @@ Response includes `device_id` if the token is bound to a device session:
 {"user_id": "@bot:example.com", "device_id": "ABCDEF1234"}
 ```
 
-If `device_id` is missing, the token was created without a device login (e.g. via the admin API). Use Option 2.
+If `device_id` is missing, the token was created without a device login (e.g. via the admin API). Mint a new token + device_id together via §3.
 
-#### Option 2 — Password login (fresh device)
-
-```bash
-curl -sS -X POST "https://matrix.org/_matrix/client/v3/login" \
-  -H "Content-Type: application/json" \
-  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"YOUR_BOT_USERNAME"},"password":"YOUR_PASSWORD","device_id":"NEW_DEVICE_ID"}'
-```
-
-Response:
-
-```json
-{"user_id": "@bot:example.com", "access_token": "syt_...", "device_id": "NEWDEVICE"}
-```
-
-Apply both values:
-
-```bash
-zeroclaw config set channels.matrix.access-token    # paste the new access_token (masked)
-zeroclaw config set channels.matrix.device-id NEWDEVICE
-zeroclaw config set channels.matrix.user-id @bot:example.com
-zeroclaw service restart
-```
-
-#### Option 3 — From Element or another Matrix client
+#### Option 2 — From Element or another Matrix client
 
 1. Log in as the bot account in Element.
 2. Settings → Sessions.
@@ -249,7 +274,7 @@ A fresh login creates a new device with a new `device_id`, sidestepping the OTK 
 
 - `Our own device might have been deleted` — harmless; old device is gone.
 - `Failed to decrypt a room event` — old messages from before the reset; unrecoverable.
-- `Matrix E2EE recovery successful` — room keys restored from server backup (only if `recovery_key` is set; see §I).
+- `Matrix E2EE recovery successful` — room keys restored from server backup (only if `recovery_key` is set; see §5I).
 - New messages decrypt and work normally.
 
 **Prevention:** Don't delete the local state directory without planning a fresh login. If you need a fresh start, get new credentials first, then delete the store, then update config.
@@ -307,7 +332,7 @@ Matrix E2EE recovery successful — room keys and cross-signing secrets restored
 
 From now on, even if the local crypto store is deleted, ZeroClaw recovers automatically on next startup.
 
-## 5. Debug logging
+## 6. Debug logging
 
 Matrix-channel-specific diagnostics:
 
@@ -329,7 +354,7 @@ For SDK-level detail as well:
 RUST_LOG=zeroclaw::channels::matrix=debug,matrix_sdk_crypto=debug zeroclaw daemon
 ```
 
-## 6. Operational notes
+## 7. Operational notes
 
 - Keep Matrix tokens out of logs and screenshots.
 - Start with permissive `allowed_users`, tighten to explicit user IDs once verified.
@@ -349,7 +374,7 @@ RUST_LOG=zeroclaw::channels::matrix=debug,matrix_sdk_crypto=debug zeroclaw daemo
 - **Cross-signing:** when `recovery-key` matches what is sealed in your account's server-side secret storage, ZeroClaw runs `recovery().recover(key)` on every startup, the SDK imports your existing master / self-signing / user-signing keys, and the freshly registered device is automatically signed. **No bootstrap, no UIA, no key rotation.** If your account doesn't yet have cross-signing set up, generate the recovery key in Element (Settings → Security & Privacy → Secure Backup) before configuring `recovery-key`.
 - **Cron delivery:** `delivery.to` should be a plain room id (`!abc:server`) or alias (`#room:server`). Older configs that wrote `<sender>||<room>` are tolerated — ZeroClaw extracts the last `!`/`#`-prefixed segment and warns about the malformed value.
 
-## 7. Auto-recovery from corrupted local state
+## 8. Auto-recovery from corrupted local state
 
 The matrix-rust-sdk default SQLite store is single-device and assumes the local view stays in sync with the homeserver. Two failure modes break that assumption irrecoverably; ZeroClaw detects each at startup and (when `password` + `user-id` are both configured) auto-wipes `~/.zeroclaw/state/matrix/` and re-authenticates so a fresh device is created server-side.
 
