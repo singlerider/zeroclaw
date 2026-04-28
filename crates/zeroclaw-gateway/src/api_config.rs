@@ -965,8 +965,22 @@ pub async fn handle_options_config(headers: HeaderMap) -> Response {
     schema_response("zeroclaw_config_schema_full")
 }
 
-/// OPTIONS /api/config/prop?path=providers.fallback — per-field schema fragment
-pub async fn handle_options_prop(headers: HeaderMap, Query(q): Query<PropQuery>) -> Response {
+/// OPTIONS /api/config/prop?path=providers.fallback — per-field schema fragment.
+///
+/// Returns 404 with `path_not_found` if the path doesn't resolve against the
+/// in-memory config — same contract as `GET /api/config/prop`. Previously
+/// returned the whole-config schema regardless, which silently masked typos.
+///
+/// Per-path subtree extraction (walking the JSON Schema tree by JSON Pointer
+/// to return just the relevant subtree) is a follow-up; today we still return
+/// the full schema with a `x-zeroclaw-requested-path` + per-field metadata
+/// (kind, type_hint, is_secret) so the frontend has everything it needs to
+/// render the input without a separate round-trip.
+pub async fn handle_options_prop(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<PropQuery>,
+) -> Response {
     if headers.contains_key("access-control-request-method") {
         let mut response = StatusCode::NO_CONTENT.into_response();
         let h = response.headers_mut();
@@ -981,13 +995,33 @@ pub async fn handle_options_prop(headers: HeaderMap, Query(q): Query<PropQuery>)
         return response;
     }
 
-    // For now, return the whole-config schema with the path embedded as a
-    // hint. Per-path subtree extraction is a follow-up that walks the schema
-    // tree by JSON Pointer; the response shape is correct, the content is
-    // over-broad for one round-trip's worth of work.
-    let mut body = schema_body_value();
-    body["x-zeroclaw-requested-path"] = serde_json::Value::String(q.path);
-    let etag = build_etag();
+    // Resolve the path against the in-memory config; 404 if it doesn't
+    // exist. (No auth required for shape discovery — same as OPTIONS /api/config.)
+    let config = state.config.lock().clone();
+    let info = match lookup_prop_field(&config, &q.path) {
+        Some(info) => info,
+        None => return error_response(ConfigApiError::path_not_found(&q.path)),
+    };
+
+    let (whole_body, etag) = cached_schema();
+    let mut body = whole_body.clone();
+    if let serde_json::Value::Object(ref mut map) = body {
+        map.insert(
+            "x-zeroclaw-requested-path".into(),
+            serde_json::Value::String(q.path.clone()),
+        );
+        map.insert(
+            "x-zeroclaw-prop".into(),
+            serde_json::json!({
+                "path": q.path,
+                "kind": prop_kind_wire(info.kind),
+                "type_hint": info.type_hint,
+                "is_secret": info.is_secret || info.derived_from_secret,
+                "enum_variants": info.enum_variants.map(|f| f()).unwrap_or_default(),
+                "category": info.category,
+            }),
+        );
+    }
     let mut response = (StatusCode::OK, axum::Json(body)).into_response();
     response.headers_mut().insert(
         header::ALLOW,
@@ -995,22 +1029,38 @@ pub async fn handle_options_prop(headers: HeaderMap, Query(q): Query<PropQuery>)
     );
     response
         .headers_mut()
-        .insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
+        .insert(header::ETAG, HeaderValue::from_str(etag).unwrap());
     response
 }
 
 fn schema_response(_label: &'static str) -> Response {
-    let body = schema_body_value();
-    let etag = build_etag();
-    let mut response = (StatusCode::OK, axum::Json(body)).into_response();
+    let (body, etag) = cached_schema();
+    let mut response = (StatusCode::OK, axum::Json(body.clone())).into_response();
     response.headers_mut().insert(
         header::ALLOW,
         HeaderValue::from_static("GET, PUT, PATCH, OPTIONS"),
     );
     response
         .headers_mut()
-        .insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
+        .insert(header::ETAG, HeaderValue::from_str(etag).unwrap());
     response
+}
+
+/// Compute the OPTIONS schema body + ETag once and cache them. The schema is
+/// static per build (schemars output is deterministic for a given Config
+/// type), so re-rendering on every request is pure waste — we'd send the
+/// same bytes back every time and re-hash them too. The previous
+/// implementation re-rendered + re-hashed on every OPTIONS hit; this caches
+/// both behind a `OnceLock`.
+fn cached_schema() -> (&'static serde_json::Value, &'static str) {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<(serde_json::Value, String)> = OnceLock::new();
+    let entry = CACHE.get_or_init(|| {
+        let body = schema_body_value();
+        let etag = build_etag_for(&body);
+        (body, etag)
+    });
+    (&entry.0, entry.1.as_str())
 }
 
 #[cfg(feature = "schema-export")]
@@ -1026,14 +1076,14 @@ fn schema_body_value() -> serde_json::Value {
     })
 }
 
-/// Stable ETag: schemars output is deterministic per build; we hash the
-/// rendered JSON. Cheap because the OPTIONS response is cached client-side
-/// via `If-None-Match` after the first request.
-fn build_etag() -> String {
+/// Stable ETag derived from the rendered schema bytes. Computed once via
+/// `cached_schema()`; this helper is kept separate so tests can verify
+/// determinism.
+fn build_etag_for(body: &serde_json::Value) -> String {
     use std::hash::{Hash, Hasher};
-    let body = schema_body_value().to_string();
+    let bytes = body.to_string();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    body.hash(&mut hasher);
+    bytes.hash(&mut hasher);
     format!("\"{:016x}\"", hasher.finish())
 }
 
