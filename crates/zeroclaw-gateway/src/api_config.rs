@@ -1310,6 +1310,45 @@ mod tests {
             .unwrap_or_else(|e| panic!("re-parse failed after apply_comments: {e}\nfile:\n{raw}"));
     }
 
+    #[test]
+    fn scrub_credentials_catches_credential_shaped_strings() {
+        // Defence-in-depth: scrub_credentials (the workspace's existing
+        // tracing scrubber) catches keyword=value patterns that are the
+        // most likely shape for accidental log leakage. Pin the contract
+        // here so a regression in either the regex or the assumed shapes
+        // gets caught — important for the new HTTP CRUD surface where the
+        // dashboard sends real bearer tokens, secret PUT bodies, etc.
+        use zeroclaw_runtime::agent::loop_::scrub_credentials;
+
+        // Three realistic shapes a tracing call might emit. All must be
+        // redacted by the existing scrubber.
+        // The scrubber matches KEYWORD<:|=>VALUE patterns. These are the
+        // shapes most likely to appear in a tracing log line (`tracing`'s
+        // `?body` debug-format renders structs as `field: value` and JSON
+        // keys are typically written as `"key": "value"`).
+        let cases = [
+            // Field=value style log line.
+            ("api-key=sk-live-abcdef-1234567890", "sk-live-abcdef-1234567890"),
+            // JSON-ish quoted key-value pair.
+            (r#""token": "sk-test-supersecret-12345""#, "sk-test-supersecret-12345"),
+            // Explicit secret key.
+            ("secret: hunter2-not-a-real-password", "hunter2-not-a-real-password"),
+            // Bearer credential pair.
+            ("credential: bearer-token-abcdef-9876", "bearer-token-abcdef-9876"),
+        ];
+        for (input, raw_secret) in cases {
+            let scrubbed = scrub_credentials(input);
+            assert!(
+                !scrubbed.contains(raw_secret),
+                "scrubber missed `{raw_secret}` in:\n  input    : {input}\n  scrubbed : {scrubbed}"
+            );
+            assert!(
+                scrubbed.contains("REDACTED"),
+                "expected REDACTED marker in:\n  input    : {input}\n  scrubbed : {scrubbed}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn compute_drift_detects_external_edit_to_field() {
         // Persist initial state, externally edit the file, drift surfaces
