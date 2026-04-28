@@ -44,6 +44,21 @@ use std::path::PathBuf;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 
+/// Coerce a JSON value into the string form `Config::set_prop` accepts. Mirrors
+/// the gateway's `json_to_setprop_string` so CLI and HTTP PATCH consume the same
+/// shapes.
+fn json_value_to_setprop_string(value: &serde_json::Value) -> Result<String> {
+    match value {
+        serde_json::Value::String(s) => Ok(s.clone()),
+        serde_json::Value::Bool(b) => Ok(b.to_string()),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        serde_json::Value::Null => Ok(String::new()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            serde_json::to_string(value).context("could not serialize JSON value")
+        }
+    }
+}
+
 fn parse_temperature(s: &str) -> std::result::Result<f64, String> {
     let t: f64 = s.parse().map_err(|e| format!("{e}"))?;
     config::schema::validate_temperature(t)
@@ -863,6 +878,17 @@ enum ConfigCommands {
     },
     /// Migrate config.toml to the current schema version on disk (preserves comments)
     Migrate,
+    /// Apply a JSON Patch (RFC 6902) document atomically. Mirrors `PATCH /api/config`.
+    ///
+    /// Reads operations from the given file, or from stdin when path is `-` or omitted.
+    /// Supported ops: `add`, `replace`, `remove`, `test`. `move` and `copy` are rejected.
+    Patch {
+        /// Path to a JSON Patch document, or `-` for stdin (default).
+        input: Option<String>,
+        /// Print results as JSON (one object per applied op) instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print matching property paths for shell completion (hidden)
     #[command(hide = true)]
     Complete {
@@ -2313,6 +2339,157 @@ async fn main() -> Result<()> {
                     }
                     None => {
                         println!("Config already at current schema version.");
+                    }
+                }
+                Ok(())
+            }
+            ConfigCommands::Patch { input, json } => {
+                let body = match input.as_deref() {
+                    None | Some("-") => {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        std::io::stdin()
+                            .read_to_string(&mut buf)
+                            .context("Failed to read JSON Patch from stdin")?;
+                        buf
+                    }
+                    Some(path) => tokio::fs::read_to_string(path)
+                        .await
+                        .with_context(|| format!("Failed to read JSON Patch from {path}"))?,
+                };
+
+                let ops: Vec<serde_json::Value> = serde_json::from_str(body.trim())
+                    .context("JSON Patch body must be a JSON array of operations")?;
+
+                let mut results: Vec<serde_json::Value> = Vec::with_capacity(ops.len());
+
+                for (idx, op) in ops.iter().enumerate() {
+                    let op_name = op
+                        .get("op")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("op[{idx}]: missing `op` field"))?;
+                    let raw_path = op
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("op[{idx}]: missing `path` field"))?;
+                    let path = if let Some(stripped) = raw_path.strip_prefix('/') {
+                        stripped.replace('/', ".")
+                    } else {
+                        raw_path.to_string()
+                    };
+                    let is_secret = Config::prop_is_secret(&path);
+
+                    let result_entry: serde_json::Value = match op_name {
+                        "add" | "replace" => {
+                            let value = op.get("value").ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "op[{idx}] `{op_name}` on `{path}`: missing `value` field"
+                                )
+                            })?;
+                            let value_str = json_value_to_setprop_string(value)?;
+                            config.set_prop(&path, &value_str).with_context(|| {
+                                format!("op[{idx}] `{op_name}` on `{path}` failed")
+                            })?;
+                            if is_secret {
+                                serde_json::json!({
+                                    "op": op_name,
+                                    "path": path,
+                                    "populated": !value_str.is_empty(),
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "op": op_name,
+                                    "path": path,
+                                    "value": value_str,
+                                })
+                            }
+                        }
+                        "remove" => {
+                            config.set_prop(&path, "").with_context(|| {
+                                format!("op[{idx}] `remove` on `{path}` failed")
+                            })?;
+                            if is_secret {
+                                serde_json::json!({
+                                    "op": "remove",
+                                    "path": path,
+                                    "populated": false,
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "op": "remove",
+                                    "path": path,
+                                    "value": serde_json::Value::Null,
+                                })
+                            }
+                        }
+                        "test" => {
+                            if is_secret {
+                                anyhow::bail!(
+                                    "op[{idx}] `test` on `{path}`: secret_test_forbidden \
+                                     \u{2014} test ops are not allowed against secret paths"
+                                );
+                            }
+                            let want = op.get("value").ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "op[{idx}] `test` on `{path}`: missing `value` field"
+                                )
+                            })?;
+                            let actual = config.get_prop(&path).with_context(|| {
+                                format!("op[{idx}] `test` on `{path}` failed to read current value")
+                            })?;
+                            let want_str = match want {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            };
+                            if actual != want_str {
+                                anyhow::bail!(
+                                    "op[{idx}] `test` on `{path}` failed: \
+                                     expected {want_str}, got {actual}"
+                                );
+                            }
+                            serde_json::json!({
+                                "op": "test",
+                                "path": path,
+                                "value": actual,
+                            })
+                        }
+                        "move" | "copy" => {
+                            anyhow::bail!(
+                                "op[{idx}] `{op_name}` on `{path}`: op_not_supported \
+                                 \u{2014} move/copy require a reference graph that is not built yet"
+                            );
+                        }
+                        other => {
+                            anyhow::bail!("op[{idx}] unknown JSON Patch operation `{other}`");
+                        }
+                    };
+                    results.push(result_entry);
+                }
+
+                config
+                    .validate()
+                    .context("validation failed after applying patch \u{2014} no changes saved")?;
+                config.save().await?;
+
+                if json {
+                    let body = serde_json::json!({"saved": true, "results": results});
+                    println!("{}", serde_json::to_string_pretty(&body)?);
+                } else {
+                    println!("Applied {} operation(s):", results.len());
+                    for entry in &results {
+                        let op = entry.get("op").and_then(|v| v.as_str()).unwrap_or("?");
+                        let path = entry.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        if let Some(populated) = entry.get("populated").and_then(|v| v.as_bool()) {
+                            let lock = "\u{1f512}";
+                            let label = if populated { "set" } else { "unset" };
+                            println!("  {op:<8} {path}  {lock} ({label})");
+                        } else {
+                            let value = entry
+                                .get("value")
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "null".to_string());
+                            println!("  {op:<8} {path} = {value}");
+                        }
                     }
                 }
                 Ok(())
