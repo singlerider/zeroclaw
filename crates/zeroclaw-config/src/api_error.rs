@@ -121,11 +121,45 @@ impl ConfigApiError {
 
     /// Wrap an `anyhow::Error` from `Config::validate()` (or similar bail
     /// sites) into a structured error. The error string becomes `message`;
-    /// the code defaults to `ValidationFailed`. Callers should override with
-    /// a more specific code where the failure mode is known.
+    /// the code is best-effort classified by matching the error text against
+    /// known patterns from `Config::validate()`. Unrecognized text falls
+    /// through to `ValidationFailed`.
+    ///
+    /// This is the v1 escape hatch for the structured-error contract — true
+    /// per-bail-site coding is an incremental refactor of the 100+ existing
+    /// `anyhow::bail!(...)` sites in `Config::validate()`. Adding a new
+    /// matcher here is the safer step for now.
     pub fn from_validation(err: anyhow::Error) -> Self {
-        Self::new(ConfigApiCode::ValidationFailed, err.to_string())
+        let msg = err.to_string();
+        let code = classify_validation_message(&msg);
+        Self::new(code, msg)
     }
+}
+
+/// Best-effort classify a `Config::validate()` error string into a stable
+/// code. Matches against the specific message text the validator emits today
+/// (`crates/zeroclaw-config/src/schema.rs:10151+`). Adding a new pattern here
+/// is the safe step until `validate()` itself is refactored to return
+/// structured errors per bail site.
+pub fn classify_validation_message(msg: &str) -> ConfigApiCode {
+    let lower = msg.to_lowercase();
+    if lower.contains("providers.fallback")
+        && (lower.contains("not configured")
+            || lower.contains("not found")
+            || lower.contains("references"))
+    {
+        return ConfigApiCode::ProviderFallbackDangling;
+    }
+    if lower.contains("type mismatch") || lower.contains("invalid value") {
+        return ConfigApiCode::ValueTypeMismatch;
+    }
+    if lower.starts_with("unknown property") {
+        return ConfigApiCode::PathNotFound;
+    }
+    ConfigApiCode::ValidationFailed
+}
+
+impl ConfigApiError {
 
     /// Convenience: a `path_not_found` error for the given path.
     pub fn path_not_found(path: impl Into<String>) -> Self {
@@ -200,6 +234,41 @@ mod tests {
         assert_eq!(ConfigApiCode::ValidationFailed.http_status(), 400);
         assert_eq!(ConfigApiCode::ConfigChangedExternally.http_status(), 409);
         assert_eq!(ConfigApiCode::ReloadFailed.http_status(), 500);
+    }
+
+    #[test]
+    fn classify_provider_fallback_dangling() {
+        assert_eq!(
+            classify_validation_message(
+                "providers.fallback references key 'unknown' which is not configured"
+            ),
+            ConfigApiCode::ProviderFallbackDangling
+        );
+    }
+
+    #[test]
+    fn classify_unknown_property() {
+        assert_eq!(
+            classify_validation_message("Unknown property 'foo.bar'"),
+            ConfigApiCode::PathNotFound
+        );
+    }
+
+    #[test]
+    fn classify_falls_back_to_validation_failed() {
+        assert_eq!(
+            classify_validation_message("some unrelated random validator output"),
+            ConfigApiCode::ValidationFailed
+        );
+    }
+
+    #[test]
+    fn from_validation_picks_dangling_code_for_matching_message() {
+        let err = anyhow::anyhow!(
+            "providers.fallback references 'openrouter' which is not configured under providers.models"
+        );
+        let api = ConfigApiError::from_validation(err);
+        assert_eq!(api.code, ConfigApiCode::ProviderFallbackDangling);
     }
 
     #[test]
