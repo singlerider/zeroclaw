@@ -9,7 +9,6 @@
 
 pub mod api;
 pub mod api_config;
-pub mod openapi;
 pub mod api_pairing;
 #[cfg(feature = "plugins-wasm")]
 pub mod api_plugins;
@@ -20,6 +19,7 @@ pub mod canvas;
 pub mod hardware_context;
 pub mod node_tool;
 pub mod nodes;
+pub mod openapi;
 pub mod session_queue;
 pub mod sse;
 pub mod static_files;

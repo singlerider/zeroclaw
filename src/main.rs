@@ -2168,8 +2168,9 @@ async fn main() -> Result<()> {
             ConfigCommands::Schema { path } => {
                 let schema = schemars::schema_for!(config::Config);
                 let value = match path.as_deref() {
-                    None => serde_json::to_value(&schema)
-                        .context("failed to serialize JSON Schema")?,
+                    None => {
+                        serde_json::to_value(&schema).context("failed to serialize JSON Schema")?
+                    }
                     Some(prop_path) => {
                         let full = serde_json::to_value(&schema)
                             .context("failed to serialize JSON Schema")?;
