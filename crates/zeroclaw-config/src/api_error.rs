@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 /// Stable error code consumed by HTTP / CLI / dashboard. Add codes here as new
 /// failure cases land — never invent codes ad-hoc at call sites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigApiCode {
     /// The supplied property path is not defined in the schema.
@@ -82,6 +83,7 @@ impl ConfigApiCode {
 /// Structured error returned by the new HTTP CRUD endpoints and the `zeroclaw config`
 /// subcommands they share infrastructure with.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct ConfigApiError {
     /// Stable error code for programmatic matching.
     pub code: ConfigApiCode,

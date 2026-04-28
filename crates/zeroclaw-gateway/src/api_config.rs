@@ -27,12 +27,14 @@ use super::api::require_auth;
 
 /// `?path=...` query parameter shared by GET / DELETE / OPTIONS-with-path.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct PropQuery {
     pub path: String,
 }
 
 /// `?prefix=...` query parameter for list.
 #[derive(Debug, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct ListQuery {
     #[serde(default)]
     pub prefix: Option<String>,
@@ -42,6 +44,7 @@ pub struct ListQuery {
 /// numbers) round-trip correctly without going through the CLI's
 /// comma-delimited string parser.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct PropPutBody {
     pub path: String,
     pub value: serde_json::Value,
@@ -60,6 +63,7 @@ pub struct PropPutBody {
 /// Honored once the comment-preserving write path is wired through (step 7);
 /// accepted here so the API shape doesn't churn.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct PatchOp {
     pub op: String,
     pub path: String,
@@ -72,6 +76,7 @@ pub struct PatchOp {
 
 /// Single result entry in a successful PATCH response, one per applied op.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct PatchOpResult {
     pub op: String,
     pub path: String,
@@ -85,6 +90,7 @@ pub struct PatchOpResult {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct PatchResponse {
     pub saved: bool,
     pub results: Vec<PatchOpResult>,
@@ -92,6 +98,7 @@ pub struct PatchResponse {
 
 /// Response for a non-secret GET.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct PropResponse {
     pub path: String,
     pub value: serde_json::Value,
@@ -101,6 +108,7 @@ pub struct PropResponse {
 /// length. `populated: true` means the secret has a non-empty value on disk;
 /// `populated: false` means the field is unset or empty.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct SecretResponse {
     pub path: String,
     pub populated: bool,
@@ -109,6 +117,7 @@ pub struct SecretResponse {
 /// Single entry in the list response. Secrets carry only `path + populated`;
 /// non-secrets additionally carry `value`.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct ListEntry {
     pub path: String,
     pub category: String,
@@ -125,6 +134,7 @@ pub struct ListEntry {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct ListResponse {
     pub entries: Vec<ListEntry>,
 }
@@ -577,6 +587,7 @@ fn json_pointer_to_dotted(path: &str) -> String {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct InitQuery {
     /// Optional section prefix to scope the init pass (e.g. `providers`).
     /// Without it, every uninitialized nested section gets its defaults.
@@ -585,6 +596,7 @@ pub struct InitQuery {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct InitResponse {
     pub initialized: Vec<String>,
 }
@@ -623,6 +635,7 @@ pub async fn handle_init(
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct MigrateResponse {
     pub migrated: bool,
     /// Backup path written when migration ran; absent when the config was
