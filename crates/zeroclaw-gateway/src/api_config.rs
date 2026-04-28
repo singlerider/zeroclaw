@@ -114,21 +114,52 @@ pub struct SecretResponse {
 
 /// Single entry in the list response. Secrets carry only `path + populated`;
 /// non-secrets additionally carry `value`.
+///
+/// `kind` and `type_hint` are the wire form of the field's declared `PropKind`
+/// + Rust type signature. Frontends bind input renderers to these directly
+/// (bool → toggle, integer → number input, string-array → list editor) rather
+/// than sniffing the runtime shape of `value`. `enum_variants` is populated
+/// for fields whose macro derive surfaces a variant list — dropdown source.
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct ListEntry {
     pub path: String,
     pub category: String,
+    /// Stable kind tag — `string`, `bool`, `integer`, `float`, `enum`,
+    /// `string-array`. Lowercase-kebab so it can be used directly as a CSS
+    /// class or React key.
+    pub kind: &'static str,
+    /// Rust type signature, e.g. `Option<String>`, `Vec<String>`, `u64`.
+    /// Render in tooltips / hover state for the technically-curious.
+    pub type_hint: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
     pub populated: bool,
     pub is_secret: bool,
+    /// Variants for `enum`-kind fields — non-empty means the frontend should
+    /// render a `<select>` with these options. Empty for non-enum fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enum_variants: Vec<String>,
     /// Onboard section name derived from the path's first segment via
     /// `Section::from_path`. `None` for paths that aren't part of any wizard
     /// section. The dashboard groups list entries by this for per-section
     /// rendering — same source the CLI wizard uses, no schema attribute.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onboard_section: Option<&'static str>,
+}
+
+/// Stable wire-form name for a `PropKind` variant. Matches the lower-kebab
+/// convention the rest of the API uses for stable string IDs.
+fn prop_kind_wire(kind: zeroclaw_config::traits::PropKind) -> &'static str {
+    use zeroclaw_config::traits::PropKind;
+    match kind {
+        PropKind::String => "string",
+        PropKind::Bool => "bool",
+        PropKind::Integer => "integer",
+        PropKind::Float => "float",
+        PropKind::Enum => "enum",
+        PropKind::StringArray => "string-array",
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -535,12 +566,19 @@ pub async fn handle_list(
                 Some(serde_json::Value::String(info.display_value.clone()))
             };
             let section = Section::from_path(&info.name).and_then(Section::as_path_prefix);
+            let enum_variants = info
+                .enum_variants
+                .map(|f| f())
+                .unwrap_or_default();
             ListEntry {
                 path: info.name,
                 category: info.category.to_string(),
+                kind: prop_kind_wire(info.kind),
+                type_hint: info.type_hint,
                 value,
                 populated,
                 is_secret: is_sensitive,
+                enum_variants,
                 onboard_section: section,
             }
         })
@@ -1176,9 +1214,12 @@ mod tests {
         let entry = ListEntry {
             path: "providers.models.ollama.api-key".into(),
             category: "providers".into(),
+            kind: "string",
+            type_hint: "Option<String>",
             value: None,
             populated: true,
             is_secret: true,
+            enum_variants: vec![],
             onboard_section: Some("providers"),
         };
         let json = serde_json::to_value(&entry).expect("serialize");

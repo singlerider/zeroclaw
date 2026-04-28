@@ -167,9 +167,19 @@ export interface PropResponse {
 export interface ListResponseEntry {
   path: string;
   category: string;
+  /**
+   * Stable kind tag from the gateway: 'string' | 'bool' | 'integer' | 'float'
+   * | 'enum' | 'string-array'. Use this — not value-sniffing — to choose the
+   * right input renderer.
+   */
+  kind: string;
+  /** Rust type signature for tooltips, e.g. 'Option<String>' or 'Vec<String>'. */
+  type_hint: string;
   value?: unknown;
   populated: boolean;
   is_secret: boolean;
+  /** Variants for `kind === 'enum'` fields (drives <select> options). */
+  enum_variants?: string[];
   onboard_section?: string;
 }
 

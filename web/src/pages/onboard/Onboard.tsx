@@ -34,14 +34,27 @@ function groupBySection(entries: ListResponseEntry[]): SectionGroup[] {
   return Array.from(groups.entries()).map(([name, entries]) => ({ name, entries }));
 }
 
-function inferInputType(entry: ListResponseEntry): 'bool' | 'array' | 'secret' | 'text' {
+/**
+ * Map the gateway's wire-form kind to a renderer key. Single source of truth
+ * — secrets are always 'secret' regardless of underlying kind, then dispatch
+ * by the declared `kind` (no value-sniffing). 'enum' falls back to 'select'
+ * when variants are present, otherwise 'text'.
+ */
+function rendererFor(entry: ListResponseEntry): 'bool' | 'array' | 'secret' | 'select' | 'number' | 'text' {
   if (entry.is_secret) return 'secret';
-  const v = entry.value;
-  if (typeof v === 'boolean') return 'bool';
-  if (Array.isArray(v)) return 'array';
-  if (typeof v === 'string' && (v === 'true' || v === 'false')) return 'bool';
-  if (typeof v === 'string' && (v.startsWith('[') || v.startsWith('{'))) return 'array';
-  return 'text';
+  switch (entry.kind) {
+    case 'bool':
+      return 'bool';
+    case 'string-array':
+      return 'array';
+    case 'integer':
+    case 'float':
+      return 'number';
+    case 'enum':
+      return entry.enum_variants && entry.enum_variants.length > 0 ? 'select' : 'text';
+    default:
+      return 'text';
+  }
 }
 
 function fieldLabel(entry: ListResponseEntry): string {
@@ -51,7 +64,7 @@ function fieldLabel(entry: ListResponseEntry): string {
 }
 
 function parseInput(entry: ListResponseEntry, raw: string): unknown {
-  switch (inferInputType(entry)) {
+  switch (rendererFor(entry)) {
     case 'bool':
       return raw === 'true';
     case 'array':
@@ -60,12 +73,18 @@ function parseInput(entry: ListResponseEntry, raw: string): unknown {
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean);
+    case 'number': {
+      const n = Number(raw);
+      return Number.isNaN(n) ? raw : n;
+    }
     default:
       return raw;
   }
 }
 
 function defaultInputValue(entry: ListResponseEntry): string {
+  // Values from /api/config/list come stringified per the current gateway
+  // contract — show them as-is, except for the <unset> sentinel.
   const v = entry.value;
   if (typeof v === 'string') return v === '<unset>' ? '' : v;
   if (typeof v === 'boolean') return v ? 'true' : 'false';
@@ -227,47 +246,77 @@ export default function Onboard() {
                   </label>
                   <code className="block text-xs text-gray-400">{f.path}</code>
 
-                  {inferInputType(f) === 'bool' ? (
-                    <select
-                      id={f.path}
-                      value={draft[f.path] ?? 'false'}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, [f.path]: e.target.value }))
-                      }
-                      className="mt-1 w-full rounded border px-2 py-1"
-                    >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
-                    </select>
-                  ) : inferInputType(f) === 'array' ? (
-                    <textarea
-                      id={f.path}
-                      rows={4}
-                      value={draft[f.path] ?? ''}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, [f.path]: e.target.value }))
-                      }
-                      className="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
-                      placeholder="One value per line"
-                    />
-                  ) : (
-                    <input
-                      id={f.path}
-                      type={f.is_secret ? 'password' : 'text'}
-                      value={draft[f.path] ?? ''}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, [f.path]: e.target.value }))
-                      }
-                      className="mt-1 w-full rounded border px-2 py-1"
-                      placeholder={
-                        f.is_secret
-                          ? f.populated
-                            ? 'Leave blank to keep current value'
-                            : 'Enter secret value'
-                          : ''
-                      }
-                    />
-                  )}
+                  {(() => {
+                    const renderer = rendererFor(f);
+                    if (renderer === 'bool') {
+                      return (
+                        <select
+                          id={f.path}
+                          value={draft[f.path] ?? 'false'}
+                          onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
+                          className="mt-1 w-full rounded border px-2 py-1"
+                        >
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                      );
+                    }
+                    if (renderer === 'select') {
+                      return (
+                        <select
+                          id={f.path}
+                          value={draft[f.path] ?? ''}
+                          onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
+                          className="mt-1 w-full rounded border px-2 py-1"
+                        >
+                          {(f.enum_variants ?? []).map((v) => (
+                            <option key={v} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    }
+                    if (renderer === 'array') {
+                      return (
+                        <textarea
+                          id={f.path}
+                          rows={4}
+                          value={draft[f.path] ?? ''}
+                          onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
+                          className="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
+                          placeholder="One value per line"
+                        />
+                      );
+                    }
+                    if (renderer === 'number') {
+                      return (
+                        <input
+                          id={f.path}
+                          type="number"
+                          value={draft[f.path] ?? ''}
+                          onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
+                          className="mt-1 w-full rounded border px-2 py-1"
+                        />
+                      );
+                    }
+                    return (
+                      <input
+                        id={f.path}
+                        type={renderer === 'secret' ? 'password' : 'text'}
+                        value={draft[f.path] ?? ''}
+                        onChange={(e) => setDraft((d) => ({ ...d, [f.path]: e.target.value }))}
+                        className="mt-1 w-full rounded border px-2 py-1"
+                        placeholder={
+                          renderer === 'secret'
+                            ? f.populated
+                              ? 'Leave blank to keep current value'
+                              : 'Enter secret value'
+                            : f.type_hint
+                        }
+                      />
+                    );
+                  })()}
 
                   <input
                     type="text"
