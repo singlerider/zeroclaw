@@ -3,6 +3,7 @@
 pub mod api_error;
 pub mod autonomy;
 pub mod comment_writer;
+pub mod typed_value;
 pub mod cost;
 pub mod domain_matcher;
 pub mod helpers;

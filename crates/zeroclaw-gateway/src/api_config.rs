@@ -193,127 +193,11 @@ fn map_prop_error(err: anyhow::Error, path: &str) -> ConfigApiError {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Coerce a JSON value to the string representation `Config::set_prop` expects,
-/// validating against the target field's declared `PropKind` so the wrong-shape
-/// inputs surface as `value_type_mismatch` before we touch the in-memory copy.
-///
-/// Type rules:
-/// - `StringArray`: requires JSON array of strings (or `null` for "reset to
-///   default"). Empty array `[]` is a valid value distinct from `null`. Element
-///   types are checked.
-/// - `Bool`: requires JSON boolean (or string `"true"` / `"false"` for legacy
-///   callers).
-/// - `Integer`: requires JSON number with integer value (or numeric string).
-/// - `Float`: requires JSON number (or numeric string).
-/// - `String` / `Enum`: any scalar coerces to its display form.
-fn json_to_setprop_string(
-    value: &serde_json::Value,
-    kind: Option<zeroclaw_config::traits::PropKind>,
-) -> Result<String, ConfigApiError> {
-    use zeroclaw_config::traits::PropKind;
-
-    match (kind, value) {
-        // Null is always valid — it means "reset to default".
-        (_, serde_json::Value::Null) => Ok(String::new()),
-
-        // Array fields: must receive a JSON array of strings.
-        (Some(PropKind::StringArray), serde_json::Value::Array(items)) => {
-            for (i, item) in items.iter().enumerate() {
-                if !item.is_string() {
-                    return Err(ConfigApiError::new(
-                        ConfigApiCode::ValueTypeMismatch,
-                        format!(
-                            "array element [{i}] is {} — `Vec<String>` requires string elements",
-                            json_type_name(item),
-                        ),
-                    ));
-                }
-            }
-            // Pass through as JSON; set_prop's StringArray parser accepts the
-            // bracketed form natively.
-            serde_json::to_string(value).map_err(|e| {
-                ConfigApiError::new(
-                    ConfigApiCode::ValueTypeMismatch,
-                    format!("could not serialize JSON value: {e}"),
-                )
-            })
-        }
-        (Some(PropKind::StringArray), other) => Err(ConfigApiError::new(
-            ConfigApiCode::ValueTypeMismatch,
-            format!(
-                "`Vec<String>` field requires a JSON array; got {}",
-                json_type_name(other),
-            ),
-        )),
-
-        // Bool fields.
-        (Some(PropKind::Bool), serde_json::Value::Bool(b)) => Ok(b.to_string()),
-        (Some(PropKind::Bool), serde_json::Value::String(s))
-            if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") =>
-        {
-            Ok(s.to_lowercase())
-        }
-        (Some(PropKind::Bool), other) => Err(ConfigApiError::new(
-            ConfigApiCode::ValueTypeMismatch,
-            format!(
-                "bool field requires `true`/`false`; got {}",
-                json_type_name(other)
-            ),
-        )),
-
-        // Integer fields.
-        (Some(PropKind::Integer), serde_json::Value::Number(n)) if n.is_i64() || n.is_u64() => {
-            Ok(n.to_string())
-        }
-        (Some(PropKind::Integer), serde_json::Value::String(s)) if s.parse::<i64>().is_ok() => {
-            Ok(s.clone())
-        }
-        (Some(PropKind::Integer), other) => Err(ConfigApiError::new(
-            ConfigApiCode::ValueTypeMismatch,
-            format!(
-                "integer field requires a whole number; got {}",
-                json_type_name(other)
-            ),
-        )),
-
-        // Float fields.
-        (Some(PropKind::Float), serde_json::Value::Number(n)) => Ok(n.to_string()),
-        (Some(PropKind::Float), serde_json::Value::String(s)) if s.parse::<f64>().is_ok() => {
-            Ok(s.clone())
-        }
-        (Some(PropKind::Float), other) => Err(ConfigApiError::new(
-            ConfigApiCode::ValueTypeMismatch,
-            format!(
-                "float field requires a number; got {}",
-                json_type_name(other)
-            ),
-        )),
-
-        // Scalar / enum fields and unknown-kind paths: best-effort coerce.
-        (_, serde_json::Value::String(s)) => Ok(s.clone()),
-        (_, serde_json::Value::Bool(b)) => Ok(b.to_string()),
-        (_, serde_json::Value::Number(n)) => Ok(n.to_string()),
-        (_, serde_json::Value::Array(_)) | (_, serde_json::Value::Object(_)) => {
-            serde_json::to_string(value).map_err(|e| {
-                ConfigApiError::new(
-                    ConfigApiCode::ValueTypeMismatch,
-                    format!("could not serialize JSON value: {e}"),
-                )
-            })
-        }
-    }
-}
-
-fn json_type_name(v: &serde_json::Value) -> &'static str {
-    match v {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "bool",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
-}
+// Typed-value coercion lives in `zeroclaw_config::typed_value` — both the
+// gateway PATCH/PUT handlers and the CLI `config patch` flow consume it.
+// Single source of truth for the "JSON in, set_prop string out, validated
+// against the declared PropKind" contract.
+use zeroclaw_config::typed_value::coerce_for_set_prop as json_to_setprop_string;
 
 /// Look up the prop_field metadata for a path. Used by the per-prop GET / PUT
 /// handlers to decide whether the field is a secret.
@@ -1119,90 +1003,11 @@ fn build_etag() -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn json_to_setprop_string_handles_scalars() {
-        assert_eq!(
-            json_to_setprop_string(
-                &serde_json::Value::Bool(true),
-                Some(zeroclaw_config::traits::PropKind::Bool)
-            )
-            .unwrap(),
-            "true"
-        );
-        assert_eq!(
-            json_to_setprop_string(
-                &serde_json::Value::String("hello".into()),
-                Some(zeroclaw_config::traits::PropKind::String)
-            )
-            .unwrap(),
-            "hello"
-        );
-        assert_eq!(
-            json_to_setprop_string(&serde_json::Value::Null, None).unwrap(),
-            ""
-        );
-    }
-
-    #[test]
-    fn json_to_setprop_string_serializes_arrays() {
-        let arr = serde_json::json!(["a", "b"]);
-        let s = json_to_setprop_string(&arr, Some(zeroclaw_config::traits::PropKind::StringArray))
-            .unwrap();
-        assert!(s.contains("a"));
-        assert!(s.contains("b"));
-    }
-
-    #[test]
-    fn json_to_setprop_string_rejects_non_array_for_string_array_field() {
-        let result = json_to_setprop_string(
-            &serde_json::Value::String("a,b".into()),
-            Some(zeroclaw_config::traits::PropKind::StringArray),
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, ConfigApiCode::ValueTypeMismatch);
-    }
-
-    #[test]
-    fn json_to_setprop_string_rejects_non_string_array_elements() {
-        let result = json_to_setprop_string(
-            &serde_json::json!(["a", 42, "c"]),
-            Some(zeroclaw_config::traits::PropKind::StringArray),
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, ConfigApiCode::ValueTypeMismatch);
-    }
-
-    #[test]
-    fn json_to_setprop_string_accepts_empty_array() {
-        let s = json_to_setprop_string(
-            &serde_json::json!([]),
-            Some(zeroclaw_config::traits::PropKind::StringArray),
-        )
-        .unwrap();
-        assert_eq!(s, "[]");
-    }
-
-    #[test]
-    fn json_to_setprop_string_rejects_string_for_bool_field() {
-        let result = json_to_setprop_string(
-            &serde_json::Value::String("yes".into()),
-            Some(zeroclaw_config::traits::PropKind::Bool),
-        );
-        assert!(result.is_err());
-    }
-
-    // build_comment_prefix tests live in zeroclaw_config::comment_writer
+    // typed-value coercion tests live in zeroclaw_config::typed_value
     // — shared helper, single source of truth.
-
-    #[test]
-    fn json_to_setprop_string_accepts_bool_string_for_bool_field() {
-        let s = json_to_setprop_string(
-            &serde_json::Value::String("True".into()),
-            Some(zeroclaw_config::traits::PropKind::Bool),
-        )
-        .unwrap();
-        assert_eq!(s, "true");
-    }
+    //
+    // build_comment_prefix tests live in zeroclaw_config::comment_writer
+    // — same reason.
 
     #[test]
     fn map_prop_error_classifies_unknown_property() {

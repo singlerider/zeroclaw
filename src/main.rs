@@ -61,19 +61,16 @@ async fn apply_comment_inline(
     .context("failed to write comment annotation")
 }
 
-/// Coerce a JSON value into the string form `Config::set_prop` accepts. Mirrors
-/// the gateway's `json_to_setprop_string` so CLI and HTTP PATCH consume the same
-/// shapes.
-fn json_value_to_setprop_string(value: &serde_json::Value) -> Result<String> {
-    match value {
-        serde_json::Value::String(s) => Ok(s.clone()),
-        serde_json::Value::Bool(b) => Ok(b.to_string()),
-        serde_json::Value::Number(n) => Ok(n.to_string()),
-        serde_json::Value::Null => Ok(String::new()),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            serde_json::to_string(value).context("could not serialize JSON value")
-        }
-    }
+/// Coerce a JSON value into the string form `Config::set_prop` accepts.
+///
+/// Thin wrapper over the shared `zeroclaw_config::typed_value::coerce_for_set_prop`
+/// helper that the gateway PATCH/PUT endpoints use. Looking up a path's
+/// declared `PropKind` requires a `Config` reference, which the patch handler
+/// has — so this looks the kind up against the live config and forwards.
+fn json_value_to_setprop_string(value: &serde_json::Value, config: &Config, path: &str) -> Result<String> {
+    let kind = config.prop_fields().into_iter().find(|f| f.name == path).map(|f| f.kind);
+    zeroclaw_config::typed_value::coerce_for_set_prop(value, kind)
+        .map_err(|e| anyhow::anyhow!("{}", e.message))
 }
 
 fn parse_temperature(s: &str) -> std::result::Result<f64, String> {
@@ -2521,7 +2518,7 @@ async fn main() -> Result<()> {
                                     "op[{idx}] `{op_name}` on `{path}`: missing `value` field"
                                 )
                             })?;
-                            let value_str = json_value_to_setprop_string(value)?;
+                            let value_str = json_value_to_setprop_string(value, &config, &path)?;
                             config.set_prop(&path, &value_str).with_context(|| {
                                 format!("op[{idx}] `{op_name}` on `{path}` failed")
                             })?;
