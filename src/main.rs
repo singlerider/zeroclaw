@@ -44,6 +44,58 @@ use std::path::PathBuf;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 
+/// Decorate the value at `path` in `config.toml` with a leading `# {comment}`
+/// line, preserving any non-comment whitespace. Mirrors the gateway's
+/// `apply_comments`. Best-effort — silently bails on parse errors so a
+/// successful set isn't downgraded to a failure for a metadata problem.
+async fn apply_comment_inline(
+    config_path: &std::path::Path,
+    path: &str,
+    comment: &str,
+) -> Result<()> {
+    let raw = tokio::fs::read_to_string(config_path).await?;
+    let mut doc: toml_edit::DocumentMut = match raw.parse() {
+        Ok(d) => d,
+        Err(_) => return Ok(()),
+    };
+    let segments: Vec<&str> = path.split('.').collect();
+    let (last, rest) = match segments.split_last() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let mut cursor: &mut toml_edit::Table = doc.as_table_mut();
+    for seg in rest {
+        cursor = match cursor.get_mut(seg).and_then(|i| i.as_table_mut()) {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+    }
+    if let Some(item) = cursor.get_mut(last) {
+        let decor = match item {
+            toml_edit::Item::Value(v) => v.decor_mut(),
+            toml_edit::Item::Table(t) => t.decor_mut(),
+            _ => return Ok(()),
+        };
+        let prev = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
+        let mut kept = String::new();
+        for line in prev.split_inclusive('\n') {
+            if !line.trim_start().starts_with('#') {
+                kept.push_str(line);
+            }
+        }
+        if !comment.is_empty() {
+            for line in comment.lines() {
+                kept.push_str("# ");
+                kept.push_str(line);
+                kept.push('\n');
+            }
+        }
+        decor.set_prefix(kept);
+    }
+    tokio::fs::write(config_path, doc.to_string()).await?;
+    Ok(())
+}
+
 /// Coerce a JSON value into the string form `Config::set_prop` accepts. Mirrors
 /// the gateway's `json_to_setprop_string` so CLI and HTTP PATCH consume the same
 /// shapes.
@@ -867,6 +919,9 @@ enum ConfigCommands {
     Get {
         /// Property path (e.g. channels.telegram.mention-only)
         path: String,
+        /// Emit a structured JSON envelope ({path, value} or {path, populated}) instead of plain text.
+        #[arg(long)]
+        json: bool,
     },
     /// Set a config property (secret fields auto-prompt for masked input)
     Set {
@@ -877,14 +932,27 @@ enum ConfigCommands {
         /// Skip interactive prompts — require value on command line, accept raw strings for enums
         #[arg(long)]
         no_interactive: bool,
+        /// Optional comment to write alongside the value in TOML (preserves through future edits).
+        #[arg(long)]
+        comment: Option<String>,
+        /// Emit a structured JSON envelope on success.
+        #[arg(long)]
+        json: bool,
     },
     /// Initialize unconfigured sections with defaults (enabled=false)
     Init {
         /// Section prefix (e.g. channels.matrix). Omit to init all.
         section: Option<String>,
+        /// Emit a structured JSON envelope ({initialized: [...]}) instead of plain text.
+        #[arg(long)]
+        json: bool,
     },
     /// Migrate config.toml to the current schema version on disk (preserves comments)
-    Migrate,
+    Migrate {
+        /// Emit a structured JSON envelope ({migrated, backup_path?, schema_version}) instead of plain text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Apply a JSON Patch (RFC 6902) document atomically. Mirrors `PATCH /api/config`.
     ///
     /// Reads operations from the given file, or from stdin when path is `-` or omitted.
@@ -2219,23 +2287,54 @@ async fn main() -> Result<()> {
                 }
                 Ok(())
             }
-            ConfigCommands::Get { path } => {
+            ConfigCommands::Get { path, json } => {
                 if Config::prop_is_secret(&path) {
                     let entries = config.prop_fields();
-                    let is_set = entries
+                    let populated = entries
                         .iter()
                         .find(|e| e.name == path)
                         .map(|e| e.display_value != "<unset>")
                         .unwrap_or(false);
-                    if is_set {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "path": path,
+                                "populated": populated,
+                            }))?
+                        );
+                    } else if populated {
                         println!("{path} is set (encrypted secret \u{2014} value not displayed)");
                     } else {
                         println!("{path} is not set (encrypted secret)");
                     }
                 } else {
                     match config.get_prop(&path) {
-                        Ok(value) => println!("{value}"),
-                        Err(e) => anyhow::bail!("{e}"),
+                        Ok(value) => {
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "path": path,
+                                        "value": value,
+                                    }))?
+                                );
+                            } else {
+                                println!("{value}");
+                            }
+                        }
+                        Err(e) => {
+                            if json {
+                                let envelope = serde_json::json!({
+                                    "code": "path_not_found",
+                                    "message": e.to_string(),
+                                    "path": path,
+                                });
+                                eprintln!("{}", serde_json::to_string_pretty(&envelope)?);
+                                std::process::exit(1);
+                            }
+                            anyhow::bail!("{e}");
+                        }
                     }
                 }
                 Ok(())
@@ -2244,6 +2343,8 @@ async fn main() -> Result<()> {
                 path,
                 value,
                 no_interactive,
+                comment,
+                json,
             } => {
                 if no_interactive {
                     let val = value.ok_or_else(|| {
@@ -2327,12 +2428,37 @@ async fn main() -> Result<()> {
                     }
                 }
                 config.save().await?;
-                println!("{path} updated.");
+                if let Some(c) = comment.as_ref()
+                    && !c.is_empty()
+                {
+                    apply_comment_inline(&config.config_path, &path, c).await?;
+                }
+                if json {
+                    let envelope = if Config::prop_is_secret(&path) {
+                        serde_json::json!({"path": path, "populated": true})
+                    } else {
+                        let value_str = config.get_prop(&path).unwrap_or_default();
+                        serde_json::json!({"path": path, "value": value_str})
+                    };
+                    println!("{}", serde_json::to_string_pretty(&envelope)?);
+                } else {
+                    println!("{path} updated.");
+                }
                 Ok(())
             }
-            ConfigCommands::Init { section } => {
-                let initialized = config.init_defaults(section.as_deref());
-                if initialized.is_empty() {
+            ConfigCommands::Init { section, json } => {
+                let initialized: Vec<String> = config
+                    .init_defaults(section.as_deref())
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect();
+                if !initialized.is_empty() {
+                    config.save().await?;
+                }
+                if json {
+                    let envelope = serde_json::json!({"initialized": initialized});
+                    println!("{}", serde_json::to_string_pretty(&envelope)?);
+                } else if initialized.is_empty() {
                     println!("All sections already configured.");
                 } else {
                     println!(
@@ -2342,12 +2468,11 @@ async fn main() -> Result<()> {
                     for name in &initialized {
                         println!("  {name}");
                     }
-                    config.save().await?;
                     println!("\nRun `zeroclaw config list` to review, then set required fields.");
                 }
                 Ok(())
             }
-            ConfigCommands::Migrate => {
+            ConfigCommands::Migrate { json } => {
                 let raw = tokio::fs::read_to_string(&config.config_path)
                     .await
                     .context("Failed to read config file")?;
@@ -2359,14 +2484,31 @@ async fn main() -> Result<()> {
                             .context("Failed to create config backup")?;
                         tokio::fs::write(&config.config_path, &migrated).await?;
                         let to = crate::config::migration::CURRENT_SCHEMA_VERSION;
-                        println!("Backed up to {}", backup_path.display());
-                        println!(
-                            "Migrated {} to schema version {to}.",
-                            config.config_path.display()
-                        );
+                        if json {
+                            let envelope = serde_json::json!({
+                                "migrated": true,
+                                "backup_path": backup_path.display().to_string(),
+                                "schema_version": to,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&envelope)?);
+                        } else {
+                            println!("Backed up to {}", backup_path.display());
+                            println!(
+                                "Migrated {} to schema version {to}.",
+                                config.config_path.display()
+                            );
+                        }
                     }
                     None => {
-                        println!("Config already at current schema version.");
+                        if json {
+                            let envelope = serde_json::json!({
+                                "migrated": false,
+                                "schema_version": crate::config::migration::CURRENT_SCHEMA_VERSION,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&envelope)?);
+                        } else {
+                            println!("Config already at current schema version.");
+                        }
                     }
                 }
                 Ok(())
