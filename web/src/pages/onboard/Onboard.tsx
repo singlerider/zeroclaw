@@ -12,12 +12,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ApiError,
+  getProp,
   listProps,
   patchConfig,
   type ConfigApiError,
   type ListResponseEntry,
   type PatchOp,
 } from '../../lib/api';
+
+/** Schema path for the onboard-state completion list — single source of truth. */
+const COMPLETED_SECTIONS_PATH = 'onboard-state.completed-sections';
 
 type SectionGroup = {
   name: string;
@@ -107,12 +111,16 @@ export default function Onboard() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    listProps()
-      .then((resp) => {
+    // Fetch schema + persisted completion state in parallel.
+    Promise.all([
+      listProps(),
+      getProp(COMPLETED_SECTIONS_PATH).catch(() => ({ value: '[]' })),
+    ])
+      .then(([resp, completedResp]) => {
         if (cancelled) return;
         const grouped = groupBySection(resp.entries);
         setSections(grouped);
-        // Seed draft + comments with current display values.
+        // Seed draft with current display values from the schema.
         const seed: Record<string, string> = {};
         for (const g of grouped) {
           for (const f of g.entries) {
@@ -120,6 +128,25 @@ export default function Onboard() {
           }
         }
         setDraft(seed);
+        // Hydrate completion state from the gateway. The value comes back as
+        // a stringified JSON array (per the current /list display contract);
+        // tolerate both array and string forms.
+        const v = completedResp.value;
+        let names: string[] = [];
+        if (Array.isArray(v)) {
+          names = v.filter((x): x is string => typeof x === 'string');
+        } else if (typeof v === 'string' && v.length > 0 && v !== '<unset>') {
+          try {
+            const parsed = JSON.parse(v);
+            if (Array.isArray(parsed)) {
+              names = parsed.filter((x): x is string => typeof x === 'string');
+            }
+          } catch {
+            // Single-name fallback (CLI display sometimes emits comma-separated).
+            names = v.split(',').map((s) => s.trim()).filter(Boolean);
+          }
+        }
+        setCompleted(new Set(names));
       })
       .catch((e) => !cancelled && setError(String(e)))
       .finally(() => !cancelled && setLoading(false));
@@ -150,9 +177,32 @@ export default function Onboard() {
 
     try {
       await patchConfig(ops);
-      setCompleted((prev) => new Set(prev).add(active.name));
+
+      // Persist completion to the gateway so re-opening the dashboard
+      // resumes where the user left off. Single source of truth: the
+      // gateway's onboard_state.completed_sections list, same place
+      // `zeroclaw onboard` already writes.
+      const newCompleted = new Set(completed).add(active.name);
+      const completedArr = Array.from(newCompleted);
+      try {
+        await patchConfig([
+          {
+            op: 'replace',
+            path: COMPLETED_SECTIONS_PATH,
+            value: completedArr,
+          },
+        ]);
+      } catch (persistErr) {
+        // Don't fail the whole save flow on a completion-marker write
+        // failure — the user's section data is already persisted. Surface
+        // the issue so the dashboard log catches it but proceed.
+        // eslint-disable-next-line no-console
+        console.warn('Failed to persist onboard completion marker:', persistErr);
+      }
+      setCompleted(newCompleted);
+
       // Move to the next incomplete section.
-      const next = sections.findIndex((s, i) => i > activeIdx && !completed.has(s.name));
+      const next = sections.findIndex((s, i) => i > activeIdx && !newCompleted.has(s.name));
       if (next >= 0) setActiveIdx(next);
     } catch (e) {
       // Structured ApiError thrown by apiFetch carries the parsed envelope
