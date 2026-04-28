@@ -212,10 +212,7 @@ mod tests {
     fn secret_test_forbidden_carries_path() {
         let err = ConfigApiError::secret_test_forbidden("providers.models.openrouter.api-key");
         assert_eq!(err.code, ConfigApiCode::SecretTestForbidden);
-        assert!(
-            err.message
-                .contains("providers.models.openrouter.api-key")
-        );
+        assert!(err.message.contains("providers.models.openrouter.api-key"));
     }
 
     #[test]
