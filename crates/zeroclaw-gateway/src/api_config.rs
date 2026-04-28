@@ -49,7 +49,6 @@ pub struct PropPutBody {
     pub path: String,
     pub value: serde_json::Value,
     #[serde(default)]
-    #[allow(dead_code)] // honored once comment-preserving save is wired in step 7
     pub comment: Option<String>,
 }
 
@@ -70,7 +69,6 @@ pub struct PatchOp {
     #[serde(default)]
     pub value: Option<serde_json::Value>,
     #[serde(default)]
-    #[allow(dead_code)]
     pub comment: Option<String>,
 }
 
@@ -367,6 +365,95 @@ async fn persist_and_swap(
     Ok(())
 }
 
+/// Decorate the on-disk TOML file with comments captured from PATCH/PUT ops.
+///
+/// Called after `Config::save()` (which already preserves existing comments
+/// via `migration::sync_table`). For each `(path, comment)` pair, walks the
+/// toml_edit document to the target leaf and prepends `# {comment}\n` as
+/// the leading decoration. An empty comment string clears any existing
+/// `# `-prefixed comment lines from the leaf's leading decor (other
+/// whitespace and blank lines are left intact).
+///
+/// Best-effort: silently skips paths that don't resolve to a leaf value.
+/// Failure to read or write the file leaves the surface unchanged.
+async fn apply_comments(
+    config_path: &std::path::Path,
+    annotations: &[(String, String)],
+) -> Result<(), std::io::Error> {
+    if annotations.is_empty() {
+        return Ok(());
+    }
+
+    let raw = tokio::fs::read_to_string(config_path).await?;
+    let mut doc: toml_edit::DocumentMut = match raw.parse() {
+        Ok(d) => d,
+        Err(_) => return Ok(()), // unparseable; bail without touching the file
+    };
+
+    for (path, comment) in annotations {
+        let segments: Vec<&str> = path.split('.').collect();
+        if segments.is_empty() {
+            continue;
+        }
+
+        if let Some(item) = walk_to_item_mut(doc.as_table_mut(), &segments) {
+            let decor = match item {
+                toml_edit::Item::Value(v) => v.decor_mut(),
+                toml_edit::Item::Table(t) => t.decor_mut(),
+                toml_edit::Item::ArrayOfTables(_) | toml_edit::Item::None => continue,
+            };
+            let new_prefix = build_comment_prefix(decor.prefix(), comment);
+            decor.set_prefix(new_prefix);
+        }
+    }
+
+    tokio::fs::write(config_path, doc.to_string()).await?;
+    Ok(())
+}
+
+/// Resolve a dotted path through the toml_edit table tree, returning a
+/// mutable reference to the resolved item. Returns `None` if any segment
+/// is missing or the path traverses through a non-table.
+fn walk_to_item_mut<'a>(
+    table: &'a mut toml_edit::Table,
+    segments: &[&str],
+) -> Option<&'a mut toml_edit::Item> {
+    let (last, rest) = segments.split_last()?;
+    let mut cursor: &mut toml_edit::Table = table;
+    for seg in rest {
+        cursor = cursor.get_mut(seg)?.as_table_mut()?;
+    }
+    cursor.get_mut(last)
+}
+
+/// Build the new leading decor for a leaf, applying the `# {comment}\n` line
+/// while preserving any blank-line whitespace that preceded it. When the
+/// comment is empty, strips comment lines from the existing prefix.
+fn build_comment_prefix(existing: Option<&toml_edit::RawString>, comment: &str) -> String {
+    let prev = existing.and_then(|r| r.as_str()).unwrap_or("");
+
+    // Split existing prefix into non-comment whitespace lines (kept) and
+    // comment lines (replaced).
+    let mut kept: Vec<&str> = Vec::new();
+    for line in prev.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        kept.push(line);
+    }
+
+    let mut out: String = kept.join("");
+    if !comment.is_empty() {
+        for line in comment.lines() {
+            out.push_str("# ");
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Compute drift between the in-memory config and what's on disk right now.
 /// Returns one entry per drifted property; empty when in-memory and disk
 /// agree (or when the on-disk file can't be parsed).
@@ -539,8 +626,15 @@ pub async fn handle_prop_put(
         return error_response(ConfigApiError::from_validation(e).with_path(&body.path));
     }
 
+    let config_path = new_config.config_path.clone();
     if let Err(e) = persist_and_swap(&state, new_config).await {
         return error_response(e);
+    }
+    if let Some(comment) = body.comment.as_ref() {
+        let annotations = [(body.path.clone(), comment.clone())];
+        if let Err(e) = apply_comments(&config_path, &annotations).await {
+            tracing::warn!(error = %e, "failed to apply PUT comment to config.toml");
+        }
     }
 
     if info.is_secret || info.derived_from_secret {
@@ -832,8 +926,29 @@ pub async fn handle_patch(
         return error_response(ConfigApiError::from_validation(e));
     }
 
+    // Collect (path, comment) pairs from any op that supplied a non-None
+    // comment. Applied after save() so the comment-preserving sync_table
+    // pass doesn't strip them.
+    let annotations: Vec<(String, String)> = ops
+        .iter()
+        .zip(results.iter())
+        .filter_map(|(op, res)| {
+            op.comment
+                .as_ref()
+                .map(|c| (res.path.clone(), c.clone()))
+        })
+        .collect();
+
+    let config_path = working.config_path.clone();
     if let Err(e) = persist_and_swap(&state, working).await {
         return error_response(e);
+    }
+    if !annotations.is_empty()
+        && let Err(e) = apply_comments(&config_path, &annotations).await
+    {
+        // Comments are best-effort decoration; surface as a non-fatal warn.
+        // The patch itself succeeded — return success but log the failure.
+        tracing::warn!(error = %e, "failed to apply PATCH op comments to config.toml");
     }
 
     axum::Json(PatchResponse {
@@ -1168,6 +1283,32 @@ mod tests {
             Some(zeroclaw_config::traits::PropKind::Bool),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_comment_prefix_appends_comment_to_blank_prefix() {
+        let out = build_comment_prefix(None, "set during onboarding");
+        assert_eq!(out, "# set during onboarding\n");
+    }
+
+    #[test]
+    fn build_comment_prefix_replaces_existing_comment_lines() {
+        // Simulate a doc that already has a comment + a blank line.
+        let raw = toml_edit::RawString::from("\n# old reason\n");
+        let out = build_comment_prefix(Some(&raw), "new reason");
+        assert!(out.contains("# new reason\n"));
+        assert!(!out.contains("old reason"));
+        // Blank line preserved.
+        assert!(out.starts_with('\n'));
+    }
+
+    #[test]
+    fn build_comment_prefix_empty_comment_strips_existing() {
+        let raw = toml_edit::RawString::from("\n# stale\n");
+        let out = build_comment_prefix(Some(&raw), "");
+        assert!(!out.contains('#'));
+        // Blank line preserved.
+        assert_eq!(out, "\n");
     }
 
     #[test]
