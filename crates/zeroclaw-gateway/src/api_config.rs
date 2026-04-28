@@ -1240,10 +1240,33 @@ mod tests {
         .expect("apply_comments");
 
         let raw = tokio::fs::read_to_string(&path).await.expect("read back");
+        // Existence check: the comment text appears in the file.
         assert!(
             raw.contains("# raised after Q3 backlog"),
             "expected comment in file, got:\n{raw}"
         );
+
+        // Positional check: the comment appears IMMEDIATELY ABOVE `host = ...`,
+        // not somewhere else in the file. The previous version of the helper
+        // wrote the prefix between `=` and the value, producing broken TOML —
+        // this assertion would have caught that bug.
+        let lines: Vec<&str> = raw.lines().collect();
+        let host_line_idx = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with("host"))
+            .expect("host = line in saved config");
+        assert!(host_line_idx > 0, "host line is at top — comment can't precede it");
+        let above = lines[host_line_idx - 1];
+        assert_eq!(
+            above.trim(),
+            "# raised after Q3 backlog",
+            "expected comment immediately above `host = ...`, got line above:\n  {above:?}\nfull file:\n{raw}"
+        );
+
+        // Round-trip check: re-parsing the file must succeed (broken
+        // decoration target produces malformed TOML).
+        let _: toml::Value = toml::from_str(&raw)
+            .unwrap_or_else(|e| panic!("re-parse failed after apply_comments: {e}\nfile:\n{raw}"));
     }
 
     #[test]
