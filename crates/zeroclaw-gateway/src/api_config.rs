@@ -50,6 +50,46 @@ pub struct PropPutBody {
     pub comment: Option<String>,
 }
 
+/// One JSON Patch (RFC 6902) operation. We support a strict subset:
+/// `add`, `remove`, `replace`, `test`. `move` and `copy` are explicitly
+/// rejected at apply time with `op_not_supported` because safe reference-
+/// graph rewriting isn't part of this PR.
+///
+/// `comment` is a ZeroClaw extension — when provided it accompanies the
+/// resulting TOML write so future maintainers can see why a value was set.
+/// Honored once the comment-preserving write path is wired through (step 7);
+/// accepted here so the API shape doesn't churn.
+#[derive(Debug, Deserialize)]
+pub struct PatchOp {
+    pub op: String,
+    pub path: String,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub comment: Option<String>,
+}
+
+/// Single result entry in a successful PATCH response, one per applied op.
+#[derive(Debug, Serialize)]
+pub struct PatchOpResult {
+    pub op: String,
+    pub path: String,
+    /// The resulting value at the target path after the op applied.
+    /// `None` for secret paths (per the secrets-handling boundary), and for
+    /// `remove` ops where the field was reset to its default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub populated: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PatchResponse {
+    pub saved: bool,
+    pub results: Vec<PatchOpResult>,
+}
+
 /// Response for a non-secret GET.
 #[derive(Debug, Serialize)]
 pub struct PropResponse {
@@ -355,6 +395,187 @@ pub async fn handle_list(
     axum::Json(ListResponse { entries }).into_response()
 }
 
+/// PATCH /api/config — apply a JSON Patch document atomically.
+///
+/// Body is an array of operations executed in order against an in-memory
+/// copy of the config. After all ops apply, `Config::validate()` runs once;
+/// if it passes the snapshot is persisted and swapped in. If any op fails or
+/// validation fails, on-disk + in-memory state are unchanged and the response
+/// carries the offending op's index.
+///
+/// Supported ops: `add`, `remove`, `replace`, `test`.
+/// `move` and `copy` return `op_not_supported` (no reference-graph in this PR).
+/// `test` against a `#[secret]` or `#[derived_from_secret]` path is rejected
+/// with `secret_test_forbidden` (would leak the value via differential outcome).
+pub async fn handle_patch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(ops): axum::Json<Vec<PatchOp>>,
+) -> Response {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let mut working = state.config.lock().clone();
+    let mut results = Vec::with_capacity(ops.len());
+
+    for (idx, op) in ops.iter().enumerate() {
+        let path = json_pointer_to_dotted(&op.path);
+        let info = lookup_prop_field(&working, &path);
+        let is_sensitive = info
+            .as_ref()
+            .map(|i| i.is_secret || i.derived_from_secret)
+            .unwrap_or(false);
+
+        match op.op.as_str() {
+            "test" => {
+                // Secret values can't leave the server, so a differential
+                // test response would be the only signal — ban the op.
+                if is_sensitive {
+                    return error_response(
+                        ConfigApiError::secret_test_forbidden(&path).with_op_index(idx),
+                    );
+                }
+                let want = match op.value.as_ref() {
+                    Some(v) => v.clone(),
+                    None => {
+                        return error_response(
+                            ConfigApiError::new(
+                                ConfigApiCode::ValueTypeMismatch,
+                                "JSON Patch `test` op requires `value` field",
+                            )
+                            .with_path(&path)
+                            .with_op_index(idx),
+                        );
+                    }
+                };
+                let actual = match working.get_prop(&path) {
+                    Ok(v) => serde_json::Value::String(v),
+                    Err(e) => return error_response(map_prop_error(e, &path).with_op_index(idx)),
+                };
+                if actual != want {
+                    return error_response(
+                        ConfigApiError::new(
+                            ConfigApiCode::ValidationFailed,
+                            format!("`test` op failed: expected {want}, got {actual}"),
+                        )
+                        .with_path(&path)
+                        .with_op_index(idx),
+                    );
+                }
+                results.push(PatchOpResult {
+                    op: op.op.clone(),
+                    path,
+                    value: Some(actual),
+                    populated: None,
+                });
+            }
+            "add" | "replace" => {
+                let value = match op.value.as_ref() {
+                    Some(v) => v.clone(),
+                    None => {
+                        return error_response(
+                            ConfigApiError::new(
+                                ConfigApiCode::ValueTypeMismatch,
+                                format!("JSON Patch `{}` op requires `value` field", op.op),
+                            )
+                            .with_path(&path)
+                            .with_op_index(idx),
+                        );
+                    }
+                };
+                let value_str = match json_to_setprop_string(&value) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return error_response(e.with_path(&path).with_op_index(idx));
+                    }
+                };
+                if let Err(e) = working.set_prop(&path, &value_str) {
+                    return error_response(map_prop_error(e, &path).with_op_index(idx));
+                }
+                if is_sensitive {
+                    results.push(PatchOpResult {
+                        op: op.op.clone(),
+                        path,
+                        value: None,
+                        populated: Some(!value_str.is_empty()),
+                    });
+                } else {
+                    results.push(PatchOpResult {
+                        op: op.op.clone(),
+                        path,
+                        value: Some(serde_json::Value::String(value_str)),
+                        populated: None,
+                    });
+                }
+            }
+            "remove" => {
+                if let Err(e) = working.set_prop(&path, "") {
+                    return error_response(map_prop_error(e, &path).with_op_index(idx));
+                }
+                if is_sensitive {
+                    results.push(PatchOpResult {
+                        op: op.op.clone(),
+                        path,
+                        value: None,
+                        populated: Some(false),
+                    });
+                } else {
+                    results.push(PatchOpResult {
+                        op: op.op.clone(),
+                        path,
+                        value: Some(serde_json::Value::Null),
+                        populated: None,
+                    });
+                }
+            }
+            "move" | "copy" => {
+                return error_response(
+                    ConfigApiError::op_not_supported(&op.op)
+                        .with_path(&path)
+                        .with_op_index(idx),
+                );
+            }
+            other => {
+                return error_response(
+                    ConfigApiError::new(
+                        ConfigApiCode::OpNotSupported,
+                        format!("unknown JSON Patch operation `{other}`"),
+                    )
+                    .with_path(&path)
+                    .with_op_index(idx),
+                );
+            }
+        }
+    }
+
+    if let Err(e) = working.validate() {
+        return error_response(ConfigApiError::from_validation(e));
+    }
+
+    if let Err(e) = persist_and_swap(&state, working).await {
+        return error_response(e);
+    }
+
+    axum::Json(PatchResponse {
+        saved: true,
+        results,
+    })
+    .into_response()
+}
+
+/// Convert a JSON Pointer (`/providers/fallback`) to the dotted path the
+/// `Config::set_prop` machinery expects (`providers.fallback`). Accepts both
+/// forms — passing already-dotted paths through unchanged so dashboard clients
+/// can use whichever is more natural.
+fn json_pointer_to_dotted(path: &str) -> String {
+    if path.starts_with('/') {
+        path.trim_start_matches('/').replace('/', ".")
+    } else {
+        path.to_string()
+    }
+}
+
 /// OPTIONS /api/config — whole-config schema (capabilities, not values)
 ///
 /// Returns the JSON Schema document for the `Config` type. Distinguishes CORS
@@ -493,5 +714,35 @@ mod tests {
         let err = anyhow::anyhow!("type mismatch: expected u64");
         let api_err = map_prop_error(err, "scheduler.max_concurrent");
         assert_eq!(api_err.code, ConfigApiCode::ValidationFailed);
+    }
+
+    #[test]
+    fn json_pointer_to_dotted_handles_pointer_form() {
+        assert_eq!(
+            json_pointer_to_dotted("/providers/fallback"),
+            "providers.fallback"
+        );
+        assert_eq!(
+            json_pointer_to_dotted("/providers/models/openrouter/api-key"),
+            "providers.models.openrouter.api-key"
+        );
+    }
+
+    #[test]
+    fn json_pointer_to_dotted_passes_dotted_through() {
+        assert_eq!(
+            json_pointer_to_dotted("providers.fallback"),
+            "providers.fallback"
+        );
+        assert_eq!(
+            json_pointer_to_dotted("scheduler.max_concurrent"),
+            "scheduler.max_concurrent"
+        );
+    }
+
+    #[test]
+    fn json_pointer_to_dotted_handles_empty_root() {
+        assert_eq!(json_pointer_to_dotted(""), "");
+        assert_eq!(json_pointer_to_dotted("/"), "");
     }
 }

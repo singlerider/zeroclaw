@@ -972,7 +972,9 @@ pub async fn run_gateway(
         .route("/api/status", get(api::handle_api_status))
         .route(
             "/api/config",
-            get(api::handle_api_config_get).options(api_config::handle_options_config),
+            get(api::handle_api_config_get)
+                .patch(api_config::handle_patch)
+                .options(api_config::handle_options_config),
         )
         .route(
             "/api/config/prop",
