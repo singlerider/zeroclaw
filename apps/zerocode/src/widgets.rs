@@ -4,6 +4,11 @@
 ///
 /// The renderer joins keys with " / " so you don't have to format manually.
 /// An entry with all-empty keys/action renders as a blank spacer row.
+///
+/// Keys are owned `String`s so callers can pass live chord displays resolved
+/// from the keymap (`Action::Variant.resolved()[..].display()`) instead of
+/// hardcoded literals — the help always reflects the actual bindings, including
+/// user overrides.
 #[derive(Debug, Clone, Default)]
 pub struct HelpEntry {
     /// Keys that trigger this action, e.g. ["↑", "k"]. Rendered labels,
@@ -15,7 +20,10 @@ pub struct HelpEntry {
 }
 
 impl HelpEntry {
-    pub fn new(keys: Vec<impl Into<String>>, action: impl Into<String>) -> Self {
+    pub fn new<K: Into<String>>(
+        keys: impl IntoIterator<Item = K>,
+        action: impl Into<String>,
+    ) -> Self {
         Self {
             keys: keys.into_iter().map(Into::into).collect(),
             action: action.into(),
@@ -35,6 +43,14 @@ impl HelpEntry {
         Self {
             keys: vec![],
             action: String::new(),
+        }
+    }
+
+    /// A keyless description row (no key column, just text).
+    pub fn desc(action: impl Into<String>) -> Self {
+        Self {
+            keys: vec![],
+            action: action.into(),
         }
     }
 

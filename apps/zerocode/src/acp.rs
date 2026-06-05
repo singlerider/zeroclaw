@@ -61,6 +61,10 @@ impl Acp {
     pub(crate) fn ctx_tokens(&self) -> (Option<u64>, Option<u64>) {
         self.inner.ctx_tokens()
     }
+
+    pub(crate) fn selected_agent(&self) -> Option<&str> {
+        self.inner.selected_agent()
+    }
 }
 
 impl crate::widgets::HelpContext for Acp {
