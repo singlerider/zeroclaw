@@ -1260,9 +1260,11 @@ impl Chat {
         )));
         state.mark_dirty_full();
 
-        let Some(model_provider_ref) =
-            Self::resolve_model_provider_ref(rpc, &state.agent_alias).await
-        else {
+        let active_provider = match state.model_provider_ref.clone() {
+            Some(r) => Some(r),
+            None => Self::resolve_model_provider_ref(rpc, &state.agent_alias).await,
+        };
+        let Some(model_provider_ref) = active_provider else {
             state.info_message = Some(crate::widgets::InfoMessage::error(crate::i18n::t(
                 "zc-model-catalog-no-provider",
             )));
@@ -1292,7 +1294,10 @@ impl Chat {
         }
         // Keep the input-bar autocomplete cache aligned with what we just fetched.
         state.input_bar.set_model_catalog(family, models.clone());
-        let current = Self::configured_model(rpc, &model_provider_ref).await;
+        let current = match state.model.clone() {
+            Some(m) => Some(m),
+            None => Self::configured_model(rpc, &model_provider_ref).await,
+        };
         state.model_picker =
             ModelPickerOverlay::Model(crate::widgets::PickerState::new(models, current.as_deref()));
         state.info_message = None;
@@ -1311,7 +1316,10 @@ impl Chat {
                     state.mark_dirty_full();
                     return;
                 }
-                let current = Self::resolve_model_provider_ref(rpc, &state.agent_alias).await;
+                let current = match state.model_provider_ref.clone() {
+                    Some(r) => Some(r),
+                    None => Self::resolve_model_provider_ref(rpc, &state.agent_alias).await,
+                };
                 state.input_bar.set_provider_catalog(providers.clone());
                 state.model_picker = ModelPickerOverlay::ConfiguredProviderStage(
                     crate::widgets::PickerState::new(providers, current.as_deref()),
