@@ -262,6 +262,9 @@ impl ZerocodePane {
 
         match self.focus {
             Focus::Theme => self.draw_theme(frame, cols[1]),
+            // While assigning, Agent Themes borrows the theme list as its detail
+            // surface; the agent picker returns once the assignment ends.
+            Focus::AgentTheme if self.assigning_theme() => self.draw_theme(frame, cols[1]),
             Focus::AgentTheme => self.draw_agent_theme(frame, cols[1]),
             Focus::Presets => self.draw_presets(frame, cols[1]),
             Focus::Bindings => self.draw_bindings(frame, cols[1]),
@@ -304,11 +307,7 @@ impl ZerocodePane {
             })
             .collect();
         let mut state = ListState::default();
-        // While assigning a theme to an agent the detail focus is borrowed by
-        // the reusable Theme list, but the section the user is acting on is
-        // Agent Themes — highlight that so the left rail does not claim the
-        // global Theme section is selected.
-        state.select(FOCI.iter().position(|f| *f == self.displayed_focus()));
+        state.select(FOCI.iter().position(|f| *f == self.focus));
         // Active highlight when the cursor lives in the section list; a dimmed
         // "you are here" highlight when the cursor has stepped into the detail.
         let (style, symbol) = match self.cursor {
@@ -323,17 +322,6 @@ impl ZerocodePane {
             area,
             &mut state,
         );
-    }
-
-    /// The section the left rail should highlight. During an agent assignment
-    /// the detail focus is borrowed by the reusable Theme list, but the section
-    /// being acted on is Agent Themes; surface that rather than Theme.
-    fn displayed_focus(&self) -> Focus {
-        if self.theme_target_agent.is_some() {
-            Focus::AgentTheme
-        } else {
-            self.focus
-        }
     }
 
     /// The cursor the theme list is currently driving: the agent-assign cursor
@@ -947,17 +935,20 @@ impl ZerocodePane {
 
     /// Move the cursor back to the section list. No-op if already there (home).
     fn leave_detail(&mut self) {
-        // Leaving Theme abandons any pending agent assignment so the list
-        // reverts to global-theme mode.
-        if self.cursor == PaneCursor::Detail && self.focus == Focus::Theme {
+        // Backing out of a borrowed theme list abandons the pending agent
+        // assignment; focus already names Agent Themes, so the rail is correct.
+        if self.cursor == PaneCursor::Detail {
             self.theme_target_agent = None;
         }
         self.cursor = PaneCursor::Sections;
     }
 
     /// Begin assigning a theme to the highlighted agent: point the reusable
-    /// theme list at that agent's override and move focus there. Preselect the
-    /// list cursor on the agent's current override if it has one.
+    /// theme list at that agent's override. Focus stays on Agent Themes — the
+    /// pending assignment (theme_target_agent) is what swaps the detail surface
+    /// to the theme list — so the left rail, Left/Back, and mouse all keep
+    /// treating Agent Themes as the active section. Preselect the list cursor on
+    /// the agent's current override if it has one.
     fn begin_agent_assign(&mut self) {
         let Some(alias) = self.agents.get(self.agent_cursor).cloned() else {
             self.status = Some(crate::i18n::t("zc-zerocode-agent-theme-no-agents"));
@@ -971,7 +962,12 @@ impl ZerocodePane {
             self.assign_cursor = 0;
         }
         self.theme_target_agent = Some(alias);
-        self.focus = Focus::Theme;
+    }
+
+    /// True while assigning a theme to an agent: the detail surface is the
+    /// reusable theme list even though focus stays on Agent Themes.
+    fn assigning_theme(&self) -> bool {
+        self.theme_target_agent.is_some()
     }
 
     /// Remove the highlighted agent's override (DeleteRow in the AgentTheme
@@ -998,9 +994,9 @@ impl ZerocodePane {
     }
 
     fn cycle_focus(&mut self, delta: isize) {
-        // Leaving the Theme section abandons any pending agent assignment so the
-        // list reverts to global-theme mode.
-        if self.focus == Focus::Theme {
+        // Moving off Agent Themes drops any pending assignment defensively;
+        // assignment normally lives in the detail pane, so this rarely fires.
+        if self.focus == Focus::AgentTheme {
             self.theme_target_agent = None;
         }
         let i = FOCI.iter().position(|f| *f == self.focus).unwrap_or(0) as isize;
@@ -1009,24 +1005,33 @@ impl ZerocodePane {
     }
 
     fn move_cursor(&mut self, delta: isize) {
-        let len = match self.focus {
-            Focus::Theme => self.themes.len(),
-            Focus::AgentTheme => self.agents.len(),
-            Focus::Presets => self.presets.len(),
-            Focus::Bindings => self.rows.len(),
-            Focus::Locale => self.locales.len() + 1,
-            Focus::Connection => CONN_FIELDS.len(),
+        // While assigning, Agent Themes drives the borrowed theme list.
+        let len = if self.focus == Focus::AgentTheme && self.assigning_theme() {
+            self.themes.len()
+        } else {
+            match self.focus {
+                Focus::Theme => self.themes.len(),
+                Focus::AgentTheme => self.agents.len(),
+                Focus::Presets => self.presets.len(),
+                Focus::Bindings => self.rows.len(),
+                Focus::Locale => self.locales.len() + 1,
+                Focus::Connection => CONN_FIELDS.len(),
+            }
         };
         if len == 0 {
             return;
         }
-        let cursor = match self.focus {
-            Focus::Theme => self.theme_list_cursor_mut(),
-            Focus::AgentTheme => &mut self.agent_cursor,
-            Focus::Presets => &mut self.preset_cursor,
-            Focus::Bindings => &mut self.binding_cursor,
-            Focus::Locale => &mut self.locale_cursor,
-            Focus::Connection => &mut self.conn_cursor,
+        let cursor = if self.focus == Focus::AgentTheme && self.assigning_theme() {
+            self.theme_list_cursor_mut()
+        } else {
+            match self.focus {
+                Focus::Theme => self.theme_list_cursor_mut(),
+                Focus::AgentTheme => &mut self.agent_cursor,
+                Focus::Presets => &mut self.preset_cursor,
+                Focus::Bindings => &mut self.binding_cursor,
+                Focus::Locale => &mut self.locale_cursor,
+                Focus::Connection => &mut self.conn_cursor,
+            }
         };
         let next = (*cursor as isize + delta).clamp(0, len as isize - 1);
         *cursor = next as usize;
@@ -1035,6 +1040,10 @@ impl ZerocodePane {
     fn activate(&mut self) {
         match self.focus {
             Focus::Theme => self.apply_theme(),
+            // Enter on Agent Themes: pick an agent (start assign) or, while the
+            // theme list is borrowed, commit the highlighted theme as the
+            // agent's override.
+            Focus::AgentTheme if self.assigning_theme() => self.apply_theme(),
             Focus::AgentTheme => self.begin_agent_assign(),
             Focus::Presets => self.apply_preset(),
             Focus::Bindings => {
@@ -1156,8 +1165,9 @@ impl ZerocodePane {
         let Some(name) = self.themes.get(self.theme_list_cursor()).cloned() else {
             return;
         };
-        // Assign-to-agent mode: write the override and return focus to the
-        // AgentTheme section instead of touching the global theme.
+        // Assign-to-agent mode: write the override and end the assignment so the
+        // detail surface reverts to the agent picker, without touching the
+        // global theme.
         if let Some(alias) = self.theme_target_agent.take() {
             if theme::theme_by_name(&name).is_none() {
                 return;
@@ -1178,7 +1188,6 @@ impl ZerocodePane {
                 }
                 Err(e) => self.status = Some(format!("Override save failed: {e}")),
             }
-            self.focus = Focus::AgentTheme;
             return;
         }
         let Some(t) = theme::theme_by_name(&name) else {
@@ -1316,12 +1325,16 @@ impl ZerocodePane {
         )];
         match self.focus {
             Focus::Theme => {
-                let label = if self.theme_target_agent.is_some() {
-                    "zc-zerocode-help-assign-agent-theme"
-                } else {
-                    "zc-zerocode-help-apply-theme"
-                };
-                entries.push(E::new(keys(A::Enter), crate::i18n::t(label)));
+                entries.push(E::new(
+                    keys(A::Enter),
+                    crate::i18n::t("zc-zerocode-help-apply-theme"),
+                ));
+            }
+            Focus::AgentTheme if self.assigning_theme() => {
+                entries.push(E::new(
+                    keys(A::Enter),
+                    crate::i18n::t("zc-zerocode-help-assign-agent-theme"),
+                ));
             }
             Focus::AgentTheme => {
                 entries.push(E::new(
@@ -1395,6 +1408,9 @@ impl ZerocodePane {
                     if let Some(idx) =
                         mouse::list_click_index(mouse.row, self.focus_area, 0, FOCI.len())
                     {
+                        // A section click ends any pending assignment so focus,
+                        // the detail surface, and the cursor stay consistent.
+                        self.theme_target_agent = None;
                         self.focus = FOCI[idx.min(FOCI.len() - 1)];
                         self.cursor = PaneCursor::Sections;
                     }
@@ -1429,6 +1445,9 @@ impl ZerocodePane {
     }
 
     fn current_len(&self) -> usize {
+        if self.focus == Focus::AgentTheme && self.assigning_theme() {
+            return self.themes.len();
+        }
         match self.focus {
             Focus::Theme => self.themes.len(),
             Focus::AgentTheme => self.agents.len(),
@@ -1445,6 +1464,10 @@ impl ZerocodePane {
             return;
         }
         let idx = idx.min(len - 1);
+        if self.focus == Focus::AgentTheme && self.assigning_theme() {
+            *self.theme_list_cursor_mut() = idx;
+            return;
+        }
         match self.focus {
             Focus::Theme => *self.theme_list_cursor_mut() = idx,
             Focus::AgentTheme => self.agent_cursor = idx,
@@ -1681,22 +1704,27 @@ mod tests {
         let mut pane = ZerocodePane::new(dir.path());
         pane.set_agents(vec!["coder".to_string()]);
 
-        // Park the global theme selection on a known, non-zero row.
+        // Park the global theme selection on a known, non-zero row: focus the
+        // Theme section, step into the detail list, move down.
         while pane.focus != Focus::Theme {
-            pane.handle_key(key(KeyCode::Right));
+            pane.handle_key(key(KeyCode::Down));
         }
+        pane.handle_key(key(KeyCode::Right));
         pane.handle_key(key(KeyCode::Down));
         pane.handle_key(key(KeyCode::Down));
         pane.handle_key(key(KeyCode::Down));
         let global = pane.theme_cursor;
         assert!(global > 0, "global cursor should have moved off row 0");
+        pane.handle_key(key(KeyCode::Esc));
 
-        // Enter assign mode for the agent and pick a different row.
+        // Enter assign mode: focus Agent Themes, into detail, Enter to assign.
         while pane.focus != Focus::AgentTheme {
-            pane.handle_key(key(KeyCode::Right));
+            pane.handle_key(key(KeyCode::Down));
         }
+        pane.handle_key(key(KeyCode::Right));
         pane.handle_key(key(KeyCode::Enter));
-        assert!(pane.focus == Focus::Theme);
+        // Focus stays on Agent Themes; the pending assignment borrows the list.
+        assert_eq!(pane.focus, Focus::AgentTheme);
         assert!(pane.theme_target_agent.is_some());
         // Move the assign cursor; the global cursor must not follow.
         pane.handle_key(key(KeyCode::Down));
@@ -1706,8 +1734,8 @@ mod tests {
         );
         pane.handle_key(key(KeyCode::Enter));
 
-        // Back on the Theme tab, the global selection is intact.
-        assert!(pane.focus == Focus::AgentTheme);
+        // Assignment done; global selection intact, override recorded.
+        assert_eq!(pane.focus, Focus::AgentTheme);
         assert!(pane.theme_target_agent.is_none());
         assert_eq!(
             pane.theme_cursor, global,
@@ -1719,22 +1747,46 @@ mod tests {
         );
     }
 
-    // Regression: while assigning a theme to an agent the left rail must
-    // highlight Agent Themes, not Theme — the detail focus is borrowed by the
-    // reusable theme list but the user is acting on the agent section.
+    // Regression: focus stays on Agent Themes during assignment so the left
+    // rail, Left/Back, and mouse all keep treating it as the active section.
     #[test]
-    fn assign_mode_left_rail_shows_agent_themes() {
+    fn assign_mode_keeps_agent_themes_focus() {
         let dir = tempfile::tempdir().unwrap();
         let mut pane = ZerocodePane::new(dir.path());
         pane.set_agents(vec!["coder".to_string()]);
         while pane.focus != Focus::AgentTheme {
-            pane.handle_key(key(KeyCode::Right));
+            pane.handle_key(key(KeyCode::Down));
         }
+        pane.handle_key(key(KeyCode::Right));
         pane.handle_key(key(KeyCode::Enter));
-        // Detail focus is borrowed by the Theme list...
-        assert_eq!(pane.focus, Focus::Theme);
+        assert_eq!(pane.focus, Focus::AgentTheme);
         assert!(pane.theme_target_agent.is_some());
-        // ...but the left rail still names the section being acted on.
-        assert_eq!(pane.displayed_focus(), Focus::AgentTheme);
+    }
+
+    // Regression: Left and Esc both back out of a borrowed theme list and end
+    // the assignment, landing on Agent Themes (not the global Theme section).
+    #[test]
+    fn left_and_esc_back_out_of_assign() {
+        for back in [KeyCode::Left, KeyCode::Esc] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut pane = ZerocodePane::new(dir.path());
+            pane.set_agents(vec!["coder".to_string()]);
+            while pane.focus != Focus::AgentTheme {
+                pane.handle_key(key(KeyCode::Down));
+            }
+            pane.handle_key(key(KeyCode::Right));
+            pane.handle_key(key(KeyCode::Enter));
+            assert!(pane.theme_target_agent.is_some());
+            pane.handle_key(key(back));
+            assert!(
+                pane.theme_target_agent.is_none(),
+                "{back:?} did not end the assignment"
+            );
+            assert_eq!(
+                pane.focus,
+                Focus::AgentTheme,
+                "{back:?} left focus off Agent Themes"
+            );
+        }
     }
 }
