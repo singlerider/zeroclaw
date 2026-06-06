@@ -328,9 +328,9 @@ impl ZerocodePane {
         );
     }
 
-    /// The section the left rail should highlight. During an agent assignment
-    /// the detail focus is borrowed by the reusable Theme list, but the section
-    /// being acted on is Agent Themes; surface that rather than Theme.
+    /// The section the left rail should highlight: while assigning a theme to
+    /// an agent the detail focus is borrowed by the reusable Theme list, but the
+    /// user is acting on Agent Themes, so the rail must name that section.
     fn displayed_focus(&self) -> Focus {
         if self.theme_target_agent.is_some() {
             Focus::AgentTheme
