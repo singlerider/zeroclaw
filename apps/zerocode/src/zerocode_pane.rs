@@ -136,6 +136,11 @@ pub(crate) struct ZerocodePane {
     /// Last `agents/status` error, distinguishing a genuine failure from the
     /// transient "loading…" state.
     agents_error: Option<String>,
+    /// True once an `agents/status` response has been applied, so an empty
+    /// `agents` list reads as "loaded, none enabled" rather than "still
+    /// loading" — otherwise a config with no enabled agents would re-request
+    /// forever and never show the terminal "no agents" message.
+    agents_loaded: bool,
     // Presets
     presets: Vec<String>,
     preset_cursor: usize,
@@ -204,6 +209,7 @@ impl ZerocodePane {
             agent_cursor: 0,
             agent_overrides,
             agents_error: None,
+            agents_loaded: false,
             presets,
             preset_cursor: 0,
             rows: Vec::new(),
@@ -415,9 +421,16 @@ impl ZerocodePane {
             return;
         }
         if self.agents.is_empty() {
+            // Distinguish "still loading" from "loaded, none enabled": the
+            // latter is terminal and must not read as a spinner.
+            let msg_key = if self.agents_loaded {
+                "zc-zerocode-agent-theme-no-agents"
+            } else {
+                "zc-zerocode-agent-theme-loading"
+            };
             frame.render_widget(
                 ratatui::widgets::Paragraph::new(Line::from(Span::styled(
-                    crate::i18n::t("zc-zerocode-agent-theme-loading"),
+                    crate::i18n::t(msg_key),
                     theme::dim_style(),
                 )))
                 .block(theme::panel_block(" Agent Themes ")),
@@ -716,16 +729,18 @@ impl ZerocodePane {
     pub(crate) fn set_agents(&mut self, agents: Vec<String>) {
         self.agents = agents;
         self.agents_error = None;
+        self.agents_loaded = true;
         if !self.agents.is_empty() && self.agent_cursor >= self.agents.len() {
             self.agent_cursor = self.agents.len() - 1;
         }
     }
 
     /// True if the AgentTheme tab is focused and the agent list hasn't loaded —
-    /// config_manager uses this to know when to call `agents/status`. Stops
-    /// re-requesting once an attempt has failed.
+    /// config_manager uses this to know when to call `agents/status`. Once a
+    /// response has been applied (even an empty one) or an attempt has failed,
+    /// it stops re-requesting so an all-disabled config does not spin forever.
     pub(crate) fn agents_needs_list(&self) -> bool {
-        self.focus == Focus::AgentTheme && self.agents.is_empty() && self.agents_error.is_none()
+        self.focus == Focus::AgentTheme && !self.agents_loaded && self.agents_error.is_none()
     }
 
     /// Record an `agents/status` failure so the tab shows the error instead of
