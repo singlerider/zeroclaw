@@ -12018,7 +12018,20 @@ BTC is currently around $65,000 based on latest tool output."#
             "test-provider".to_string(),
             Arc::clone(&agent_model_provider),
         );
-        provider_cache_seed.insert("openrouter".to_string(), alt_model_provider);
+        // Under the v0.8 alias model, `/models openrouter` resolves to the sole
+        // configured `openrouter.<alias>`; seed the cache on that dotted ref.
+        provider_cache_seed.insert("openrouter.default".to_string(), alt_model_provider);
+
+        // Configure one openrouter alias so the bare family resolves to it.
+        let mut prompt_config = zeroclaw_config::schema::Config::default();
+        {
+            let base = prompt_config
+                .providers
+                .models
+                .ensure("openrouter", "default")
+                .expect("openrouter slot must exist");
+            base.model = Some("default-model".to_string());
+        }
 
         let runtime_ctx = Arc::new(ChannelRuntimeContext {
             channels_by_name: Arc::new(channels_by_name),
@@ -12044,7 +12057,7 @@ BTC is currently around $65,000 based on latest tool output."#
             reliability: Arc::new(zeroclaw_config::schema::ReliabilityConfig::default()),
             provider_runtime_options: zeroclaw_providers::ModelProviderRuntimeOptions::default(),
             workspace_dir: Arc::new(std::env::temp_dir()),
-            prompt_config: Arc::new(zeroclaw_config::schema::Config::default()),
+            prompt_config: Arc::new(prompt_config),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             interrupt_on_new_message: InterruptOnNewMessageConfig {
                 telegram: false,
@@ -12103,7 +12116,7 @@ BTC is currently around $65,000 based on latest tool output."#
 
         let sent = channel_impl.sent_messages.lock().await;
         assert_eq!(sent.len(), 1);
-        assert!(sent[0].contains("ModelProvider switched to `openrouter`"));
+        assert!(sent[0].contains("ModelProvider switched to `openrouter.default`"));
 
         let route_key = "telegram_chat-1_alice";
         let route = runtime_ctx
@@ -12113,7 +12126,7 @@ BTC is currently around $65,000 based on latest tool output."#
             .get(route_key)
             .cloned()
             .expect("route should be stored for sender");
-        assert_eq!(route.model_provider, "openrouter");
+        assert_eq!(route.model_provider, "openrouter.default");
         assert_eq!(route.model, "default-model");
 
         assert_eq!(
