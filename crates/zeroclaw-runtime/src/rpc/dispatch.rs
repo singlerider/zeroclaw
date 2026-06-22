@@ -326,13 +326,8 @@ fn model_provider_ref_from_provider_profile_prop(prop: &str) -> Option<String> {
     }
 }
 
-/// Strip a trailing assistant tool intent that a cancel truncated before its
-/// results arrived. A cancelled turn persists whatever accumulated in history;
-/// if the cancel fired between the assistant emitting tool calls and the tool
-/// loop producing `ToolResults`, the slice ends on an `AssistantToolCalls`
-/// whose calls have no matching results. Persisting that teaches the next turn
-/// the work succeeded, so the model reports fabricated results. Returns the
-/// number of trailing messages removed.
+/// A persisted trailing `AssistantToolCalls` with no paired results teaches the
+/// next turn the work succeeded, so the model fabricates results on reload.
 fn sanitize_cancelled_turn(messages: &mut Vec<ConversationMessage>) -> usize {
     let before = messages.len();
     while let Some(last) = messages.last() {
