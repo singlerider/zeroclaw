@@ -37,6 +37,7 @@
 | 3 | 2026-04-10 | Terminology correction per implementation feedback from PR #5559: "kernel" → "runtime" for the agent orchestration layer throughout; "kernel" now refers specifically to the irreducible foundation (`--no-default-features` build); §4.1 updated to describe the explicit two-layer architecture (foundation + runtime); §4.2–§4.3 dependency diagram and component map updated to show `zeroclaw-runtime`; Phase 2 renamed from "The Kernel" to "The Runtime"; binary size targets reframed as aspirational north stars with measured progress tracking rather than hard gates; §7 updated with actual Phase 1 measurement (6.6 MB foundation build) and explicit note that architectural decomposition enables optimization but optimization is a dedicated second pass |
 | 4 | 2026-06-02 | Updated §5.2 to target `wasm32-wasip2` to enable WIT files. Updated Phase 2 §D2 to replace Extism with wasmtime to enable ARM32 targets and WIT files |
 | 5 | 2026-06-29 | Amended §4.4.2 to replace the single always-on `plugins-wasm` row with the three-flag execution-backend taxonomy (`plugins-wasm` host plus `plugins-wasm-cranelift` / `plugins-wasm-pulley` backends), completing the RFC #6943 deconfliction |
+| 6 | 2026-06-29 | Updated §6 Phase 2 D2 to reflect that Extism is fully removed and `wasmtime` is the implemented execution backend; dropped the stale transition note that left Extism as an option until a deprecation PR, closing the last RFC #6943 amendment |
 
 ---
 
@@ -621,9 +622,9 @@ The binary crate becomes a thin wiring layer that reads config and calls `run`.
 
 ##### D2: Complete the WASM execution bridge
 
-The `extism` dependency is incompatible with WASM Component Model (`.wit` files) and requires the `cranelift` feature of `wasmtime`, which blocks ARM32 targets from compiling. Remove Extism and replace it with direct usage of `wasmtime`. During the transition, Extism should be left as an option until the final deprecation PR.
+The `extism` dependency was incompatible with the WASM Component Model (`.wit` files) and required the `cranelift` feature of `wasmtime`, which blocked ARM32 targets from compiling. Extism has been removed and replaced with direct usage of `wasmtime`; no `extism` dependency remains in the workspace.
 
-Wire `wasmtime` into `zeroclaw-plugins` with optional dependencies on `cranelift` (for most build targets) or `pulley` (for ARM32). With WIT interfaces defined in v0.7.0, use `wit-bindgen` to generate the host-side bindings.
+`wasmtime` is wired into `zeroclaw-plugins` with optional dependencies on `cranelift` (for most build targets) or `pulley` (for ARM32). With the WIT interfaces defined in v0.7.0, `wit-bindgen` generates the host-side bindings.
 
 A complete WASM execution bridge implementation defines the WASI host functions that WASM plugins can call (HTTP requests, memory access, logging) within the permission model already defined in `PluginPermission`. Where possible, the WASI Preview 2 APIs should be used (`wasi:io`, `wasi:http`, `wasi:filesystem`, etc) to provide a consistent standards-based API for plugins.
 
