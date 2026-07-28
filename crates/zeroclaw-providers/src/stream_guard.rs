@@ -2,10 +2,6 @@
 //! holds, so dropping the stream (turn cancel, timeout, client disconnect)
 //! aborts the task and releases its socket instead of leaking it.
 
-/// Maximum silence between response-body reads on streaming SSE connections.
-/// This is an idle bound, not a deadline for the whole generation.
-pub(crate) const SSE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
-
 /// Aborts the wrapped task when dropped. Carry it inside the returned stream's
 /// `unfold` state so the abort fires exactly when the consumer drops the
 /// stream. `AbortHandle::abort` is a no-op once the task has finished, so the

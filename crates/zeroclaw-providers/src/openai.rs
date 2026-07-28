@@ -2,7 +2,7 @@ use crate::openai_codex::{
     ResponsesStreamApiError, ResponsesStreamState, ResponsesToolSpec, append_utf8_stream_chunk,
     build_responses_input, convert_tools, first_nonempty, process_sse_chunk,
 };
-use crate::stream_guard::{AbortOnDrop, SSE_IDLE_TIMEOUT};
+use crate::stream_guard::AbortOnDrop;
 use crate::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     ModelProvider, ProviderCapabilities, StreamChunk, StreamError, StreamEvent, StreamOptions,
@@ -21,6 +21,9 @@ pub(crate) const BASE_URL: &str = "https://api.openai.com/v1";
 
 /// Default endpoint for the OpenAI Responses API.
 const RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
+
+/// Maximum silence between body reads for OpenAI Responses SSE streams.
+const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub struct OpenAiModelProvider {
     /// `[providers.models.openai.<alias>]` config-key alias.
@@ -901,7 +904,8 @@ pub(crate) async fn run_responses_sse(
         }
     }
 
-    if !chunk_buf.trim().is_empty()
+    if !state.saw_completion
+        && !chunk_buf.trim().is_empty()
         && let Ok(events) = process_sse_chunk(&chunk_buf, &mut state)
     {
         for event in events {
@@ -1133,7 +1137,7 @@ impl OpenAiResponsesModelProvider {
         let default_headers = self.build_default_headers();
         let mut builder = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .read_timeout(SSE_IDLE_TIMEOUT);
+            .read_timeout(STREAM_IDLE_TIMEOUT);
         if !default_headers.is_empty() {
             builder = builder.default_headers(default_headers);
         }
@@ -1376,7 +1380,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn responses_completed_finishes_without_eof_and_keeps_fallback_text() {
+    async fn responses_completed_ignores_trailing_events_without_eof() {
         use axum::{Router, response::IntoResponse, routing::post};
 
         let app = Router::new().route(
@@ -1384,7 +1388,7 @@ mod tests {
             post(|| async {
                 let first = futures_util::stream::once(async {
                     Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
-                        b"data: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"output_text\":\"fallback\"}}\n\n",
+                        b"data: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"output_text\":\"fallback\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"after-terminal\"}\n\n",
                     ))
                 });
                 let open = futures_util::stream::pending::<

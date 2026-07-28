@@ -15,7 +15,10 @@ use zeroclaw_api::tool::ToolSpec;
 const TEMPERATURE_DEFAULT: f64 = 1.0;
 /// Anthropic's public API endpoint. Overrideable via `model_providers.<name>.base_url`.
 pub(crate) const BASE_URL: &str = "https://api.anthropic.com";
-use crate::stream_guard::{AbortOnDrop, SSE_IDLE_TIMEOUT};
+use crate::stream_guard::AbortOnDrop;
+
+/// Maximum silence between body reads for Anthropic SSE streams.
+const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 pub struct AnthropicModelProvider {
     /// `[providers.models.anthropic.<alias>]` config-key alias.
@@ -862,7 +865,7 @@ impl AnthropicModelProvider {
     fn streaming_http_client(&self) -> Client {
         let builder = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .read_timeout(SSE_IDLE_TIMEOUT);
+            .read_timeout(STREAM_IDLE_TIMEOUT);
         let builder = zeroclaw_config::schema::apply_runtime_proxy_to_builder(
             builder,
             "model_provider.anthropic",
@@ -1627,7 +1630,7 @@ impl ModelProvider for AnthropicModelProvider {
             ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Spawn)
                 .with_category(::zeroclaw_log::EventCategory::Provider)
                 .with_attrs(::serde_json::json!({
-                    "idle_timeout_secs": SSE_IDLE_TIMEOUT.as_secs(),
+                    "idle_timeout_secs": STREAM_IDLE_TIMEOUT.as_secs(),
                     "channel_capacity": 64,
                 })),
             "stream: spawning detached Anthropic SSE parser task"
@@ -1695,7 +1698,7 @@ impl ModelProvider for AnthropicModelProvider {
         // The guard travels inside the unfold state so it is dropped at the
         // exact moment the consumer drops the stream — turning a turn cancel
         // (or normal completion) into an immediate parser-task abort instead
-        // of a leaked socket that lingers until SSE_IDLE_TIMEOUT.
+        // of a leaked socket that lingers until STREAM_IDLE_TIMEOUT.
         let guard = AbortOnDrop::new(parser_handle.abort_handle());
         stream::unfold((rx, guard), |(mut rx, guard)| async move {
             rx.recv().await.map(|event| (event, (rx, guard)))
@@ -1851,7 +1854,7 @@ data: {\"type\":\"message_stop\"}\n\n"
     async fn dropping_guard_aborts_parser_without_idle_wait() {
         // The full-measure fix: dropping the consumer stream must abort the
         // detached parser immediately (turn cancel), not leak the socket until
-        // SSE_IDLE_TIMEOUT. We model the stream's lifetime with AbortOnDrop and
+        // STREAM_IDLE_TIMEOUT. We model the stream's lifetime with AbortOnDrop and
         // assert the task is aborted the instant the guard drops.
         let start = b"event: message_start\n\
 data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"usage\":{\"input_tokens\":1}}}\n\n"
@@ -1875,7 +1878,7 @@ data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\"
             "parser must still be running (parked on the stalled read) before drop"
         );
 
-        // Dropping the guard must abort the parser — no SSE_IDLE_TIMEOUT wait.
+        // Dropping the guard must abort the parser — no STREAM_IDLE_TIMEOUT wait.
         drop(guard);
         tokio::task::yield_now().await;
         assert!(
