@@ -1,8 +1,8 @@
 use crate::openai_codex::{
-    ResponsesStreamApiError, ResponsesStreamState, ResponsesToolSpec, build_responses_input,
-    convert_tools, first_nonempty, process_sse_chunk,
+    ResponsesStreamApiError, ResponsesStreamState, ResponsesToolSpec, append_utf8_stream_chunk,
+    build_responses_input, convert_tools, first_nonempty, process_sse_chunk,
 };
-use crate::stream_guard::AbortOnDrop;
+use crate::stream_guard::{AbortOnDrop, SSE_IDLE_TIMEOUT};
 use crate::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     ModelProvider, ProviderCapabilities, StreamChunk, StreamError, StreamEvent, StreamOptions,
@@ -21,14 +21,6 @@ pub(crate) const BASE_URL: &str = "https://api.openai.com/v1";
 
 /// Default endpoint for the OpenAI Responses API.
 const RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
-
-/// Max wait for the next streaming body read before the connection is treated
-/// as stalled. Streaming clients omit reqwest's overall `.timeout()` (it kills
-/// long-running responses mid-stream), so without a per-read bound a connection
-/// that goes silent after the headers park `bytes_stream().next().await` forever
-/// and the turn hangs on "working". `read_timeout` caps the gap between reads and
-/// converts a silent stall into a retryable stream error.
-const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub struct OpenAiModelProvider {
     /// `[providers.models.openai.<alias>]` config-key alias.
@@ -845,48 +837,76 @@ pub(crate) async fn run_responses_sse(
         return;
     }
 
-    let reader = crate::stream_guard::sse_reader(http_response);
-    parse_responses_sse_from_reader(reader, tx, count_tokens).await;
-}
-
-/// Line loop for `run_responses_sse`, split out so unit tests can feed a
-/// `Cursor<&[u8]>` and drive the idle timeout under a paused clock. The
-/// Responses wire delimits event blocks with a blank line, so lines from the
-/// shared pump accumulate into a block that is parsed on each blank-line
-/// boundary.
-async fn parse_responses_sse_from_reader<R>(
-    reader: R,
-    tx: &tokio::sync::mpsc::Sender<StreamResult<StreamEvent>>,
-    count_tokens: bool,
-) where
-    R: tokio::io::AsyncBufRead + Unpin,
-{
-    use tokio::io::AsyncBufReadExt;
-
-    let mut lines = reader.lines();
     let mut state = ResponsesStreamState::default();
-    let mut block = String::new();
+    let mut byte_stream = http_response.bytes_stream();
+    let mut pending_utf8: Vec<u8> = Vec::new();
+    let mut chunk_buf = String::new();
 
-    loop {
-        let line = crate::stream_guard::next_line_or_break!(lines, tx);
-
-        if line.is_empty() {
-            if flush_responses_block(&block, &mut state, tx, count_tokens).await {
+    'stream: loop {
+        match byte_stream.next().await {
+            Some(Ok(bytes)) => {
+                if let Err(err) =
+                    append_utf8_stream_chunk(&mut chunk_buf, &mut pending_utf8, &bytes)
+                {
+                    let _ = tx
+                        .send(Err(StreamError::ModelProvider(err.to_string())))
+                        .await;
+                    return;
+                }
+            }
+            Some(Err(err)) => {
+                let _ = tx
+                    .send(Err(StreamError::ModelProvider(err.to_string())))
+                    .await;
                 return;
             }
-            block.clear();
-            continue;
+            None => break,
         }
 
-        if !block.is_empty() {
-            block.push('\n');
+        while let Some(idx) = chunk_buf.find("\n\n") {
+            let chunk_str = chunk_buf[..idx].to_string();
+            chunk_buf = chunk_buf[idx + 2..].to_string();
+
+            match process_sse_chunk(&chunk_str, &mut state) {
+                Ok(events) => {
+                    for event in events {
+                        if let StreamEvent::TextDelta(ref chunk) = event {
+                            let event = if count_tokens {
+                                StreamEvent::TextDelta(
+                                    StreamChunk::delta(chunk.delta.clone()).with_token_estimate(),
+                                )
+                            } else {
+                                event
+                            };
+                            if tx.send(Ok(event)).await.is_err() {
+                                return;
+                            }
+                        } else if tx.send(Ok(event)).await.is_err() {
+                            return;
+                        }
+                    }
+                    if state.saw_completion {
+                        break 'stream;
+                    }
+                }
+                Err(err) => {
+                    if err.downcast_ref::<ResponsesStreamApiError>().is_some() {
+                        let _ = tx
+                            .send(Err(StreamError::ModelProvider(err.to_string())))
+                            .await;
+                        return;
+                    }
+                }
+            }
         }
-        block.push_str(&line);
     }
 
-    if !block.trim().is_empty() && flush_responses_block(&block, &mut state, tx, count_tokens).await
+    if !chunk_buf.trim().is_empty()
+        && let Ok(events) = process_sse_chunk(&chunk_buf, &mut state)
     {
-        return;
+        for event in events {
+            let _ = tx.send(Ok(event)).await;
+        }
     }
 
     if !state.saw_text_delta
@@ -906,44 +926,6 @@ async fn parse_responses_sse_from_reader<R>(
         "response.completed or [DONE]",
     )
     .await;
-}
-
-async fn flush_responses_block(
-    block: &str,
-    state: &mut ResponsesStreamState,
-    tx: &tokio::sync::mpsc::Sender<StreamResult<StreamEvent>>,
-    count_tokens: bool,
-) -> bool {
-    match process_sse_chunk(block, state) {
-        Ok(events) => {
-            for event in events {
-                let event = if let StreamEvent::TextDelta(ref chunk) = event {
-                    if count_tokens {
-                        StreamEvent::TextDelta(
-                            StreamChunk::delta(chunk.delta.clone()).with_token_estimate(),
-                        )
-                    } else {
-                        event
-                    }
-                } else {
-                    event
-                };
-                if tx.send(Ok(event)).await.is_err() {
-                    return true;
-                }
-            }
-            false
-        }
-        Err(err) => {
-            if err.downcast_ref::<ResponsesStreamApiError>().is_some() {
-                let _ = tx
-                    .send(Err(StreamError::ModelProvider(err.to_string())))
-                    .await;
-                return true;
-            }
-            false
-        }
-    }
 }
 
 pub struct OpenAiResponsesModelProvider {
@@ -1151,7 +1133,7 @@ impl OpenAiResponsesModelProvider {
         let default_headers = self.build_default_headers();
         let mut builder = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .read_timeout(STREAM_IDLE_TIMEOUT);
+            .read_timeout(SSE_IDLE_TIMEOUT);
         if !default_headers.is_empty() {
             builder = builder.default_headers(default_headers);
         }
@@ -1393,84 +1375,56 @@ impl ::zeroclaw_api::attribution::Attributable for OpenAiResponsesModelProvider 
 mod tests {
     use super::*;
 
-    struct StallAfterReader {
-        data: std::io::Cursor<Vec<u8>>,
-        drained: bool,
-    }
-
-    impl tokio::io::AsyncRead for StallAfterReader {
-        fn poll_read(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-            buf: &mut tokio::io::ReadBuf<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            if self.drained {
-                return std::task::Poll::Pending;
-            }
-            let before = buf.filled().len();
-            let inner = std::pin::Pin::new(&mut self.data);
-            let res = inner.poll_read(cx, buf);
-            if buf.filled().len() == before {
-                self.drained = true;
-                return std::task::Poll::Pending;
-            }
-            res
-        }
-    }
-
     #[tokio::test]
-    async fn responses_reader_streams_incremental_text_deltas() {
-        let body = b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\ndata: {\"type\":\"response.completed\"}\n\n".to_vec();
-        let reader = tokio::io::BufReader::new(std::io::Cursor::new(body));
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(16);
-        parse_responses_sse_from_reader(reader, &tx, false).await;
-        drop(tx);
+    async fn responses_completed_finishes_without_eof_and_keeps_fallback_text() {
+        use axum::{Router, response::IntoResponse, routing::post};
 
-        let mut deltas = Vec::new();
+        let app = Router::new().route(
+            "/responses",
+            post(|| async {
+                let first = futures_util::stream::once(async {
+                    Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
+                        b"data: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"output_text\":\"fallback\"}}\n\n",
+                    ))
+                });
+                let open = futures_util::stream::pending::<
+                    Result<axum::body::Bytes, std::convert::Infallible>,
+                >();
+                axum::body::Body::from_stream(first.chain(open)).into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Responses SSE test server");
+        let addr = listener.local_addr().expect("Responses SSE test address");
+        let server = ::zeroclaw_spawn::spawn!(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve Responses SSE test");
+        });
+        let request = reqwest::Client::new().post(format!("http://{addr}/responses"));
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(16);
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_responses_sse(request, &tx, false),
+        )
+        .await
+        .expect("response.completed must finish without waiting for EOF");
+        drop(tx);
+        server.abort();
+
+        let mut text = None;
         let mut saw_final = false;
-        while let Some(ev) = rx.recv().await {
-            match ev {
-                Ok(StreamEvent::TextDelta(chunk)) => deltas.push(chunk.delta),
+        while let Some(event) = rx.recv().await {
+            match event {
+                Ok(StreamEvent::TextDelta(chunk)) => text = Some(chunk.delta),
                 Ok(StreamEvent::Final) => saw_final = true,
                 _ => {}
             }
         }
-        assert_eq!(deltas, vec!["Hello".to_string(), " world".to_string()]);
-        assert!(saw_final, "expected Final after response.completed");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn responses_reader_times_out_on_idle_stream() {
-        let reader = tokio::io::BufReader::new(StallAfterReader {
-            data: std::io::Cursor::new(
-                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n".to_vec(),
-            ),
-            drained: false,
-        });
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(16);
-
-        let parser = ::zeroclaw_spawn::spawn!(async move {
-            parse_responses_sse_from_reader(reader, &tx, false).await
-        });
-
-        tokio::task::yield_now().await;
-        tokio::time::advance(
-            crate::stream_guard::SSE_IDLE_TIMEOUT + std::time::Duration::from_secs(1),
-        )
-        .await;
-
-        let mut last_err = None;
-        while let Some(ev) = rx.recv().await {
-            if let Err(e) = ev {
-                last_err = Some(e);
-            }
-        }
-        parser.await.expect("parser task must finish, not hang");
-        let err = last_err.expect("a StreamError must be emitted on stall");
-        assert!(
-            matches!(err, StreamError::Http(ref m) if m.contains("stalled")),
-            "expected stalled Http error, got: {err:?}"
-        );
+        assert_eq!(text.as_deref(), Some("fallback"));
+        assert!(saw_final, "response.completed must emit Final");
     }
 
     #[test]
