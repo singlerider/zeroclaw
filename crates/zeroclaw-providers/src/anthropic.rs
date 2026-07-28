@@ -862,7 +862,7 @@ impl AnthropicModelProvider {
     /// Streaming requests have no whole-request deadline. Header acquisition
     /// and buffered error bodies are bounded separately, while successful SSE
     /// bodies use the shared byte-idle timeout.
-    fn streaming_http_client(&self) -> Client {
+    fn streaming_http_client(&self) -> Result<Client, reqwest::Error> {
         let builder = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .read_timeout(STREAM_IDLE_TIMEOUT);
@@ -870,16 +870,7 @@ impl AnthropicModelProvider {
             builder,
             "model_provider.anthropic",
         );
-        builder.build().unwrap_or_else(|error| {
-            ::zeroclaw_log::record!(
-                WARN,
-                ::zeroclaw_log::Event::new(module_path!(), ::zeroclaw_log::Action::Note)
-                    .with_outcome(::zeroclaw_log::EventOutcome::Unknown)
-                    .with_attrs(::serde_json::json!({"error": super::format_error_chain(&error)})),
-                "Failed to build proxied Anthropic streaming client"
-            );
-            Client::new()
-        })
+        builder.build()
     }
 
     /// Build a streaming request body from a `NativeChatRequest`.
@@ -924,8 +915,6 @@ impl AnthropicModelProvider {
         let mut output_tokens: Option<u64> = None;
         let mut cached_input_tokens: Option<u64> = None;
         let mut cache_creation_input_tokens: Option<u64> = None;
-
-        let mut saw_stop_reason = false;
 
         loop {
             let line = match lines.next_line().await {
@@ -1077,9 +1066,6 @@ impl AnthropicModelProvider {
                         .and_then(|d| d.get("stop_reason"))
                         .and_then(|s| s.as_str())
                         .unwrap_or("none");
-                    if stop_reason != "none" {
-                        saw_stop_reason = true;
-                    }
                     // Anthropic's running-total: each `message_delta`
                     // supersedes the previous one, so we always overwrite.
                     let observed_output = event
@@ -1149,7 +1135,7 @@ impl AnthropicModelProvider {
             }
         }
 
-        crate::stream_guard::finish_sse_stream(tx, saw_stop_reason, "message_stop").await;
+        crate::stream_guard::finish_sse_stream(tx, false, "message_stop").await;
     }
 }
 
@@ -1618,7 +1604,16 @@ impl ModelProvider for AnthropicModelProvider {
                     .boxed();
             }
         };
-        let client = self.streaming_http_client();
+        let client = match self.streaming_http_client() {
+            Ok(client) => client,
+            Err(error) => {
+                let message = format!(
+                    "Failed to build Anthropic streaming client: {}",
+                    super::format_error_chain(&error)
+                );
+                return stream::once(async move { Err(StreamError::Http(message)) }).boxed();
+            }
+        };
         let url = format!("{}/v1/messages", self.base_url);
         let is_oauth = Self::is_setup_token(&credential);
         let phase_timeout = std::time::Duration::from_secs(self.timeout_secs);
@@ -1969,7 +1964,9 @@ data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"clau
 event: content_block_start\n\
 data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
 event: content_block_delta\n\
-data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n";
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n";
         let reader = tokio::io::BufReader::new(Cursor::new(bytes.as_slice()));
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(64);
         AnthropicModelProvider::parse_anthropic_sse_from_reader(reader, &tx).await;
